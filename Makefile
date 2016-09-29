@@ -7,11 +7,11 @@ ARCHIVE = ar rcs
 
 
 _require_headers = \
-	events.h           \
-	events_io_epoll.h  \
-	events_io_select.h \
-	evloop.h           \
-	coro.h
+	libco/events.h           \
+	libco/events_io_epoll.h  \
+	libco/events_io_select.h \
+	libco/evloop.h           \
+	libco/coro.h
 
 
 _require_objects = \
@@ -36,13 +36,13 @@ libcno/.git: .gitmodules
 libcno/obj/libcno.a: libcno/.git
 	$(MAKE) -C libcno obj/libcno.a
 
-obj/%.o: %.cc $(_require_headers)
+obj/%.o: libco/%.cc $(_require_headers)
 	@mkdir -p obj
 	$(COMPILE) $@ $< -c
 
 obj/test_%.o: tests/%.cc libcno/.git $(_require_headers)
 	@mkdir -p obj
-	$(COMPILE) $@ $< -c -Ilibcno
+	$(COMPILE) $@ $< -c -Ilibcno -Ilibco
 
 obj/test_%: obj/test_%.o libcno/obj/libcno.a $(_require_objects)
 	$(COMPILE) $@ $< $(_require_objects) -Llibcno/obj -ldl -lcno -pthread

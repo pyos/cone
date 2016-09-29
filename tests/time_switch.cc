@@ -5,11 +5,18 @@
 
 //static const int COROS = 1000000;
 static const int YIELDS_PER_CORO = 1000000;
+static int i;
+
+#include <signal.h>
+static void sigint(int) {
+    fprintf(stderr, "%d\n", i);
+}
 
 extern "C" int amain() noexcept {
+    signal(SIGINT, sigint);
     using clock = std::chrono::steady_clock;
     auto a = clock::now();
-    for (int i = 0; i < YIELDS_PER_CORO; i++)
+    for (i = 0; i < YIELDS_PER_CORO; i++)
         sched_yield();
     auto b = clock::now();
     double r = std::chrono::duration_cast<std::chrono::nanoseconds>(b - a).count() / (double)YIELDS_PER_CORO;
