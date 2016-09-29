@@ -83,14 +83,14 @@ namespace coro {
 
         virtual ~cobase() {};
 
-        template <bool interruptible = true, bool direct = false, typename evt>
+        template <bool interruptible = true, typename evt>
         void pause(evt&& until) {
-            until += direct ? &run : &schedule;
+            until += &schedule;
             state.leave();  // TODO cancellation
         }
 
         void join() {
-            if (loop) current->pause<true, true>(done);
+            if (loop) current->pause(done);
         }
 
     protected:
@@ -139,14 +139,14 @@ namespace coro {
     static inline auto __run(F&& main) -> std::shared_ptr<f<decltype(main())>> {
         coloop loop;
         auto root = spawn(std::forward<F>(main), &loop);
-        while (loop.coros.size()) {
+        root->done += &loop.stop;
+        while (!loop.run()) {
+            if (loop.coros.empty())
+                return root;
             loop.coros.begin()->first->done += &loop.stop;
-            if (loop.run()) {
-                fprintf(stderr, "[coro::coloop] FATAL: %s (%d)\n", strerror(errno), errno);
-                abort();  // there are threads stuck in indeterminate state, might as well crash
-            }
         }
-        return root;
+        fprintf(stderr, "[coro::coloop] FATAL: %s (%d)\n", strerror(errno), errno);
+        abort();  // there are threads stuck in indeterminate state, might as well crash
     }
 
     template <typename F>
