@@ -44,7 +44,7 @@ static R loop(R (*f)(int, Args...), int fd, Args... args) {
 template <typename Rep, typename Period, typename R, typename... Args>
 static R pause(R (*f)(Args...), std::chrono::duration<Rep, Period> total, Args... args) {
     if (auto c = coro::current) {
-        c->pause<false, true>(c->loop->after[total]);
+        c->pause<false>(c->loop->after[total]);
         return R();
     }
     return f(args...);

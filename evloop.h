@@ -25,6 +25,7 @@ namespace aio {
                 assert("pipe2 must not fail" && 0), abort();
             ping_r = fd[0];
             ping_w = fd[1];
+            unblock(ping_w);
             io[ping_r].read += &consume_ping;
         }
 
@@ -43,13 +44,14 @@ namespace aio {
         }
 
         const event::callback stop = [this]() noexcept {
-            running.store(false, std::memory_order_release);
-            ping();
+            bool expect = true;
+            if (running.compare_exchange_strong(expect, false))
+                ping();
         };
 
         const event::callback ping = [this]() noexcept {
             bool expect = false;
-            if (pinged.compare_exchange_strong(expect, true, std::memory_order_acquire))
+            if (pinged.compare_exchange_strong(expect, true))
                 ::write(ping_w, "", 1);  // never yields
         };
 
@@ -58,7 +60,7 @@ namespace aio {
             ssize_t rd = ::read(ping_r, &rd, sizeof(rd));  // never yields
             io[ping_r].read += &consume_ping;
             pinged.store(false, std::memory_order_release);
-            on_ping();
+            on_ping.move_to(after[std::chrono::seconds(0)]);
         };
 
         int ping_r, ping_w;

@@ -38,6 +38,7 @@ struct aio::event::io : uncopyable {
 
     fdevent& operator[](int fd) {
         assert("all file descriptors must fit in fd_set" && fd < FD_SETSIZE);
+        std::lock_guard<std::recursive_mutex> lock{m};
         return (fdevent&)*cbs.emplace(fd, this).first;
     }
 
@@ -52,11 +53,14 @@ struct aio::event::io : uncopyable {
 
     int operator()(struct timeval* timeout) noexcept {
         int max_fd = 0;
+        fd_set rready, wready;
+        std::unique_lock<std::recursive_mutex> lock{m};
         for (const fdevent& ev : cbs)
             if (max_fd <= ev.read.fd)
                 max_fd = ev.read.fd + 1;
-        fd_set rready = r, wready = w;
-        int got = select(max_fd, &rready, &wready, NULL, timeout);
+        rready = r;
+        wready = w;
+        UNLOCKED(lock, int got = select(max_fd, &rready, &wready, NULL, timeout));
         if (got > 0) for (auto it = cbs.begin(); it != cbs.end(); ) {
             if (FD_ISSET(it->read.fd, &rready))
                 ((fdevent&)*it).read();
@@ -70,5 +74,6 @@ struct aio::event::io : uncopyable {
 
 private:
     fd_set r, w;
+    std::recursive_mutex m;
     std::unordered_set<fdevent, typename fdevent::hash, typename fdevent::eq> cbs;
 };

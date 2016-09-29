@@ -56,6 +56,7 @@ struct aio::event::io : uncopyable {
     }
 
     fdevent& operator[](int fd) {
+        std::lock_guard<std::mutex> lock{m};
         auto it = cbs.find(fd);  // `emplace` may construct a temporary even if a callback already exists
         if (it == cbs.end())
             it = cbs.emplace(fd, epoll).first;
@@ -76,13 +77,16 @@ struct aio::event::io : uncopyable {
                 c->read();
             if (ev->events & (EPOLLOUT | EPOLLERR | EPOLLHUP))
                 c->write();
-            if (c->read.cb == nullptr && c->write.cb == nullptr)
+            if (c->read.cb == nullptr && c->write.cb == nullptr) {
+                std::lock_guard<std::mutex> lock{m};
                 cbs.erase(c->fd);  // TODO wait for a while (this coroutine is likely to return)
+            }
         }
         return got < 0 ? -1 : 0;
     }
 
 private:
     int epoll;
+    std::mutex m;
     std::unordered_set<fdevent, typename fdevent::hash, typename fdevent::eq> cbs;
 };
