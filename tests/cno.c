@@ -1,3 +1,7 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include "coro.h"
 
 #include <errno.h>
@@ -14,13 +18,12 @@
 
 #include <cno/core.h>
 
-#include <memory>
-
 static int fd;
 static int one = 1;
 
 
-static void sigint(int) {
+static void sigint(int signum) {
+    (void)signum;
     signal(SIGINT, SIG_DFL);
     shutdown(fd, SHUT_RDWR);
 }
@@ -45,7 +48,8 @@ static int writeall(void *dptr, const char *data, size_t size) {
 }
 
 
-static int sendhello(void *dptr, uint32_t stream, const struct cno_message_t *) {
+static int sendhello(void *dptr, uint32_t stream, const struct cno_message_t *rmsg) {
+    (void)rmsg;
     struct cno_data_t* d = (struct cno_data_t*) dptr;
     struct cno_header_t headers[] = {
         { CNO_BUFFER_STRING("server"), CNO_BUFFER_STRING("libcno/1"), 0 },
@@ -59,48 +63,35 @@ static int sendhello(void *dptr, uint32_t stream, const struct cno_message_t *) 
 }
 
 
-static void acceptor() noexcept {
-    while (1) {
-        int client = accept(fd, (struct sockaddr*) NULL, NULL);
-        if (client < 0) {
-            if (errno == ECONNABORTED)
-                continue;
-            if (errno != EINVAL)
-                perror("accept");
+static int handle_connection(int client) {
+    struct cno_data_t d;
+    cno_connection_init(&d.conn, CNO_SERVER);
+    d.fd = client;
+    d.conn.cb_data = &d;
+    d.conn.on_write = &writeall;
+    d.conn.on_message_start = &sendhello;
+    if (cno_connection_made(&d.conn, CNO_HTTP1))
+        goto error;
+
+    ssize_t rd;
+    char data[4096];
+    while ((rd = read(client, data, sizeof(data)))) {
+        if (rd < 0)
             break;
-        }
-
-        coro::spawn([client]() {
-            std::unique_ptr<cno_data_t> d = std::make_unique<cno_data_t>();
-            cno_connection_init(&d->conn, CNO_SERVER);
-            d->fd = client;
-            d->conn.cb_data = d.get();
-            d->conn.on_write = &writeall;
-            d->conn.on_message_start = &sendhello;
-            if (cno_connection_made(&d->conn, CNO_HTTP1))
-                goto error;
-
-            ssize_t rd;
-            char data[4096];
-            while ((rd = read(client, data, sizeof(data)))) {
-                if (rd < 0)
-                    break;
-                if (cno_connection_data_received(&d->conn, data, (size_t) rd))
-                    goto error;
-            }
-
-            if (cno_connection_lost(&d->conn))
-                goto error;
-
-        error:
-            cno_connection_reset(&d->conn);
-            close(client);
-        });
+        if (cno_connection_data_received(&d.conn, data, (size_t) rd))
+            goto error;
     }
+
+    if (cno_connection_lost(&d.conn))
+        goto error;
+
+error:
+    cno_connection_reset(&d.conn);
+    close(client);
+    return 0;
 }
 
-
-extern "C" int amain() noexcept {
+int amain() {
     signal(SIGINT, &sigint);
     signal(SIGPIPE, SIG_IGN);
     signal(SIGCHLD, SIG_IGN);
@@ -114,7 +105,19 @@ extern "C" int amain() noexcept {
     servaddr.sin_port = htons(8000);
     bind(fd, (struct sockaddr *) &servaddr, sizeof(servaddr));
     listen(fd, 127);
-    acceptor();
+
+    while (1) {
+        int client = accept(fd, (struct sockaddr*) NULL, NULL);
+        if (client < 0) {
+            if (errno == ECONNABORTED)
+                continue;
+            if (errno != EINVAL)
+                perror("accept");
+            break;
+        }
+        coro_decref(coro_spawn(co_callback_bind(&handle_connection, (void*)client), 0));
+    }
+
     close(fd);
     return 0;
 }

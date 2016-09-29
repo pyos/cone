@@ -1,69 +1,104 @@
 #pragma once
 #include "events.h"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <assert.h>
 #include <unistd.h>
+#include <stdbool.h>
+#include <stdatomic.h>
 
-#include <atomic>
+static inline int
+setnonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL);
+    return flags == -1 ? -1 : fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
 
-namespace aio {
-    static inline int unblock(int fd) noexcept {
-        int flags = fcntl(fd, F_GETFL);
-        return flags == -1 ? -1 : fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-    }
-
-    struct evloop : uncopyable {
-        event on_ping;
-        event on_exit;
-        event::io io;
-        event::time after;
-
-        evloop() {
-            int fd[2];
-            if (::pipe2(fd, O_NONBLOCK))
-                assert("pipe2 must not fail" && 0), abort();
-            ping_r = fd[0];
-            ping_w = fd[1];
-            unblock(ping_w);
-            io[ping_r].read += &consume_ping;
-        }
-
-        ~evloop() {
-            on_exit();
-            ::close(ping_r);
-            ::close(ping_w);
-        }
-
-        int run() noexcept {
-            assert("aio::evloop::run must not call itself" && !running);
-            for (running.store(true, std::memory_order_release); running.load(std::memory_order_acquire);)
-                if (io(after()) && errno != EINTR)
-                    return -1;
-            return 0;
-        }
-
-        const event::callback stop = [this]() noexcept {
-            bool expect = true;
-            if (running.compare_exchange_strong(expect, false))
-                ping();
-        };
-
-        const event::callback ping = [this]() noexcept {
-            bool expect = false;
-            if (pinged.compare_exchange_strong(expect, true))
-                ::write(ping_w, "", 1);  // never yields
-        };
-
-    private:
-        const event::callback consume_ping = [this]() noexcept {
-            ssize_t rd = ::read(ping_r, &rd, sizeof(rd));  // never yields
-            io[ping_r].read += &consume_ping;
-            pinged.store(false, std::memory_order_release);
-            on_ping.move_to(after[std::chrono::seconds(0)]);
-        };
-
-        int ping_r, ping_w;
-        std::atomic_bool running{false}, pinged{false};
-    };
+struct co_loop
+{
+    volatile atomic_bool running, pinged;
+    int ping_r, ping_w;
+    struct co_fd_set io;
+    struct co_event_vec on_ping;
+    struct co_event_vec on_exit;
+    struct co_event_schedule sched;
 };
+
+static inline int
+co_loop_consume_ping(struct co_loop *loop) {
+    ssize_t rd = read(loop->ping_r, &rd, sizeof(rd));  // never yields
+    loop->pinged = 0;
+    struct co_fd_event *ev = co_fd_event(&loop->io, loop->ping_r);
+    if (ev == NULL)
+        return -1;
+    co_fd_callback_connect(&ev->read, co_callback_bind(&co_loop_consume_ping, loop));
+    struct co_event_scheduler now = co_event_schedule_after(&loop->sched, co_u128_value(0));
+    return co_event_vec_move(&loop->on_ping, &now.as_event);
+}
+
+static inline int
+co_loop_run(struct co_loop *loop) {
+    assert("aio::evloop::run must not call itself" && !atomic_load(&loop->running));
+    for (atomic_store(&loop->running, true); atomic_load(&loop->running); ) {
+        struct co_nsec_offset timeout = co_event_schedule_emit(&loop->sched);
+        if (co_u128_eq(timeout, CO_U128_MAX))
+            return -1;
+        errno = 0;
+        if (co_fd_set_emit(&loop->io, timeout) && errno != EINTR)
+            return -1;
+    }
+    return 0;
+}
+
+static inline int
+co_loop_ping(struct co_loop *loop) {
+    bool expect = false;
+    if (!atomic_compare_exchange_strong(&loop->pinged, &expect, true) || write(loop->ping_w, "", 1) == 1)
+        return 0;
+    atomic_store(&loop->pinged, false);
+    return -1;
+}
+
+static inline int
+co_loop_stop(struct co_loop *loop) {
+    bool expect = true;
+    if (atomic_compare_exchange_strong(&loop->running, &expect, false))
+        return co_loop_ping(loop);
+    return -1;
+}
+
+static inline int
+co_loop_fini(struct co_loop *loop) {
+    int ret = co_event_vec_emit(&loop->on_exit);
+    close(loop->ping_r);
+    close(loop->ping_w);
+    co_fd_set_fini(&loop->io);
+    co_event_vec_fini(&loop->on_ping);
+    co_event_vec_fini(&loop->on_exit);
+    co_event_schedule_fini(&loop->sched);
+    return ret;
+}
+
+static inline int
+co_loop_init(struct co_loop *loop) {
+    int fd[2];
+    if (pipe2(fd, O_NONBLOCK))
+        return -1;
+
+    *loop = (struct co_loop){.ping_r = fd[0], .ping_w = fd[1]};
+    atomic_init(&loop->running, false);
+    atomic_init(&loop->pinged, false);
+    co_fd_set_init(&loop->io);
+    co_event_vec_init(&loop->on_ping);
+    co_event_vec_init(&loop->on_exit);
+    co_event_schedule_init(&loop->sched);
+    setnonblocking(loop->ping_w);
+
+    struct co_fd_event *ev = co_fd_event(&loop->io, loop->ping_r);
+    if (ev == NULL) {
+        co_loop_fini(loop);
+        return -1;
+    }
+    co_fd_callback_connect(&ev->read, co_callback_bind(&co_loop_consume_ping, loop));
+    return 0;
+}

@@ -1,15 +1,13 @@
-CXX      ?= g++
-CXXFLAGS ?= -O3
+CC     ?= gcc
+CFLAGS ?= -O3
 
-COMPILE = $(CXX) -std=c++14 -I. -Wall -Wextra -fPIC $(CFLAGS) $(CXXFLAGS) -o
-DYNLINK = $(CXX) -shared -o
+COMPILE = $(CC) -std=c11 -I. -Wall -Wextra -fPIC $(CFLAGS) -o
+DYNLINK = $(CC) -shared -o
 ARCHIVE = ar rcs
 
 
 _require_headers = \
 	libco/events.h           \
-	libco/events_io_epoll.h  \
-	libco/events_io_select.h \
 	libco/evloop.h           \
 	libco/coro.h
 
@@ -36,11 +34,11 @@ libcno/.git: .gitmodules
 libcno/obj/libcno.a: libcno/.git
 	$(MAKE) -C libcno obj/libcno.a
 
-obj/%.o: libco/%.cc $(_require_headers)
+obj/%.o: libco/%.c $(_require_headers)
 	@mkdir -p obj
 	$(COMPILE) $@ $< -c
 
-obj/test_%.o: tests/%.cc libcno/.git $(_require_headers)
+obj/test_%.o: tests/%.c libcno/.git $(_require_headers)
 	@mkdir -p obj
 	$(COMPILE) $@ $< -c -Ilibcno -Ilibco
 
