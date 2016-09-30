@@ -93,7 +93,7 @@ co_fd_duplex(struct co_fd_set *set, int fd) {
 
 static inline void
 co_fd_set_init(struct co_fd_set *set) {
-    *set = (struct co_fd_set){epoll_create1(0), {}};
+    *set = (struct co_fd_set){.epoll = epoll_create1(0)};
 }
 
 static inline void

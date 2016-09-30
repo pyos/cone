@@ -172,7 +172,6 @@ coro_inner_code(struct coro *c) {
 static inline int
 coro_init(struct coro *c, struct co_coro_loop *loop, size_t size, struct co_callback body) {
     *c = (struct coro){.refcount = 1, .loop = loop, .body = body};
-    co_event_vec_init(&c->done);
     co_context_init(&c->context, c->stack, size - sizeof(struct coro), co_callback_bind(&coro_inner_code, c));
     if (coro_schedule(c)) {
         coro_fini(c);

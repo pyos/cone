@@ -58,9 +58,6 @@ co_loop_init(struct co_loop *loop) {
     atomic_init(&loop->running, false);
     atomic_init(&loop->pinged, false);
     co_fd_set_init(&loop->io);
-    co_event_vec_init(&loop->on_ping);
-    co_event_vec_init(&loop->on_exit);
-    co_event_schedule_init(&loop->sched);
     setnonblocking(loop->ping_w);
 
     struct co_fd_duplex *ev = co_fd_duplex(&loop->io, loop->ping_r);

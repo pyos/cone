@@ -21,11 +21,6 @@ struct co_event_scheduler
 };
 
 static inline void
-co_event_schedule_init(struct co_event_schedule *ev) {
-    *ev = (struct co_event_schedule){};
-}
-
-static inline void
 co_event_schedule_fini(struct co_event_schedule *ev) {
     co_vec_fini(&ev->queue);
 }
