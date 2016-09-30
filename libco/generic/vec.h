@@ -26,6 +26,14 @@ struct co_vec
 #define co_vec_erase(vec, i)      __co_vec_erase (&(vec)->__co_vec, sizeof(*(vec)->data), i)
 #define co_vec_fini(vec)          __co_vec_fini  (&(vec)->__co_vec)
 
+#define __co_vec_elemptr(vec, elemsize) ((char (*)[elemsize]) (vec)->data)
+
+static inline void
+__co_vec_fini(struct co_vec *vec) {
+    free(vec->data);
+    *vec = (struct co_vec){NULL, 0, 0};
+}
+
 static inline int
 __co_vec_reserve(struct co_vec *vec, size_t elemsize, size_t elems) {
     if (vec->size + elems > vec->cap) {
@@ -39,34 +47,25 @@ __co_vec_reserve(struct co_vec *vec, size_t elemsize, size_t elems) {
     return 0;
 }
 
+static inline void
+__co_vec_shift(struct co_vec *vec, size_t elemsize, size_t start, int offset) {
+    if (start < vec->size)
+        memmove(__co_vec_elemptr(vec, elemsize) + start + offset,
+                __co_vec_elemptr(vec, elemsize) + start,
+                elemsize * (vec->size - start));
+    vec->size += offset;
+}
+
 static inline int
 __co_vec_insert(struct co_vec *vec, size_t elemsize, size_t i, const void *elem) {
     if (__co_vec_reserve(vec, elemsize, 1))
         return -1;
-    if (i != vec->size)
-        memmove(
-            ((char *)vec->data) + elemsize * (i + 1),
-            ((char *)vec->data) + elemsize * i,
-            (vec->size - i) * elemsize
-        );
-    memcpy(((char*)vec->data) + i * elemsize, elem, elemsize);
-    vec->size++;
+    __co_vec_shift(vec, elemsize, i, 1);
+    memcpy(__co_vec_elemptr(vec, elemsize) + i, elem, elemsize);
     return 0;
 }
 
 static inline void
 __co_vec_erase(struct co_vec *vec, size_t elemsize, size_t i) {
-    if (i != vec->size)
-        memmove(
-            ((char*)vec->data) + elemsize * i,
-            ((char*)vec->data) + elemsize * (i + 1),
-            (vec->size - i) * elemsize
-        );
-    vec->size--;
-}
-
-static inline void
-__co_vec_fini(struct co_vec *vec) {
-    free(vec->data);
-    *vec = (struct co_vec){NULL, 0, 0};
+    __co_vec_shift(vec, elemsize, i + 1, -1);
 }
