@@ -1,11 +1,11 @@
 #pragma once
-#include "../generic/callback.h"
+#include "../generic/closure.h"
 #include "../generic/time.h"
 #include "../generic/vec.h"
 
 struct co_call_at
 {
-    struct co_callback cb;
+    struct co_closure cb;
     struct co_nsec time;
 };
 
@@ -45,7 +45,7 @@ co_event_schedule_emit(struct co_event_schedule *ev) {
 }
 
 static inline int
-co_event_scheduler_connect(struct co_event_scheduler *sc, struct co_callback cb) {
+co_event_scheduler_connect(struct co_event_scheduler *sc, struct co_closure cb) {
     struct co_event_schedule *ev = sc->parent;
     struct co_call_at tcb = {cb, co_u128_add(co_nsec_monotonic(), sc->delay)};
     for (size_t i = 0; i < ev->queue.size; i++)

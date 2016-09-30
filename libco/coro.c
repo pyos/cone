@@ -67,7 +67,7 @@ int
 main(int argc, const char **argv) {
     co_libc_init();
     struct co_amain_ctx c = {1, argc, argv};
-    if (coro_main(co_callback_bind(&co_run_amain, &c)))
+    if (coro_main(co_bind(&co_run_amain, &c)))
         return 1;
     return c.ret;
 }

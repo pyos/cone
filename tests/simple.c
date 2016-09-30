@@ -27,7 +27,7 @@ static int c2() {
 int amain() {
     setnonblocking(0);
     setnonblocking(1);
-    coro_decref(coro_spawn(co_callback_bind(&c1, NULL), 0));
-    coro_decref(coro_spawn(co_callback_bind(&c2, NULL), 0));
+    coro_decref(coro_spawn(co_bind(&c1, NULL), 0));
+    coro_decref(coro_spawn(co_bind(&c2, NULL), 0));
     return 0;
 }

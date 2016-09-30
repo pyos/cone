@@ -13,7 +13,7 @@ _require_headers = \
     libco/events/time.h      \
     libco/events/vec.h       \
 	libco/evloop.h           \
-	libco/generic/callback.h \
+	libco/generic/closure.h  \
 	libco/generic/time.h     \
 	libco/generic/u128.h     \
 	libco/generic/vec.h

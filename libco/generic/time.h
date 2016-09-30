@@ -2,7 +2,6 @@
 #include "u128.h"
 
 #include <time.h>
-#include <sys/types.h>
 
 #define co_nsec        co_u128
 #define co_nsec_offset co_u128
@@ -22,17 +21,13 @@ co_nsec_from_timespec(struct timespec val) {
 }
 
 static inline struct co_nsec
-co_nsec_on(clockid_t clock) {
-    struct timespec val;
-    return clock_gettime(clock, &val) ? (struct co_nsec){} : co_nsec_from_timespec(val);
-}
-
-static inline struct co_nsec
 co_nsec_now() {
-    return co_nsec_on(CLOCK_REALTIME);
+    struct timespec val;
+    return clock_gettime(CLOCK_REALTIME, &val) ? (struct co_nsec){} : co_nsec_from_timespec(val);
 }
 
 static inline struct co_nsec
 co_nsec_monotonic() {
-    return co_nsec_on(CLOCK_MONOTONIC);
+    struct timespec val;
+    return clock_gettime(CLOCK_MONOTONIC, &val) ? (struct co_nsec){} : co_nsec_from_timespec(val);
 }

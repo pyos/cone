@@ -1,5 +1,5 @@
 #pragma once
-#include "../generic/callback.h"
+#include "../generic/closure.h"
 
 #include <unistd.h>
 #include <sys/epoll.h>
@@ -8,7 +8,7 @@ struct co_fd_duplex;
 
 struct co_event_fd
 {
-    struct co_callback cb;
+    struct co_closure cb;
     struct co_fd_duplex *parent;
 };
 
@@ -29,7 +29,7 @@ struct co_fd_set
 };
 
 static inline int
-co_event_fd_connect(struct co_event_fd *ev, struct co_callback cb) {
+co_event_fd_connect(struct co_event_fd *ev, struct co_closure cb) {
     if (ev->cb.function)
         return -1;
     ev->cb = cb;
@@ -38,18 +38,18 @@ co_event_fd_connect(struct co_event_fd *ev, struct co_callback cb) {
 }
 
 static inline int
-co_event_fd_disconnect(struct co_event_fd *ev, struct co_callback cb) {
+co_event_fd_disconnect(struct co_event_fd *ev, struct co_closure cb) {
     if (ev->cb.function != cb.function || ev->cb.data != cb.data)
         return -1;
-    ev->cb = (struct co_callback){};
+    ev->cb = (struct co_closure){};
     ev->parent->params.events &= ~(ev == &ev->parent->read ? EPOLLIN : EPOLLOUT);
     return epoll_ctl(ev->parent->epoll, EPOLL_CTL_MOD, ev->parent->fd, &ev->parent->params);
 }
 
 static inline int
 co_event_fd_emit(struct co_event_fd *ev) {
-    struct co_callback cb = ev->cb;
-    ev->cb = (struct co_callback){};  // fd already unregistered due to EPOLLONESHOT
+    struct co_closure cb = ev->cb;
+    ev->cb = (struct co_closure){};  // fd already unregistered due to EPOLLONESHOT
     return cb.function && cb.function(cb.data);
 }
 

@@ -16,7 +16,7 @@ struct coro;
 
 struct co_context
 {
-    struct co_callback body;
+    struct co_closure body;
 #if COROUTINE_X86_64_SYSV_CTX
     void *regs[4];
 #else
@@ -36,7 +36,7 @@ struct coro
     int refcount;
     struct co_coro_loop *loop;
     struct co_event_vec done;
-    struct co_callback body;
+    struct co_closure body;
     struct co_context context;
     struct coro *prev;
     struct coro *next;
@@ -86,7 +86,7 @@ co_context_inner_code(struct co_context *ctx) {
 }
 
 static inline void
-co_context_init(struct co_context *ctx, char *stack, size_t size, struct co_callback body) {
+co_context_init(struct co_context *ctx, char *stack, size_t size, struct co_closure body) {
     ctx->body = body;
 #if COROUTINE_X86_64_SYSV_CTX
     ctx->regs[0] = 0;
@@ -126,13 +126,13 @@ coro_run(struct coro *c) {
 static inline int
 coro_schedule(struct coro *c) {
     struct co_event_scheduler now = co_event_schedule_after(&c->loop->base.sched, CO_U128(0));
-    return co_event_scheduler_connect(&now, co_callback_bind(&coro_run, c));
+    return co_event_scheduler_connect(&now, co_bind(&coro_run, c));
 }
 
 #define __coro_pausable_with(t)                                              \
     static inline int                                                        \
     coro_pause_##t(struct coro *c, struct co_event_##t *ev) {                \
-        if (co_event_##t##_connect(ev, co_callback_bind(&coro_schedule, c))) \
+        if (co_event_##t##_connect(ev, co_bind(&coro_schedule, c))) \
             return -1;                                                       \
         co_context_leave(&(c)->context);                                     \
         return 0;                                                            \
@@ -170,9 +170,9 @@ coro_inner_code(struct coro *c) {
 }
 
 static inline int
-coro_init(struct coro *c, struct co_coro_loop *loop, size_t size, struct co_callback body) {
+coro_init(struct coro *c, struct co_coro_loop *loop, size_t size, struct co_closure body) {
     *c = (struct coro){.refcount = 1, .loop = loop, .body = body};
-    co_context_init(&c->context, c->stack, size - sizeof(struct coro), co_callback_bind(&coro_inner_code, c));
+    co_context_init(&c->context, c->stack, size - sizeof(struct coro), co_bind(&coro_inner_code, c));
     if (coro_schedule(c)) {
         coro_fini(c);
         return -1;
@@ -208,7 +208,7 @@ coro_deschedule(struct coro *c) {
 }
 
 static inline struct coro *
-coro_alloc(struct co_coro_loop *loop, size_t size, struct co_callback body) {
+coro_alloc(struct co_coro_loop *loop, size_t size, struct co_closure body) {
     if (size == 0)
         size = 65536;
     size &= ~(size_t)15;
@@ -217,7 +217,7 @@ coro_alloc(struct co_coro_loop *loop, size_t size, struct co_callback body) {
         goto err_alloc;
     if (coro_init(c, loop, size, body))
         goto err_init;
-    if (co_event_vec_connect(&c->done, co_callback_bind(&coro_deschedule, c)))
+    if (co_event_vec_connect(&c->done, co_bind(&coro_deschedule, c)))
         goto err_connect;
     if ((c->next = loop->active))
         c->next->prev = c;
@@ -233,12 +233,12 @@ err_alloc:
 }
 
 static inline struct coro *
-coro_spawn(struct co_callback body, size_t size) {
+coro_spawn(struct co_closure body, size_t size) {
     return coro_alloc(coro_current->loop, size, body);
 }
 
 static inline int
-coro_main(struct co_callback body) {
+coro_main(struct co_closure body) {
     struct co_coro_loop loop;
     if (co_coro_loop_init(&loop))
         goto err_init;
@@ -247,7 +247,7 @@ coro_main(struct co_callback body) {
         goto err_coro;
     coro_decref(c);
     while (loop.active) {
-        if (co_event_vec_connect(&loop.active->done, co_callback_bind(&co_loop_stop, &loop.base)))
+        if (co_event_vec_connect(&loop.active->done, co_bind(&co_loop_stop, &loop.base)))
             goto err_coro;
         if (co_loop_run(&loop.base))
             goto err_coro;
