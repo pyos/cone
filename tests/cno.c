@@ -115,7 +115,7 @@ int amain() {
                 perror("accept");
             break;
         }
-        coro_decref(coro_spawn(co_bind(&handle_connection, (void*)client), 0));
+        coro_decref(coro(&handle_connection, (void*)client));
     }
 
     close(fd);

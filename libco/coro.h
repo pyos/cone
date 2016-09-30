@@ -1,6 +1,11 @@
 #pragma once
-#if !defined(COROUTINE_X86_64_SYSV_CTX) && defined(__linux__) && defined(__x86_64__)
-#define COROUTINE_X86_64_SYSV_CTX 1
+
+#if !defined(COROUTINE_XCHG_RSP) && defined(__linux__) && defined(__x86_64__)
+#define COROUTINE_XCHG_RSP 1
+#endif
+
+#ifndef COROUTINE_DEFAULT_STACK
+#define COROUTINE_DEFAULT_STACK 65536
 #endif
 
 #include "evloop.h"
@@ -8,7 +13,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
-#if !COROUTINE_X86_64_SYSV_CTX
+#if !COROUTINE_XCHG_RSP
 #include <ucontext.h>
 #endif
 
@@ -16,8 +21,7 @@ struct coro;
 
 struct co_context
 {
-    struct co_closure body;
-#if COROUTINE_X86_64_SYSV_CTX
+#if COROUTINE_XCHG_RSP
     void *regs[4];
 #else
     ucontext_t inner;
@@ -47,7 +51,7 @@ extern _Thread_local struct coro * volatile coro_current;
 
 static inline void
 co_context_enter(struct co_context *ctx) {
-#if COROUTINE_X86_64_SYSV_CTX
+#if COROUTINE_XCHG_RSP
     __asm__ volatile (
         "lea LJMPRET%=(%%rip), %%rcx\n"
         #define XCHG(a, b, tmp) "mov " a ", " tmp " \n mov " b ", " a " \n mov " tmp ", " b "\n"
@@ -71,34 +75,26 @@ co_context_enter(struct co_context *ctx) {
 
 static inline void
 co_context_leave(struct co_context *ctx) {
-#if COROUTINE_X86_64_SYSV_CTX
+#if COROUTINE_XCHG_RSP
     co_context_enter(ctx);
 #else
     swapcontext(&ctx->inner, &ctx->outer);
 #endif
 }
 
-static inline void __attribute__((noreturn))
-co_context_inner_code(struct co_context *ctx) {
-    ctx->body.function(ctx->body.data);
-    co_context_leave(ctx);
-    abort();
-}
-
 static inline void
 co_context_init(struct co_context *ctx, char *stack, size_t size, struct co_closure body) {
-    ctx->body = body;
-#if COROUTINE_X86_64_SYSV_CTX
+#if COROUTINE_XCHG_RSP
     ctx->regs[0] = 0;
     ctx->regs[1] = stack + size - 8;
-    ctx->regs[2] = &co_context_inner_code;
-    ctx->regs[3] = ctx;
+    ctx->regs[2] = body.function;
+    ctx->regs[3] = body.data;
     memset((char*)ctx + size - 8, 0, 8);
 #else
     getcontext(&ctx->inner);
     ctx->inner.uc_stack.ss_sp = stack;
     ctx->inner.uc_stack.ss_size = size;
-    makecontext(&ctx->inner, (void(*)())&co_context_inner_code, 1, ctx);
+    makecontext(&ctx->inner, (void(*)())body.function, 1, body.data);
 #endif
 }
 
@@ -153,31 +149,26 @@ coro_fini(struct coro *c) {
     co_event_vec_fini(&c->done);
 }
 
-static inline int
+static inline void __attribute__((noreturn))
 coro_inner_code(struct coro *c) {
     if (c->body.function(c->body.data))
-        return -1;
+        goto terminate;
     struct co_event_scheduler now = co_event_schedule_after(&c->loop->base.sched, CO_U128(0));
-    for (size_t i = 0; i < c->done.slots.size; i++) {
-        if (co_event_scheduler_connect(&now, c->done.slots.data[i])) {
-            while (i--)
-                co_vec_erase(&c->done.slots, i);
-            return -1;
-        }
-    }
+    for (size_t i = 0; i < c->done.slots.size; i++)
+        if (co_event_scheduler_connect(&now, c->done.slots.data[i]))
+            goto terminate;
     co_vec_fini(&c->done.slots);
-    return 0;
+    co_context_leave(&c->context);
+terminate:
+    assert("coroutine body must not fail" && 0);
+    abort();
 }
 
 static inline int
 coro_init(struct coro *c, struct co_coro_loop *loop, size_t size, struct co_closure body) {
     *c = (struct coro){.refcount = 1, .loop = loop, .body = body};
     co_context_init(&c->context, c->stack, size - sizeof(struct coro), co_bind(&coro_inner_code, c));
-    if (coro_schedule(c)) {
-        coro_fini(c);
-        return -1;
-    }
-    return 0;
+    return coro_schedule(c);
 }
 
 static inline struct coro *
@@ -188,10 +179,10 @@ coro_incref(struct coro *c) {
 
 static inline void
 coro_decref(struct coro *c) {
-    if (--c->refcount == 0) {
-        coro_fini(c);
-        free(c);
-    }
+    if (--c->refcount)
+        return;
+    coro_fini(c);
+    free(c);
 }
 
 static inline int
@@ -209,33 +200,28 @@ coro_deschedule(struct coro *c) {
 
 static inline struct coro *
 coro_alloc(struct co_coro_loop *loop, size_t size, struct co_closure body) {
-    if (size == 0)
-        size = 65536;
     size &= ~(size_t)15;
+    if (size < sizeof(struct coro))
+        size = COROUTINE_DEFAULT_STACK;
     struct coro *c = (struct coro *)malloc(size);
     if (c == NULL)
-        goto err_alloc;
+        return NULL;
     if (coro_init(c, loop, size, body))
-        goto err_init;
+        return free(c), NULL;
     if (co_event_vec_connect(&c->done, co_bind(&coro_deschedule, c)))
-        goto err_connect;
+        return coro_decref(c), NULL;
     if ((c->next = loop->active))
         c->next->prev = c;
-    loop->active = c;
-    return coro_incref(c);
-
-err_connect:
-    coro_fini(c);
-err_init:
-    free(c);
-err_alloc:
-    return NULL;
+    loop->active = coro_incref(c);
+    return c;
 }
 
 static inline struct coro *
 coro_spawn(struct co_closure body, size_t size) {
     return coro_alloc(coro_current->loop, size, body);
 }
+
+#define coro(f, arg) coro_spawn(co_bind(f, arg), 0)
 
 static inline int
 coro_main(struct co_closure body) {
