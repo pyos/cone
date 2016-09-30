@@ -25,7 +25,6 @@ struct co_vec
 #define co_vec_insert(vec, i, it) __co_vec_insert(&(vec)->__co_vec, sizeof(*(vec)->data), i, it)
 #define co_vec_erase(vec, i)      __co_vec_erase (&(vec)->__co_vec, sizeof(*(vec)->data), i)
 #define co_vec_fini(vec)          __co_vec_fini  (&(vec)->__co_vec)
-#define co_vec_move(vec)       {{ __co_vec_move(&(vec)->__co_vec) }}
 
 static inline int
 __co_vec_reserve(struct co_vec *vec, size_t elemsize, size_t elems) {
@@ -70,11 +69,4 @@ static inline void
 __co_vec_fini(struct co_vec *vec) {
     free(vec->data);
     *vec = (struct co_vec){NULL, 0, 0};
-}
-
-static inline struct co_vec
-__co_vec_move(struct co_vec *vec) {
-    struct co_vec copy = *vec;
-    *vec = (struct co_vec){NULL, 0, 0};
-    return copy;
 }

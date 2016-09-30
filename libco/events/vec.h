@@ -32,10 +32,12 @@ static inline int
 co_event_vec_emit(struct co_event_vec *ev) {
     size_t size;
     while ((size = ev->slots.size)) {
-        struct co_vec(struct co_callback) r = co_vec_move(&ev->slots);
+        struct co_callback r[size];
+        memcpy(r, ev->slots.data, size * sizeof(struct co_callback));
         for (size_t i = 0; i < size; i++)
-            if (r.data[i].function(r.data[i].data))
-                return -1;
+            if (r[i].function(r[i].data))
+                return -1;  // TODO drop first i callbacks
+        ev->slots.size = 0;
     }
     return 0;
 }
