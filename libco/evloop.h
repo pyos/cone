@@ -32,7 +32,7 @@ co_loop_consume_ping(struct co_loop *loop) {
     if (ev == NULL)
         return -1;
     co_event_fd_connect(&ev->read, co_callback_bind(&co_loop_consume_ping, loop));
-    struct co_event_scheduler now = co_event_schedule_after(&loop->sched, co_u128_value(0));
+    struct co_event_scheduler now = co_event_schedule_after(&loop->sched, CO_U128(0));
     return co_event_scheduler_connect(&now, co_callback_bind(&co_event_vec_emit, &loop->on_ping));
 }
 

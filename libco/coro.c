@@ -142,11 +142,11 @@ ssize_t sendmsg(int sockfd, const struct msghdr *msg, int flags) {
     } while (0)
 
 unsigned sleep(unsigned seconds) {
-    SLEEP(co_libc_sleep, co_u128_value((uint64_t)seconds * 1000000000ull), seconds);
+    SLEEP(co_libc_sleep, CO_U128((uint64_t)seconds * 1000000000ull), seconds);
 }
 
 int usleep(useconds_t usec) {
-    SLEEP(co_libc_usleep, co_u128_value((uint64_t)usec * 1000u), usec);
+    SLEEP(co_libc_usleep, CO_U128((uint64_t)usec * 1000u), usec);
 }
 
 int nanosleep(const struct timespec *req, struct timespec *rem) {

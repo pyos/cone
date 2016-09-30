@@ -15,10 +15,10 @@ co_nsec_from_timespec(struct timespec val) {
     struct co_nsec now = {};
     uint64_t sec = val.tv_sec;
     while (sec >= CO_U64_SEC_MAX) {
-        now = co_u128_add(now, co_u128_value(CO_U64_SEC_MAX * 1000000000ull));
+        now = co_u128_add(now, CO_U128(CO_U64_SEC_MAX * 1000000000ull));
         sec -= CO_U64_SEC_MAX;
     }
-    return co_u128_add(now, co_u128_value(sec * 1000000000ull + (uint64_t)val.tv_nsec));
+    return co_u128_add(now, CO_U128(sec * 1000000000ull + (uint64_t)val.tv_nsec));
 }
 
 static inline struct co_nsec

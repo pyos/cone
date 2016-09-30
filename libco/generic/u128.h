@@ -3,23 +3,16 @@
 
 struct co_u128
 {
-    uint64_t H;
-    uint64_t L;
+    uint64_t H, L;
 };
 
+#define CO_U128(x) ((struct co_u128){0, x})
 #define CO_U128_MAX ((struct co_u128){UINT64_MAX, UINT64_MAX})
-
-static inline struct co_u128
-co_u128_value(uint64_t x) {
-    return (struct co_u128){0, x};
-}
 
 static inline struct co_u128
 co_u128_add(struct co_u128 a, struct co_u128 b) {
     a.L += b.L;
-    a.H += b.H;
-    if (a.L < b.L)
-        a.H++;
+    a.H += b.H + (a.L < b.L);
     return a;
 }
 
@@ -27,9 +20,7 @@ static inline struct co_u128
 co_u128_sub(struct co_u128 a, struct co_u128 b) {
     uint64_t old_al = a.L;
     a.L -= b.L;
-    a.H -= b.H;
-    if (a.L > old_al)
-        a.H--;
+    a.H -= b.H - (a.L > old_al);
     return a;
 }
 

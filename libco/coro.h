@@ -125,7 +125,7 @@ coro_run(struct coro *c) {
 
 static inline int
 coro_schedule(struct coro *c) {
-    struct co_event_scheduler now = co_event_schedule_after(&c->loop->base.sched, co_u128_value(0));
+    struct co_event_scheduler now = co_event_schedule_after(&c->loop->base.sched, CO_U128(0));
     return co_event_scheduler_connect(&now, co_callback_bind(&coro_run, c));
 }
 
@@ -157,7 +157,7 @@ static inline int
 coro_inner_code(struct coro *c) {
     if (c->body.function(c->body.data))
         return -1;
-    struct co_event_scheduler now = co_event_schedule_after(&c->loop->base.sched, co_u128_value(0));
+    struct co_event_scheduler now = co_event_schedule_after(&c->loop->base.sched, CO_U128(0));
     for (size_t i = 0; i < c->done.slots.size; i++) {
         if (co_event_scheduler_connect(&now, c->done.slots.data[i])) {
             while (i--)
