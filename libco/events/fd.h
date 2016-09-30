@@ -1,8 +1,18 @@
 #pragma once
 #include "../generic/closure.h"
+#include "../generic/time.h"
 
+#include <stdlib.h>
 #include <unistd.h>
 #include <sys/epoll.h>
+
+#if !defined(COROUTINE_EPOLL) && defined(__linux__)
+#define COROUTINE_EPOLL 1
+#endif
+
+#ifndef COROUTINE_FD_BUCKETS
+#define COROUTINE_FD_BUCKETS 127
+#endif
 
 struct co_fd_duplex;
 
@@ -15,16 +25,24 @@ struct co_event_fd
 struct co_fd_duplex
 {
     int fd;
+#if COROUTINE_EPOLL
     int epoll;
+    struct epoll_event params;
+#else
+    fd_set *fdsets;
+#endif
     struct co_event_fd read;
     struct co_event_fd write;
-    struct epoll_event params;
     struct co_fd_duplex *link;
 };
 
 struct co_fd_set
 {
+#if COROUTINE_EPOLL
     int epoll;
+#else
+    fd_set fdsets[2];
+#endif
     struct co_fd_duplex *fds[COROUTINE_FD_BUCKETS];
 };
 
@@ -33,8 +51,13 @@ co_event_fd_connect(struct co_event_fd *ev, struct co_closure cb) {
     if (ev->cb.function)
         return -1;
     ev->cb = cb;
+#if COROUTINE_EPOLL
     ev->parent->params.events |= ev == &ev->parent->read ? EPOLLIN : EPOLLOUT;
     return epoll_ctl(ev->parent->epoll, EPOLL_CTL_MOD, ev->parent->fd, &ev->parent->params);
+#else
+    FD_SET(ev->parent->fd, &ev->parent->fdsets[ev != &ev->parent->read]);
+    return 0;
+#endif
 }
 
 static inline int
@@ -42,8 +65,13 @@ co_event_fd_disconnect(struct co_event_fd *ev, struct co_closure cb) {
     if (ev->cb.function != cb.function || ev->cb.data != cb.data)
         return -1;
     ev->cb = (struct co_closure){};
+#if COROUTINE_EPOLL
     ev->parent->params.events &= ~(ev == &ev->parent->read ? EPOLLIN : EPOLLOUT);
     return epoll_ctl(ev->parent->epoll, EPOLL_CTL_MOD, ev->parent->fd, &ev->parent->params);
+#else
+    FD_CLR(ev->parent->fd, &ev->parent->fdsets[ev != &ev->parent->read]);
+    return 0;
+#endif
 }
 
 static inline int
@@ -60,20 +88,31 @@ co_fd_duplex_alloc(struct co_fd_set *set, int fd) {
         return NULL;
     *x = (struct co_fd_duplex){
         .fd     = fd,
+    #if COROUTINE_EPOLL
         .epoll  = set->epoll,
+        .params = {EPOLLRDHUP | EPOLLHUP | EPOLLET | EPOLLONESHOT, {.ptr = x}},
+    #else
+        .fdsets = &set->fdsets[0],
+    #endif
         .read   = {.parent = x},
         .write  = {.parent = x},
-        .params = {EPOLLRDHUP | EPOLLHUP | EPOLLET | EPOLLONESHOT, {.ptr = x}},
         .link   = set->fds[fd % COROUTINE_FD_BUCKETS],
     };
     set->fds[fd % COROUTINE_FD_BUCKETS] = x;
+#if COROUTINE_EPOLL
     epoll_ctl(set->epoll, EPOLL_CTL_ADD, fd, &x->params);
+#endif
     return x;
 }
 
 static inline void
 co_fd_duplex_dealloc(struct co_fd_set *set, struct co_fd_duplex *ev) {
+#if COROUTINE_EPOLL
     epoll_ctl(ev->epoll, EPOLL_CTL_DEL, ev->fd, NULL);
+#else
+    FD_CLR(ev->fd, &set->fdsets[0]);
+    FD_CLR(ev->fd, &set->fdsets[1]);
+#endif
     struct co_fd_duplex **b = &set->fds[ev->fd % COROUTINE_FD_BUCKETS];
     while (*b != ev) b = &(*b)->link;
     *b = ev->link;
@@ -95,8 +134,13 @@ co_fd_duplex(struct co_fd_set *set, int fd) {
 
 static inline int
 co_fd_set_init(struct co_fd_set *set) {
+#if COROUTINE_EPOLL
     *set = (struct co_fd_set){.epoll = epoll_create1(0)};
     return set->epoll < 0 ? -1 : 0;
+#else
+    *set = (struct co_fd_set){};
+    return 0;
+#endif
 }
 
 static inline void
@@ -104,11 +148,14 @@ co_fd_set_fini(struct co_fd_set *set) {
     for (int i = 0; i < COROUTINE_FD_BUCKETS; i++)
         while (set->fds[i])
             co_fd_duplex_dealloc(set, set->fds[i]);
+#if COROUTINE_EPOLL
     close(set->epoll);
+#endif
 }
 
 static inline int
 co_fd_set_emit(struct co_fd_set *set, struct co_nsec_offset timeout) {
+#if COROUTINE_EPOLL
     struct epoll_event evs[32];
     int ms = (int)co_u128_div(timeout, 1000000ul).L;
     int got = epoll_wait(set->epoll, evs, sizeof(evs) / sizeof(evs[0]), ms == 0 ? -1 : ms);
@@ -123,5 +170,27 @@ co_fd_set_emit(struct co_fd_set *set, struct co_nsec_offset timeout) {
                 co_fd_duplex_dealloc(set, c);
         }
     }
+#else
+    int max_fd = 0;
+    for (size_t i = 0; i < COROUTINE_FD_BUCKETS; i++)
+        for (const struct co_fd_duplex *d = set->fds[i]; d; d = d->link)
+            if (max_fd <= d->fd)
+                max_fd = d->fd + 1;
+    fd_set rready = set->fdsets[0], wready = set->fdsets[1];
+    struct timeval us = {co_u128_div(timeout, 1000000000ul).L, co_u128_div(timeout, 1000ul).L % 1000000u};
+    int got = select(max_fd, &rready, &wready, NULL, co_u128_eq(timeout, CO_U128(0)) ? NULL : &us);
+    if (got > 0) {
+        for (size_t i = 0; i < COROUTINE_FD_BUCKETS; i++) {
+            for (struct co_fd_duplex *d = set->fds[i]; d; d = d->link) {
+                if (FD_ISSET(d->fd, &rready))
+                    co_event_fd_emit(&d->read);
+                if (FD_ISSET(d->fd, &wready))
+                    co_event_fd_emit(&d->write);
+                if (d->read.cb.function == NULL && d->write.cb.function == NULL)
+                    co_fd_duplex_dealloc(set, d);
+            }
+        }
+    }
+#endif
     return got < 0 ? -1 : 0;
 }

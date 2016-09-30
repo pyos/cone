@@ -8,8 +8,7 @@ ARCHIVE = ar rcs
 
 _require_headers = \
 	libco/coro.h             \
-	libco/events.h           \
-	libco/events/epoll.h     \
+	libco/events/fd.h        \
     libco/events/time.h      \
     libco/events/vec.h       \
 	libco/evloop.h           \

@@ -1,5 +1,7 @@
 #pragma once
-#include "events.h"
+#include "events/fd.h"
+#include "events/time.h"
+#include "events/vec.h"
 
 #include <errno.h>
 #include <fcntl.h>

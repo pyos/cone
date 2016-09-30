@@ -1,4 +1,9 @@
 #pragma once
+#include "evloop.h"
+
+#include <stdio.h>
+#include <assert.h>
+#include <string.h>
 
 #if !defined(COROUTINE_XCHG_RSP) && defined(__linux__) && defined(__x86_64__)
 #define COROUTINE_XCHG_RSP 1
@@ -8,11 +13,6 @@
 #define COROUTINE_DEFAULT_STACK 65536
 #endif
 
-#include "evloop.h"
-
-#include <stdio.h>
-#include <assert.h>
-#include <string.h>
 #if !COROUTINE_XCHG_RSP
 #include <ucontext.h>
 #endif
