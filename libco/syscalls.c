@@ -55,21 +55,21 @@ __co_libc_init(void) {
 }
 
 
-#define LOOP(mode, f, fd, ...)                                           \
-    do {                                                                 \
-        __co_libc_init();                                                \
-        struct coro *c = coro_current;                                   \
-        if (!c)                                                          \
-            return f(fd, ##__VA_ARGS__);                                 \
-        __typeof__(f(fd, ##__VA_ARGS__)) r;                              \
-        r = (__typeof__(r))-1;                                           \
-        while ((r = f(fd, ##__VA_ARGS__)) == (__typeof__(r))-1 &&        \
-               (errno == EWOULDBLOCK || errno == EAGAIN)) {              \
-            struct co_fd_event *ev = co_fd_event(&c->loop->base.io, fd); \
-            if (ev == NULL || coro_pause(c, &ev->mode.as_event))         \
-                return r;                                                \
-        }                                                                \
-        return r;                                                        \
+#define LOOP(mode, f, fd, ...)                                             \
+    do {                                                                   \
+        __co_libc_init();                                                  \
+        struct coro *c = coro_current;                                     \
+        if (!c)                                                            \
+            return f(fd, ##__VA_ARGS__);                                   \
+        __typeof__(f(fd, ##__VA_ARGS__)) r;                                \
+        r = (__typeof__(r))-1;                                             \
+        while ((r = f(fd, ##__VA_ARGS__)) == (__typeof__(r))-1 &&          \
+               (errno == EWOULDBLOCK || errno == EAGAIN)) {                \
+            struct co_fd_duplex *ev = co_fd_duplex(&c->loop->base.io, fd); \
+            if (ev == NULL || coro_pause_fd(c, &ev->mode))                 \
+                return r;                                                  \
+        }                                                                  \
+        return r;                                                          \
     } while (0)
 
 
@@ -127,7 +127,7 @@ ssize_t sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         if (c == NULL)                                                                       \
             return f(__VA_ARGS__);                                                           \
         struct co_event_scheduler sc = co_event_schedule_after(&c->loop->base.sched, total); \
-        return coro_pause(c, &sc.as_event);                                                  \
+        return coro_pause_scheduler(c, &sc);                                                 \
     } while (0)
 
 unsigned sleep(unsigned seconds) {
@@ -147,7 +147,7 @@ int sched_yield(void) {
     if (c) {
         if (co_loop_ping(&c->loop->base))
             return -1;
-        return coro_pause(c, &c->loop->base.on_ping.as_event);
+        return coro_pause_vec(c, &c->loop->base.on_ping);
     }
 #ifdef _POSIX_PRIORITY_SCHEDULING
     __co_libc_init();

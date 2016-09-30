@@ -125,22 +125,26 @@ coro_run(struct coro *c) {
 static inline int
 coro_schedule(struct coro *c) {
     struct co_event_scheduler now = co_event_schedule_after(&c->loop->base.sched, co_u128_value(0));
-    return co_event_schedule_connect(&now, co_callback_bind(&coro_run, c));
+    return co_event_scheduler_connect(&now, co_callback_bind(&coro_run, c));
 }
 
-static inline int
-coro_pause(struct coro *c, struct co_event *ev) {
- // int interruptible = ev->disconnect != NULL;
-    if (ev->connect(ev, co_callback_bind(&coro_schedule, c)))
-        return -1;
-    co_context_leave(&c->context);
-    return 0;
-}
+#define __coro_pausable_with(t)                                              \
+    static inline int                                                        \
+    coro_pause_##t(struct coro *c, struct co_event_##t *ev) {                \
+        if (co_event_##t##_connect(ev, co_callback_bind(&coro_schedule, c))) \
+            return -1;                                                       \
+        co_context_leave(&(c)->context);                                     \
+        return 0;                                                            \
+    }
+__coro_pausable_with(fd);
+__coro_pausable_with(vec);
+__coro_pausable_with(scheduler);
+#undef __coro_pausable_with
 
 static inline void
 coro_join(struct coro *c) {
     if (c->loop)
-        coro_pause(coro_current, &c->done.as_event);
+        coro_pause_vec(coro_current, &c->done);
 }
 
 static inline void
@@ -153,7 +157,15 @@ coro_inner_code(struct coro *c) {
     if (c->body.function(c->body.data))
         return -1;
     struct co_event_scheduler now = co_event_schedule_after(&c->loop->base.sched, co_u128_value(0));
-    return co_event_vec_move(&c->done, &now.as_event);
+    for (size_t i = 0; i < c->done.slots.size; i++) {
+        if (co_event_scheduler_connect(&now, c->done.slots.data[i])) {
+            while (i--)
+                co_vec_erase(&c->done.slots, i);
+            return -1;
+        }
+    }
+    co_vec_fini(&c->done.slots);
+    return 0;
 }
 
 static inline int

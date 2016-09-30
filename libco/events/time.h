@@ -1,7 +1,7 @@
 #pragma once
+#include "../generic/callback.h"
 #include "../generic/time.h"
 #include "../generic/vec.h"
-#include "base.h"
 
 struct co_call_at
 {
@@ -16,13 +16,12 @@ struct co_event_schedule
 
 struct co_event_scheduler
 {
-    struct co_event as_event;
     struct co_event_schedule *parent;
     struct co_nsec_offset delay;
 };
 
 static inline int
-co_event_schedule_connect(struct co_event_scheduler *sc, struct co_callback cb) {
+co_event_scheduler_connect(struct co_event_scheduler *sc, struct co_callback cb) {
     struct co_event_schedule *ev = sc->parent;
     struct co_call_at tcb = {cb, co_u128_add(co_nsec_monotonic(), sc->delay)};
     for (size_t i = 0; i < ev->queue.size; i++)
@@ -33,7 +32,7 @@ co_event_schedule_connect(struct co_event_scheduler *sc, struct co_callback cb) 
 
 static inline struct co_event_scheduler
 co_event_schedule_after(struct co_event_schedule *ev, struct co_nsec_offset t) {
-    return (struct co_event_scheduler){co_event_impl(&co_event_schedule_connect, NULL), ev, t};
+    return (struct co_event_scheduler){ev, t};
 }
 
 static inline struct co_nsec_offset

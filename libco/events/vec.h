@@ -1,10 +1,9 @@
 #pragma once
+#include "../generic/callback.h"
 #include "../generic/vec.h"
-#include "base.h"
 
 struct co_event_vec
 {
-    struct co_event as_event;
     struct co_vec(struct co_callback) slots;
 };
 
@@ -36,22 +35,9 @@ co_event_vec_emit(struct co_event_vec *ev) {
     return 0;
 }
 
-static inline int
-co_event_vec_move(struct co_event_vec *ev, struct co_event *target) {
-    for (size_t i = 0; i < ev->slots.size; i++) {
-        if (target->connect(target, ev->slots.data[i])) {
-            while (i--)
-                co_vec_erase(&ev->slots, i);
-            return -1;
-        }
-    }
-    co_vec_fini(&ev->slots);
-    return 0;
-}
-
 static inline void
 co_event_vec_init(struct co_event_vec *ev) {
-    *ev = (struct co_event_vec){co_event_impl(&co_event_vec_connect, &co_event_vec_disconnect), {}};
+    *ev = (struct co_event_vec){};
 }
 
 static inline void
