@@ -1,24 +1,31 @@
 CC     ?= gcc
 CFLAGS ?= -O3
 
-COMPILE = $(CC) -std=c11 -I. -Wall -Wextra -fPIC $(CFLAGS) -o
+COMPILE = $(CC) -std=c11 -I. -Wall -Wextra -fPIC $(CFLAGS) -D_GNU_SOURCE -o
 DYNLINK = $(CC) -shared -o
 ARCHIVE = ar rcs
 
 
 _require_headers = \
+	libco/coro.h             \
 	libco/events.h           \
+	libco/events/epoll.h     \
+    libco/events/time.h      \
+    libco/events/vec.h       \
 	libco/evloop.h           \
-	libco/coro.h
+	libco/generic/callback.h \
+	libco/generic/time.h     \
+	libco/generic/u128.h     \
+	libco/generic/vec.h
 
 
 _require_objects = \
-	obj/coro.o     \
-	obj/syscalls.o
+	obj/coro.o
 
 
 _require_tests = \
-	obj/test_simple \
+	obj/test_simple      \
+	obj/test_time_switch \
 	obj/test_cno
 
 

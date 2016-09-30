@@ -37,37 +37,6 @@ co_loop_consume_ping(struct co_loop *loop) {
 }
 
 static inline int
-co_loop_run(struct co_loop *loop) {
-    assert("aio::evloop::run must not call itself" && !atomic_load(&loop->running));
-    for (atomic_store(&loop->running, true); atomic_load(&loop->running); ) {
-        struct co_nsec_offset timeout = co_event_schedule_emit(&loop->sched);
-        if (co_u128_eq(timeout, CO_U128_MAX))
-            return -1;
-        errno = 0;
-        if (co_fd_set_emit(&loop->io, timeout) && errno != EINTR)
-            return -1;
-    }
-    return 0;
-}
-
-static inline int
-co_loop_ping(struct co_loop *loop) {
-    bool expect = false;
-    if (!atomic_compare_exchange_strong(&loop->pinged, &expect, true) || write(loop->ping_w, "", 1) == 1)
-        return 0;
-    atomic_store(&loop->pinged, false);
-    return -1;
-}
-
-static inline int
-co_loop_stop(struct co_loop *loop) {
-    bool expect = true;
-    if (atomic_compare_exchange_strong(&loop->running, &expect, false))
-        return co_loop_ping(loop);
-    return -1;
-}
-
-static inline int
 co_loop_fini(struct co_loop *loop) {
     int ret = co_event_vec_emit(&loop->on_exit);
     close(loop->ping_r);
@@ -101,4 +70,35 @@ co_loop_init(struct co_loop *loop) {
     }
     co_event_fd_connect(&ev->read, co_callback_bind(&co_loop_consume_ping, loop));
     return 0;
+}
+
+static inline int
+co_loop_run(struct co_loop *loop) {
+    assert("aio::evloop::run must not call itself" && !atomic_load(&loop->running));
+    for (atomic_store(&loop->running, true); atomic_load(&loop->running); ) {
+        struct co_nsec_offset timeout = co_event_schedule_emit(&loop->sched);
+        if (co_u128_eq(timeout, CO_U128_MAX))
+            return -1;
+        errno = 0;
+        if (co_fd_set_emit(&loop->io, timeout) && errno != EINTR)
+            return -1;
+    }
+    return 0;
+}
+
+static inline int
+co_loop_ping(struct co_loop *loop) {
+    bool expect = false;
+    if (!atomic_compare_exchange_strong(&loop->pinged, &expect, true) || write(loop->ping_w, "", 1) == 1)
+        return 0;
+    atomic_store(&loop->pinged, false);
+    return -1;
+}
+
+static inline int
+co_loop_stop(struct co_loop *loop) {
+    bool expect = true;
+    if (atomic_compare_exchange_strong(&loop->running, &expect, false))
+        return co_loop_ping(loop);
+    return -1;
 }

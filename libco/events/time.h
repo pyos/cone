@@ -20,14 +20,14 @@ struct co_event_scheduler
     struct co_nsec_offset delay;
 };
 
-static inline int
-co_event_scheduler_connect(struct co_event_scheduler *sc, struct co_callback cb) {
-    struct co_event_schedule *ev = sc->parent;
-    struct co_call_at tcb = {cb, co_u128_add(co_nsec_monotonic(), sc->delay)};
-    for (size_t i = 0; i < ev->queue.size; i++)
-        if (co_u128_lt(tcb.time, ev->queue.data[i].time))
-            return co_vec_insert(&ev->queue, i, &tcb);
-    return co_vec_append(&ev->queue, &tcb);
+static inline void
+co_event_schedule_init(struct co_event_schedule *ev) {
+    *ev = (struct co_event_schedule){};
+}
+
+static inline void
+co_event_schedule_fini(struct co_event_schedule *ev) {
+    co_vec_fini(&ev->queue);
 }
 
 static inline struct co_event_scheduler
@@ -49,12 +49,12 @@ co_event_schedule_emit(struct co_event_schedule *ev) {
     return (struct co_nsec_offset){};
 }
 
-static inline void
-co_event_schedule_init(struct co_event_schedule *ev) {
-    *ev = (struct co_event_schedule){};
-}
-
-static inline void
-co_event_schedule_fini(struct co_event_schedule *ev) {
-    co_vec_fini(&ev->queue);
+static inline int
+co_event_scheduler_connect(struct co_event_scheduler *sc, struct co_callback cb) {
+    struct co_event_schedule *ev = sc->parent;
+    struct co_call_at tcb = {cb, co_u128_add(co_nsec_monotonic(), sc->delay)};
+    for (size_t i = 0; i < ev->queue.size; i++)
+        if (co_u128_lt(tcb.time, ev->queue.data[i].time))
+            return co_vec_insert(&ev->queue, i, &tcb);
+    return co_vec_append(&ev->queue, &tcb);
 }

@@ -71,19 +71,11 @@ co_fd_duplex_alloc(struct co_fd_set *set, int fd) {
 
 static inline void
 co_fd_duplex_dealloc(struct co_fd_set *set, struct co_fd_duplex *ev) {
-    if (ev->read.cb.function != NULL || ev->write.cb.function != NULL)
-        return;
     epoll_ctl(ev->epoll, EPOLL_CTL_DEL, ev->fd, NULL);
     struct co_fd_duplex **b = &set->fds[ev->fd % COROUTINE_FD_BUCKETS];
     while (*b != ev) b = &(*b)->link;
     *b = ev->link;
     free(ev);
-}
-
-static inline void
-co_fd_duplex_force_dealloc(struct co_fd_set *set, struct co_fd_duplex *ev) {
-    ev->read.cb = ev->write.cb = (struct co_callback){};
-    co_fd_duplex_dealloc(set, ev);
 }
 
 static inline struct co_fd_duplex *
@@ -99,6 +91,21 @@ co_fd_duplex(struct co_fd_set *set, int fd) {
     return ev != NULL ? ev : co_fd_duplex_alloc(set, fd);
 }
 
+static inline void
+co_fd_set_init(struct co_fd_set *set) {
+    *set = (struct co_fd_set){epoll_create1(0), {}};
+}
+
+static inline void
+co_fd_set_fini(struct co_fd_set *set) {
+    if (set->epoll < 0)
+        return;
+    for (int i = 0; i < COROUTINE_FD_BUCKETS; i++)
+        while (set->fds[i])
+            co_fd_duplex_dealloc(set, set->fds[i]);
+    close(set->epoll);
+}
+
 static inline int
 co_fd_set_emit(struct co_fd_set *set, struct co_nsec_offset timeout) {
     struct epoll_event evs[32];
@@ -111,23 +118,9 @@ co_fd_set_emit(struct co_fd_set *set, struct co_nsec_offset timeout) {
                 co_event_fd_emit(&c->read);
             if (ev->events & (EPOLLOUT | EPOLLERR | EPOLLHUP))
                 co_event_fd_emit(&c->write);
-            co_fd_duplex_dealloc(set, c);
+            if (c->read.cb.function == NULL && c->write.cb.function == NULL)
+                co_fd_duplex_dealloc(set, c);
         }
     }
     return got < 0 ? -1 : 0;
-}
-
-static inline void
-co_fd_set_init(struct co_fd_set *set) {
-    *set = (struct co_fd_set){epoll_create1(0), {}};
-}
-
-static inline void
-co_fd_set_fini(struct co_fd_set *set) {
-    if (set->epoll < 0)
-        return;
-    for (int i = 0; i < COROUTINE_FD_BUCKETS; i++)
-        while (set->fds[i])
-            co_fd_duplex_force_dealloc(set, set->fds[i]);
-    close(set->epoll);
 }

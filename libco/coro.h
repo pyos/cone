@@ -6,6 +6,7 @@
 #include "evloop.h"
 
 #include <stdio.h>
+#include <assert.h>
 #include <string.h>
 #if !COROUTINE_X86_64_SYSV_CTX
 #include <ucontext.h>

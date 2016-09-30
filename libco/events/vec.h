@@ -7,6 +7,16 @@ struct co_event_vec
     struct co_vec(struct co_callback) slots;
 };
 
+static inline void
+co_event_vec_init(struct co_event_vec *ev) {
+    *ev = (struct co_event_vec){};
+}
+
+static inline void
+co_event_vec_fini(struct co_event_vec *ev) {
+    co_vec_fini(&ev->slots);
+}
+
 static inline int
 co_event_vec_connect(struct co_event_vec *ev, struct co_callback cb) {
     return co_vec_append(&ev->slots, &cb);
@@ -33,14 +43,4 @@ co_event_vec_emit(struct co_event_vec *ev) {
                 return -1;
     }
     return 0;
-}
-
-static inline void
-co_event_vec_init(struct co_event_vec *ev) {
-    *ev = (struct co_event_vec){};
-}
-
-static inline void
-co_event_vec_fini(struct co_event_vec *ev) {
-    co_vec_fini(&ev->slots);
 }
