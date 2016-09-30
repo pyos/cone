@@ -56,16 +56,18 @@ co_event_fd_emit(struct co_event_fd *ev) {
 static inline struct co_fd_duplex *
 co_fd_duplex_alloc(struct co_fd_set *set, int fd) {
     struct co_fd_duplex *x = (struct co_fd_duplex *)malloc(sizeof(struct co_fd_duplex));
-    if (x != NULL) {
-        x->fd     = fd;
-        x->epoll  = set->epoll;
-        x->read   = (struct co_event_fd){.parent = x};
-        x->write  = (struct co_event_fd){.parent = x};
-        x->params = (struct epoll_event){EPOLLRDHUP | EPOLLHUP | EPOLLET | EPOLLONESHOT, {.ptr = x}};
-        x->link   = set->fds[fd % COROUTINE_FD_BUCKETS];
-        epoll_ctl(set->epoll, EPOLL_CTL_ADD, fd, &x->params);
-        set->fds[fd % COROUTINE_FD_BUCKETS] = x;
-    }
+    if (x == NULL)
+        return NULL;
+    *x = (struct co_fd_duplex){
+        .fd     = fd,
+        .epoll  = set->epoll,
+        .read   = {.parent = x},
+        .write  = {.parent = x},
+        .params = {EPOLLRDHUP | EPOLLHUP | EPOLLET | EPOLLONESHOT, {.ptr = x}},
+        .link   = set->fds[fd % COROUTINE_FD_BUCKETS],
+    };
+    set->fds[fd % COROUTINE_FD_BUCKETS] = x;
+    epoll_ctl(set->epoll, EPOLL_CTL_ADD, fd, &x->params);
     return x;
 }
 
@@ -91,15 +93,14 @@ co_fd_duplex(struct co_fd_set *set, int fd) {
     return ev != NULL ? ev : co_fd_duplex_alloc(set, fd);
 }
 
-static inline void
+static inline int
 co_fd_set_init(struct co_fd_set *set) {
     *set = (struct co_fd_set){.epoll = epoll_create1(0)};
+    return set->epoll < 0 ? -1 : 0;
 }
 
 static inline void
 co_fd_set_fini(struct co_fd_set *set) {
-    if (set->epoll < 0)
-        return;
     for (int i = 0; i < COROUTINE_FD_BUCKETS; i++)
         while (set->fds[i])
             co_fd_duplex_dealloc(set, set->fds[i]);
