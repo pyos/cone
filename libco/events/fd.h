@@ -1,6 +1,5 @@
 #pragma once
-#include "../generic/closure.h"
-#include "../generic/time.h"
+#include "closure.h"
 
 #include <stdlib.h>
 #include <unistd.h>

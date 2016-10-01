@@ -1,27 +1,27 @@
 #pragma once
-#include "../generic/closure.h"
-#include "../generic/vec.h"
+#include "closure.h"
+#include "../generic/vec~~closure.h"
 
 struct co_event_vec
 {
-    struct co_vec(struct co_closure) slots;
+    struct co_vec_closure slots;
 };
 
 static inline void
 co_event_vec_fini(struct co_event_vec *ev) {
-    co_vec_fini(&ev->slots);
+    co_vec_closure_fini(&ev->slots);
 }
 
 static inline int
 co_event_vec_connect(struct co_event_vec *ev, struct co_closure cb) {
-    return co_vec_append(&ev->slots, &cb);
+    return co_vec_closure_append(&ev->slots, &cb);
 }
 
 static inline int
 co_event_vec_disconnect(struct co_event_vec *ev, struct co_closure cb) {
     for (size_t i = 0; i < ev->slots.size; i++) {
         if (ev->slots.data[i].function == cb.function && ev->slots.data[i].data == cb.data) {
-            co_vec_erase(&ev->slots, i);
+            co_vec_closure_erase(&ev->slots, i);
             return 0;
         }
     }

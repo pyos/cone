@@ -157,7 +157,7 @@ coro_inner_code(struct coro *c) {
     for (size_t i = 0; i < c->done.slots.size; i++)
         if (co_event_scheduler_connect(&now, c->done.slots.data[i]))
             goto terminate;
-    co_vec_fini(&c->done.slots);
+    co_event_vec_fini(&c->done);
     co_context_leave(&c->context);
 terminate:
     assert("coroutine body must not fail" && 0);

@@ -8,14 +8,14 @@ ARCHIVE = ar rcs
 
 _require_headers = \
 	libco/coro.h             \
+	libco/events/closure.h   \
 	libco/events/fd.h        \
     libco/events/time.h      \
     libco/events/vec.h       \
 	libco/evloop.h           \
-	libco/generic/closure.h  \
 	libco/generic/time.h     \
 	libco/generic/u128.h     \
-	libco/generic/vec.h
+	libco/generic
 
 
 _require_objects = \
@@ -34,11 +34,21 @@ _require_tests = \
 
 all: $(_require_tests)
 
+clean:
+	rm -rf obj
+
+clean_all: clean
+	$(MAKE) -C libcno clean
+	$(MAKE) -C libco/generic clean
+
 libcno/.git: .gitmodules
 	git submodule update --init libcno
 
 libcno/obj/libcno.a: libcno/.git
 	$(MAKE) -C libcno obj/libcno.a
+
+libco/generic:
+	$(MAKE) -C libco/generic
 
 obj/%.o: libco/%.c $(_require_headers)
 	@mkdir -p obj
@@ -50,9 +60,3 @@ obj/test_%.o: tests/%.c libcno/.git $(_require_headers)
 
 obj/test_%: obj/test_%.o libcno/obj/libcno.a $(_require_objects)
 	$(COMPILE) $@ $< $(_require_objects) -Llibcno/obj -ldl -lcno -pthread
-
-clean:
-	rm -rf obj
-
-clean_all: clean
-	$(MAKE) -C libcno clean
