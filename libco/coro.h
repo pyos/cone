@@ -176,22 +176,25 @@ coro_incref(struct coro *c) {
     return c;
 }
 
-static inline void
+static inline int
 coro_decref(struct coro *c) {
-    if (--c->refcount)
-        return;
-    coro_fini(c);
-    free(c);
+    if (c == NULL)
+        return -1;
+    if (--c->refcount == 0) {
+        coro_fini(c);
+        free(c);
+    }
+    return 0;
 }
 
 static inline int
 coro_deschedule(struct coro *c) {
-    if (c->prev)
-        c->prev->next = c->next;
-    else
-        c->loop->active = c->next;
     if (c->next)
         c->next->prev = c->prev;
+    if (c->prev)
+        c->prev->next = c->next;
+    else if ((c->loop->active = c->next) == NULL)
+        co_loop_stop(&c->loop->base);
     c->prev = c->next = NULL;
     coro_decref(c);
     return 0;
@@ -226,21 +229,9 @@ static inline int
 coro_main(struct co_closure body) {
     struct co_coro_loop loop;
     if (co_coro_loop_init(&loop))
-        goto err_init;
-    struct coro *c = coro_alloc(&loop, 0, body);
-    if (c == NULL)
-        goto err_coro;
-    coro_decref(c);
-    while (loop.active) {
-        if (co_event_vec_connect(&loop.active->done, co_bind(&co_loop_stop, &loop.base)))
-            goto err_coro;
-        if (co_loop_run(&loop.base))
-            goto err_coro;
-    }
-    return 0;
-
-err_coro:
+        return -1;
+    int ok = !coro_decref(coro_alloc(&loop, 0, body))
+          && !co_loop_run(&loop.base);
     co_coro_loop_fini(&loop);
-err_init:
-    return -1;
+    return ok ? 0 : -1;
 }
