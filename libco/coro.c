@@ -1,9 +1,6 @@
 #include "coro.h"
 
-#include <time.h>
-#include <errno.h>
 #include <dlfcn.h>
-#include <unistd.h>
 #include <sys/socket.h>
 
 _Thread_local struct coro * volatile coro_current;

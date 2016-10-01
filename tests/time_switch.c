@@ -5,6 +5,7 @@
 #include "../libco/coro.h"
 
 #include <sched.h>
+#include <stdio.h>
 
 //static const int COROS = 1000000;
 static const int YIELDS_PER_CORO = 1000000;

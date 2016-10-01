@@ -1,9 +1,6 @@
 #pragma once
 #include "evloop.h"
 
-#include <stdio.h>
-#include <string.h>
-
 #if !defined(COROUTINE_XCHG_RSP) && defined(__linux__) && defined(__x86_64__)
 #define COROUTINE_XCHG_RSP 1
 #endif

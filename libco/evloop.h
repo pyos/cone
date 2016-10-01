@@ -4,7 +4,6 @@
 #include "events/vec.h"
 
 #include <fcntl.h>
-#include <unistd.h>
 #include <stdbool.h>
 #include <stdatomic.h>
 
