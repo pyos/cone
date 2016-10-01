@@ -5,7 +5,6 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <assert.h>
 #include <unistd.h>
 #include <stdbool.h>
 #include <stdatomic.h>
@@ -69,7 +68,6 @@ co_loop_init(struct co_loop *loop) {
 
 static inline int
 co_loop_run(struct co_loop *loop) {
-    assert("aio::evloop::run must not call itself" && !atomic_load(&loop->running));
     for (atomic_store(&loop->running, true); atomic_load(&loop->running); ) {
         struct co_nsec_offset timeout = co_event_schedule_emit(&loop->sched);
         if (co_u128_eq(timeout, CO_U128_MAX))

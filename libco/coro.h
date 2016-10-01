@@ -2,7 +2,6 @@
 #include "evloop.h"
 
 #include <stdio.h>
-#include <assert.h>
 #include <string.h>
 
 #if !defined(COROUTINE_XCHG_RSP) && defined(__linux__) && defined(__x86_64__)
@@ -106,7 +105,8 @@ co_coro_loop_init(struct co_coro_loop *loop) {
 
 static inline int
 co_coro_loop_fini(struct co_coro_loop *loop) {
-    assert(loop->active == NULL);
+    if (loop->active != NULL)
+        abort();
     return co_loop_fini(&loop->base);
 }
 
@@ -160,7 +160,6 @@ coro_inner_code(struct coro *c) {
     co_event_vec_fini(&c->done);
     co_context_leave(&c->context);
 terminate:
-    assert("coroutine body must not fail" && 0);
     abort();
 }
 
