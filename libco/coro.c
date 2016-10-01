@@ -72,20 +72,20 @@ main(int argc, const char **argv) {
     return c.ret;
 }
 
-#define LOOP(mode, f, fd, ...)                                             \
-    do {                                                                   \
-        struct coro *c = coro_current;                                     \
-        if (!c)                                                            \
-            return f(fd, ##__VA_ARGS__);                                   \
-        __typeof__(f(fd, ##__VA_ARGS__)) r;                                \
-        r = (__typeof__(r))-1;                                             \
-        while ((r = f(fd, ##__VA_ARGS__)) == (__typeof__(r))-1 &&          \
-               (errno == EWOULDBLOCK || errno == EAGAIN)) {                \
-            struct co_fd_duplex *ev = co_fd_duplex(&c->loop->base.io, fd); \
-            if (ev == NULL || coro_pause_fd(c, &ev->mode))                 \
-                return r;                                                  \
-        }                                                                  \
-        return r;                                                          \
+#define LOOP(mode, f, fd, ...)                                                 \
+    do {                                                                       \
+        struct coro *c = coro_current;                                         \
+        if (!c)                                                                \
+            return f(fd, ##__VA_ARGS__);                                       \
+        __typeof__(f(fd, ##__VA_ARGS__)) r;                                    \
+        r = (__typeof__(r))-1;                                                 \
+        while ((r = f(fd, ##__VA_ARGS__)) == (__typeof__(r))-1 &&              \
+               (errno == EWOULDBLOCK || errno == EAGAIN)) {                    \
+            struct co_event_fd ev = co_event_fd_##mode(&c->loop->base.io, fd); \
+            if (coro_pause_fd(c, &ev))                                         \
+                return r;                                                      \
+        }                                                                      \
+        return r;                                                              \
     } while (0)
 
 int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {

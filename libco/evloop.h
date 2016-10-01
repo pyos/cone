@@ -30,10 +30,9 @@ static inline int
 co_loop_consume_ping(struct co_loop *loop) {
     ssize_t rd = read(loop->ping_r, &rd, sizeof(rd));  // never yields
     loop->pinged = 0;
-    struct co_fd_duplex *ev = co_fd_duplex(&loop->io, loop->ping_r);
-    if (ev == NULL)
+    struct co_event_fd ev = co_event_fd_read(&loop->io, loop->ping_r);
+    if (co_event_fd_connect(&ev, co_bind(&co_loop_consume_ping, loop)))
         return -1;
-    co_event_fd_connect(&ev->read, co_bind(&co_loop_consume_ping, loop));
     struct co_event_scheduler now = co_event_schedule_after(&loop->sched, CO_U128(0));
     return co_event_scheduler_connect(&now, co_bind(&co_event_vec_emit, &loop->on_ping));
 }
@@ -62,12 +61,9 @@ co_loop_init(struct co_loop *loop) {
     co_fd_set_init(&loop->io);
     setnonblocking(loop->ping_w);
 
-    struct co_fd_duplex *ev = co_fd_duplex(&loop->io, loop->ping_r);
-    if (ev == NULL) {
-        co_loop_fini(loop);
-        return -1;
-    }
-    co_event_fd_connect(&ev->read, co_bind(&co_loop_consume_ping, loop));
+    struct co_event_fd ev = co_event_fd_read(&loop->io, loop->ping_r);
+    if (co_event_fd_connect(&ev, co_bind(&co_loop_consume_ping, loop)))
+        return co_loop_fini(loop), -1;
     return 0;
 }
 
