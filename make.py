@@ -79,7 +79,7 @@ if len(sys.argv) == 1:
 
         for bin, srcs in bins.items():
             objs = ' '.join('obj/' + src.rpartition('.')[0] + '.o' for src in srcs)
-            print('obj/{0}: {1}\n\t$(CC) {2} {1} -o obj/{0} {3}'.format(bin, objs,
+            print('obj/{0}: {1}\n\t$(CC) {2} {1} $(CFLAGS) -o obj/{0} {3}'.format(bin, objs,
                 ' '.join(map('-L{}'.format, libpaths)),
                 ' '.join(map('-l{}'.format, libs))), file=m)
 
