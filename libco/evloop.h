@@ -16,8 +16,8 @@ setnonblocking(int fd) {
 
 struct co_loop
 {
-    size_t active;
-    volatile atomic_bool running, pinged;
+    volatile atomic_size_t active;
+    volatile atomic_bool pinged;
     int ping_r, ping_w;
     struct co_event_fd io;
     struct co_event_vec on_ping;
@@ -52,7 +52,7 @@ co_loop_init(struct co_loop *loop) {
     if (pipe2(fd, O_NONBLOCK))
         return -1;
     *loop = (struct co_loop){.ping_r = fd[0], .ping_w = fd[1]};
-    atomic_init(&loop->running, false);
+    atomic_init(&loop->active, 0);
     atomic_init(&loop->pinged, false);
     co_event_fd_init(&loop->io);
     setnonblocking(loop->ping_w);
@@ -63,7 +63,7 @@ co_loop_init(struct co_loop *loop) {
 
 static inline int
 co_loop_run(struct co_loop *loop) {
-    for (atomic_store(&loop->running, true); atomic_load_explicit(&loop->running, memory_order_acquire); )
+    while (atomic_load_explicit(&loop->active, memory_order_acquire))
         if (co_event_fd_emit(&loop->io, co_event_schedule_emit(&loop->sched)))
             return -1;
     return 0;
@@ -80,10 +80,14 @@ co_loop_ping(struct co_loop *loop) {
     return -1;
 }
 
+static inline void
+co_loop_inc(struct co_loop *loop) {
+    atomic_fetch_add_explicit(&loop->active, 1, memory_order_release);
+}
+
 static inline int
-co_loop_stop(struct co_loop *loop) {
-    bool expect = true;
-    if (atomic_compare_exchange_strong_explicit(&loop->running, &expect, false, memory_order_acq_rel, memory_order_relaxed))
+co_loop_dec(struct co_loop *loop) {
+    if (atomic_fetch_sub_explicit(&loop->active, 1, memory_order_release) == 1)
         return co_loop_ping(loop);
-    return -1;
+    return 0;
 }

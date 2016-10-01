@@ -63,13 +63,10 @@ int main(int argc, const char **argv) {
     return coro_main(co_bind(&co_run_amain, &c)) ? 1 : c.ret;
 }
 
-#define FDLOOP(fd, write, rettype, call) do {                           \
-    struct coro *c = coro_current;                                      \
-    rettype r = (rettype)-1;                                            \
-    while ((r = call) < 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) \
-        if (!c || coro_iowait(c, fd, write))                            \
-            break;                                                      \
-    return r;                                                           \
+#define FDLOOP(fd, write, rettype, call) do {                                                       \
+    rettype r = (rettype)-1;                                                                        \
+    while ((r = call) < 0 && (errno == EWOULDBLOCK || errno == EAGAIN) && !coro_iowait(fd, write)); \
+    return r;                                                                                       \
 } while (0)
 
 int listen(int fd, int backlog) {
@@ -117,23 +114,20 @@ ssize_t sendmsg(int fd, const struct msghdr *msg, int flags) {
 }
 
 unsigned sleep(unsigned sec) {
-    struct coro *c = coro_current;
-    return c ? coro_sleep(c, CO_U128((uint64_t)sec * 1000000000ull)) ? sec : 0 : co_libc_sleep(sec);
+    return coro_current ? coro_sleep(CO_U128((uint64_t)sec * 1000000000ull)) ? sec : 0 : co_libc_sleep(sec);
 }
 
 int usleep(useconds_t usec) {
-    struct coro *c = coro_current;
-    return c ? coro_sleep(c, CO_U128((uint64_t)usec * 1000u)) : co_libc_usleep(usec);
+    return coro_current ? coro_sleep(CO_U128((uint64_t)usec * 1000u)) : co_libc_usleep(usec);
 }
 
 int nanosleep(const struct timespec *req, struct timespec *rem) {
-    struct coro *c = coro_current;
-    return c ? coro_sleep(c, co_nsec_from_timespec(*req)) : co_libc_nanosleep(req, rem);
+    return coro_current ? coro_sleep(co_nsec_from_timespec(*req)) : co_libc_nanosleep(req, rem);
 }
 
 int sched_yield(void) {
     struct coro *c = coro_current;
-    return c ? co_loop_ping(c->loop) ? -1 : coro_wait(c, &c->loop->on_ping)
+    return c ? (co_loop_ping(c->loop) ? -1 : coro_wait(&c->loop->on_ping))
 #ifdef _POSIX_PRIORITY_SCHEDULING
              : co_libc_sched_yield();
 #else
