@@ -4,17 +4,7 @@
 #include <errno.h>
 #include <dlfcn.h>
 #include <unistd.h>
-#include <sys/types.h>
 #include <sys/socket.h>
-
-int amain(int argc, const char **argv);
-
-struct co_amain_ctx
-{
-    int ret;
-    int argc;
-    const char **argv;
-};
 
 _Thread_local struct coro * volatile coro_current;
 
@@ -36,8 +26,22 @@ static int      (*co_libc_nanosleep)   (const struct timespec *req, struct times
 static int      (*co_libc_sched_yield) ();
 #endif
 
-static void
-co_libc_init(void) {
+struct co_amain_ctx
+{
+    int ret;
+    int argc;
+    const char **argv;
+};
+
+int amain(int argc, const char **argv);
+
+static int
+co_run_amain(struct co_amain_ctx *c) {
+    c->ret = amain(c->argc, c->argv);
+    return 0;
+}
+
+int main(int argc, const char **argv) {
     co_libc_listen      = dlsym(RTLD_NEXT, "listen");
     co_libc_accept      = dlsym(RTLD_NEXT, "accept");
     co_libc_accept4     = dlsym(RTLD_NEXT, "accept4");
@@ -55,114 +59,84 @@ co_libc_init(void) {
     #ifdef _POSIX_PRIORITY_SCHEDULING
     co_libc_sched_yield = dlsym(RTLD_NEXT, "sched_yield");
     #endif
-}
-
-static int
-co_run_amain(struct co_amain_ctx *c) {
-    c->ret = amain(c->argc, c->argv);
-    return 0;
-}
-
-int
-main(int argc, const char **argv) {
-    co_libc_init();
     struct co_amain_ctx c = {1, argc, argv};
-    if (coro_main(co_bind(&co_run_amain, &c)))
-        return 1;
-    return c.ret;
+    return coro_main(co_bind(&co_run_amain, &c)) ? 1 : c.ret;
 }
 
-#define LOOP(mode, f, fd, ...)                                                 \
-    do {                                                                       \
-        struct coro *c = coro_current;                                         \
-        if (!c)                                                                \
-            return f(fd, ##__VA_ARGS__);                                       \
-        __typeof__(f(fd, ##__VA_ARGS__)) r;                                    \
-        r = (__typeof__(r))-1;                                                 \
-        while ((r = f(fd, ##__VA_ARGS__)) == (__typeof__(r))-1 &&              \
-               (errno == EWOULDBLOCK || errno == EAGAIN)) {                    \
-            struct co_event_fd ev = co_event_fd_##mode(&c->loop->base.io, fd); \
-            if (coro_pause_fd(c, &ev))                                         \
-                return r;                                                      \
-        }                                                                      \
-        return r;                                                              \
-    } while (0)
+#define FDLOOP(fd, write, rettype, call) do {                           \
+    struct coro *c = coro_current;                                      \
+    rettype r = (rettype)-1;                                            \
+    while ((r = call) < 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) \
+        if (!c || coro_iowait(c, fd, write))                            \
+            break;                                                      \
+    return r;                                                           \
+} while (0)
 
-int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
-    LOOP(read, co_libc_accept4, sockfd, addr, addrlen, SOCK_NONBLOCK);
+int listen(int fd, int backlog) {
+    return setnonblocking(fd) ? -1 : co_libc_listen(fd, backlog);
 }
 
-int listen(int sockfd, int backlog) {
-    return setnonblocking(sockfd) ? -1 : co_libc_listen(sockfd, backlog);
+int accept(int fd, struct sockaddr *addr, socklen_t *addrlen) {
+    FDLOOP(fd, 0, int, co_libc_accept4(fd, addr, addrlen, SOCK_NONBLOCK));
 }
 
-int accept4(int sockfd, struct sockaddr *addr, socklen_t *addrlen, int flags) {
-    LOOP(read, co_libc_accept4, sockfd, addr, addrlen, flags | SOCK_NONBLOCK);
+int accept4(int fd, struct sockaddr *addr, socklen_t *addrlen, int flags) {
+    FDLOOP(fd, 0, int, co_libc_accept4(fd, addr, addrlen, flags | SOCK_NONBLOCK));
 }
 
 ssize_t read(int fd, void *buf, size_t count) {
-    LOOP(read, co_libc_read, fd, buf, count);
+    FDLOOP(fd, 0, ssize_t, co_libc_read(fd, buf, count));
 }
 
-ssize_t recv(int sockfd, void *buf, size_t len, int flags) {
-    LOOP(read, co_libc_recv, sockfd, buf, len, flags);
+ssize_t recv(int fd, void *buf, size_t len, int flags) {
+    FDLOOP(fd, 0, ssize_t, co_libc_recv(fd, buf, len, flags));
 }
 
-ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags, struct sockaddr *src_addr, socklen_t *addrlen) {
-    LOOP(read, co_libc_recvfrom, sockfd, buf, len, flags, src_addr, addrlen);
+ssize_t recvfrom(int fd, void *buf, size_t len, int flags, struct sockaddr *src_addr, socklen_t *addrlen) {
+    FDLOOP(fd, 0, ssize_t, co_libc_recvfrom(fd, buf, len, flags, src_addr, addrlen));
 }
 
-ssize_t recvmsg(int sockfd, struct msghdr *msg, int flags) {
-    LOOP(read, co_libc_recvmsg, sockfd, msg, flags);
+ssize_t recvmsg(int fd, struct msghdr *msg, int flags) {
+    FDLOOP(fd, 0, ssize_t, co_libc_recvmsg(fd, msg, flags));
 }
 
 ssize_t write(int fd, const void *buf, size_t count) {
-    LOOP(write, co_libc_write, fd, buf, count);
+    FDLOOP(fd, 1, ssize_t, co_libc_write(fd, buf, count));
 }
 
-ssize_t send(int sockfd, const void *buf, size_t len, int flags) {
-    LOOP(write, co_libc_send, sockfd, buf, len, flags);
+ssize_t send(int fd, const void *buf, size_t len, int flags) {
+    FDLOOP(fd, 1, ssize_t, co_libc_send(fd, buf, len, flags));
 }
 
-ssize_t sendto(int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_addr, socklen_t addrlen) {
-    LOOP(write, co_libc_sendto, sockfd, buf, len, flags, dest_addr, addrlen);
+ssize_t sendto(int fd, const void *buf, size_t len, int flags, const struct sockaddr *dest_addr, socklen_t addrlen) {
+    FDLOOP(fd, 1, ssize_t, co_libc_sendto(fd, buf, len, flags, dest_addr, addrlen));
 }
 
-ssize_t sendmsg(int sockfd, const struct msghdr *msg, int flags) {
-    LOOP(write, co_libc_sendmsg, sockfd, msg, flags);
+ssize_t sendmsg(int fd, const struct msghdr *msg, int flags) {
+    FDLOOP(fd, 1, ssize_t, co_libc_sendmsg(fd, msg, flags));
 }
 
-#define SLEEP(f, total, ...)                                                                 \
-    do {                                                                                     \
-        struct coro *c = coro_current;                                                       \
-        if (c == NULL)                                                                       \
-            return f(__VA_ARGS__);                                                           \
-        struct co_event_scheduler sc = co_event_schedule_after(&c->loop->base.sched, total); \
-        return coro_pause_scheduler(c, &sc);                                                 \
-    } while (0)
-
-unsigned sleep(unsigned seconds) {
-    SLEEP(co_libc_sleep, CO_U128((uint64_t)seconds * 1000000000ull), seconds);
+unsigned sleep(unsigned sec) {
+    struct coro *c = coro_current;
+    return c ? coro_sleep(c, CO_U128((uint64_t)sec * 1000000000ull)) ? sec : 0 : co_libc_sleep(sec);
 }
 
 int usleep(useconds_t usec) {
-    SLEEP(co_libc_usleep, CO_U128((uint64_t)usec * 1000u), usec);
+    struct coro *c = coro_current;
+    return c ? coro_sleep(c, CO_U128((uint64_t)usec * 1000u)) : co_libc_usleep(usec);
 }
 
 int nanosleep(const struct timespec *req, struct timespec *rem) {
-    SLEEP(co_libc_nanosleep, co_nsec_from_timespec(*req), req, rem);
+    struct coro *c = coro_current;
+    return c ? coro_sleep(c, co_nsec_from_timespec(*req)) : co_libc_nanosleep(req, rem);
 }
 
 int sched_yield(void) {
     struct coro *c = coro_current;
-    if (c) {
-        if (co_loop_ping(&c->loop->base))
-            return -1;
-        return coro_pause_vec(c, &c->loop->base.on_ping);
-    }
+    return c ? co_loop_ping(c->loop) ? -1 : coro_wait(c, &c->loop->on_ping)
 #ifdef _POSIX_PRIORITY_SCHEDULING
-    return co_libc_sched_yield();
+             : co_libc_sched_yield();
 #else
-    return EINVAL;
+             : EINVAL;
 #endif
 }

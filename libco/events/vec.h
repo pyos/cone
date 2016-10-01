@@ -1,11 +1,19 @@
 #pragma once
-#include "closure.h"
+
+struct co_closure
+{
+    int (*function)(void*);
+    void *data;
+};
+
 #include "../generic/vec_closure.h"
 
 struct co_event_vec
 {
     struct co_vec_closure slots;
 };
+
+#define co_bind(f, data) ((struct co_closure){(int(*)(void*))f, data})
 
 static inline void
 co_event_vec_fini(struct co_event_vec *ev) {
