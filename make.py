@@ -16,7 +16,7 @@ templates = {
     'libco/generic/vec~T~.h': [
         {'T': 'struct co_closure'},
         {'T': 'struct co_call_at'},
-    ]
+    ],
 }
 
 bins = {
@@ -28,45 +28,50 @@ bins = {
 def scandeps(files, deps):
     for file in files:
         cdeps = set()
-        try:
-            with open(file) as fd:
-                for line in fd:
-                    line = line.strip()
-                    if not line.startswith('#'):
-                        continue
-                    line = line[1:].lstrip()
-                    if not line.startswith('include '):
-                        continue
-                    line = line[7:].lstrip()
-                    if not line.startswith('"'):
-                        continue
-                    cdeps.add(os.path.normpath(os.path.join(os.path.dirname(file), line[1:-1])))
-        except IOError:
-            pass
+        with open(file) as fd:
+            for line in fd:
+                line = line.strip()
+                if not line.startswith('#'):
+                    continue
+                line = line[1:].lstrip()
+                if not line.startswith('include '):
+                    continue
+                line = line[7:].lstrip()
+                if not line.startswith('"'):
+                    continue
+                cdeps.add(os.path.normpath(os.path.join(os.path.dirname(file), line[1:-1])))
         deps.update(scandeps({c for c in cdeps if c not in deps}, deps))
         deps[file] = cdeps.union(*map(deps.__getitem__, cdeps))
     return {k: v for k, v in deps.items() if k in files}
 
-def template(data, params, paramre=re.compile('~(\w+)~'), join='_'):
+def template(data, params, paramre=re.compile('~(\w+)~'), join='_', isalnum=re.compile('\w').match):
     def subst(match):
         start, end = match.span()
         try:
             value = params[match.group(1)]
         except KeyError:
             raise Exception('unknown parameter {}'.format(match.group()))
-        if start > 0 and match.string[start - 1].isalnum():
+        if start > 0 and isalnum(match.string[start - 1]):
             if value.startswith('struct '):
                 value = value[7:]
             if value.startswith('co_'):
                 value = value[3:]
-            value = join + value
-        if end < len(match.string) and match.string[end].isalnum():
-            value = value + join
+            if not match.string[:start].endswith(join):
+                value = join + value
+        if end < len(match.string) and isalnum(match.string[end]):
+            if value.startswith('struct '):
+                value = value[7:]
+            if not match.string[end:].startswith(join):
+                value = value + join
         return value
     return paramre.sub(subst, data)
 
-if len(sys.argv) == 1:
-    sources = scandeps(set().union(*bins.values()), {})
+if len(sys.argv) > 1 and sys.argv[1] == 'template':
+    sys.stdout.write(template(sys.stdin.read(), dict(zip(*[iter(sys.argv[2:])] * 2))))
+elif len(sys.argv) > 1 and sys.argv[1] == 'clean':
+    os.system('make clean')
+    os.unlink('Makefile')
+else:
     temporaries = {'obj'}
     with open('Makefile', 'w') as m:
         print('.PHONY: all clean', file=m)
@@ -83,21 +88,21 @@ if len(sys.argv) == 1:
                 ' '.join(map('-L{}'.format, libpaths)),
                 ' '.join(map('-l{}'.format, libs))), file=m)
 
-        for src, deps in sources.items():
+        for name, paramsets in templates.items():
+            for params in paramsets:
+                outname = template(name, params)
+                encoded = ' '.join(shlex.quote(p) for ps in params.items() for p in ps)
+                temporaries.add(outname)
+                print('{2}: {1} make.py\n\t{0} make.py template {3} < {1} > {2}'.format(sys.executable, name, outname, encoded), file=m)
+                with open(name) as inp, open(outname, 'w') as out:
+                    out.write(template(inp.read(), params))
+
+        for src, deps in scandeps(set().union(*bins.values()), {}).items():
             obj = 'obj/' + src.rpartition('.')[0] + '.o'
             print('{}: {} {}'.format(obj, src, ' '.join(deps)), file=m)
             print('\t@mkdir -p {}'.format(os.path.dirname(obj)), file=m)
             print('\t$(CC) -std=c11 -I. -Wall -Wextra -fPIC $(CFLAGS) {2} -D_GNU_SOURCE -c {0} -o {1}'.format(src, obj,
                 ' '.join(map('-I{}'.format, incpaths))), file=m)
 
-        for name, paramsets in templates.items():
-            for params in paramsets:
-                outname = template(name, params, join='~~')
-                encoded = ' '.join(shlex.quote(p) for ps in params.items() for p in ps)
-                temporaries.add(outname)
-                print('{2}: {1} make.py\n\t{0} make.py template {3} < {1} > {2}'.format(sys.executable, name, outname, encoded), file=m)
-
         print('clean:\n\trm -rf', *temporaries, file=m)
-    os.execl('/usr/bin/env', '/usr/bin/env', 'make')
-elif sys.argv[1] == 'template':
-    sys.stdout.write(template(sys.stdin.read(), dict(zip(*[iter(sys.argv[2:])] * 2))))
+    os.execl('/usr/bin/env', '/usr/bin/env', 'make', *sys.argv[1:])
