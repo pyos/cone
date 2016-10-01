@@ -2,7 +2,7 @@
 #define _GNU_SOURCE
 #endif
 
-#include "coro.h"
+#include <libco/coro.h>
 
 #include <sched.h>
 #include <string.h>
