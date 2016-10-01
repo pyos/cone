@@ -1,11 +1,6 @@
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
-
 #include "../libco/coro.h"
 
 #include <sched.h>
-#include <string.h>
 
 static int c1() {
     char data[1024];
@@ -18,8 +13,7 @@ static int c1() {
 static int c2() {
     for (int i = 0; i < 3; i++) {
         sleep(i);
-        const char data[] = "Hello, World!\n";
-        write(1, data, strlen(data));
+        write(1, "Hello, World!\n", 14);
     }
     return 0;
 }

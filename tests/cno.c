@@ -1,7 +1,3 @@
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
-
 #include "../libco/coro.h"
 
 #include <errno.h>
@@ -19,8 +15,6 @@
 #include <cno/core.h>
 
 static int fd;
-static int one = 1;
-
 
 static void sigint(int signum) {
     (void)signum;
@@ -28,15 +22,12 @@ static void sigint(int signum) {
     shutdown(fd, SHUT_RDWR);
 }
 
-
 struct cno_data_t {
     struct cno_connection_t conn;
     int fd;
 };
 
-
-static int writeall(void *dptr, const char *data, size_t size) {
-    struct cno_data_t* d = (struct cno_data_t*) dptr;
+static int writeall(struct cno_data_t *d, const char *data, size_t size) {
     while (size) {
         ssize_t w = write(d->fd, data, size);
         if (w <= 0)
@@ -47,10 +38,8 @@ static int writeall(void *dptr, const char *data, size_t size) {
     return CNO_OK;
 }
 
-
-static int sendhello(void *dptr, uint32_t stream, const struct cno_message_t *rmsg) {
+static int sendhello(struct cno_data_t *d, uint32_t stream, const struct cno_message_t *rmsg) {
     (void)rmsg;
-    struct cno_data_t* d = (struct cno_data_t*) dptr;
     struct cno_header_t headers[] = {
         { CNO_BUFFER_STRING("server"), CNO_BUFFER_STRING("libcno/1"), 0 },
     };
@@ -62,29 +51,21 @@ static int sendhello(void *dptr, uint32_t stream, const struct cno_message_t *rm
     return CNO_OK;
 }
 
-
 static int handle_connection(int client) {
-    struct cno_data_t d;
+    struct cno_data_t d = {.fd = client};
     cno_connection_init(&d.conn, CNO_SERVER);
-    d.fd = client;
     d.conn.cb_data = &d;
-    d.conn.on_write = &writeall;
-    d.conn.on_message_start = &sendhello;
+    d.conn.on_write = (int(*)(void*, const char*, size_t)) &writeall;
+    d.conn.on_message_start = (int(*)(void*, uint32_t, const struct cno_message_t*)) &sendhello;
     if (cno_connection_made(&d.conn, CNO_HTTP1))
         goto error;
-
     ssize_t rd;
     char data[4096];
-    while ((rd = read(client, data, sizeof(data)))) {
-        if (rd < 0)
-            break;
-        if (cno_connection_data_received(&d.conn, data, (size_t) rd))
+    while ((rd = read(client, data, sizeof(data))))
+        if (rd < 0 || cno_connection_data_received(&d.conn, data, (size_t) rd))
             goto error;
-    }
-
     if (cno_connection_lost(&d.conn))
         goto error;
-
 error:
     cno_connection_reset(&d.conn);
     close(client);
@@ -96,10 +77,10 @@ int amain() {
     signal(SIGPIPE, SIG_IGN);
     signal(SIGCHLD, SIG_IGN);
 
+    const int one = 1;
     fd = socket(AF_INET, SOCK_STREAM, 0);
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(int));
-    struct sockaddr_in servaddr;
-    bzero(&servaddr, sizeof(servaddr));
+    struct sockaddr_in servaddr = {};
     servaddr.sin_family = AF_INET;
     servaddr.sin_addr.s_addr = htons(INADDR_ANY);
     servaddr.sin_port = htons(8000);
@@ -107,7 +88,7 @@ int amain() {
     listen(fd, 127);
 
     while (1) {
-        int client = accept(fd, (struct sockaddr*) NULL, NULL);
+        int client = accept(fd, NULL, NULL);
         if (client < 0) {
             if (errno == ECONNABORTED)
                 continue;
