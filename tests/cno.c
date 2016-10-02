@@ -88,7 +88,7 @@ int amain() {
     listen(fd, 127);
     int client;
     while ((client = accept(fd, NULL, NULL)) >= 0 || errno == ECONNABORTED)
-        coro_decref(coro(&handle_connection, (void*)client));
+        coro_decref(coro(&handle_connection, (void*)(long)client));
     if (errno != EINVAL)
         perror("accept");
     close(fd);
