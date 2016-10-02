@@ -48,8 +48,15 @@ co_loop_fini(struct co_loop *loop) {
 static inline int
 co_loop_init(struct co_loop *loop) {
     int fd[2];
+#ifdef _GNU_SOURCE
     if (pipe2(fd, O_NONBLOCK))
         return -1;
+#else
+    if (pipe(fd))
+        return -1;
+    if (setnonblocking(fd[0]) || setnonblocking(fd[1]))
+        return close(fd[0]), close(fd[1]), -1;
+#endif
     *loop = (struct co_loop){.ping_r = fd[0], .ping_w = fd[1]};
     atomic_init(&loop->active, 0);
     atomic_init(&loop->pinged, false);
