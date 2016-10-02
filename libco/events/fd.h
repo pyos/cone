@@ -84,6 +84,7 @@ co_event_fd_init(struct co_event_fd *set) {
 #if COROUTINE_EPOLL
     return (set->epoll = epoll_create1(0)) < 0 ? -1 : 0;
 #else
+    (void)set;
     return 0;
 #endif
 }
@@ -143,7 +144,7 @@ co_event_fd_emit(struct co_event_fd *set, struct co_nsec timeout) {
             co_fd_monitor_emit(c, 0);
         if (evs[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP))
             co_fd_monitor_emit(c, 1);
-        if (evs[i].events & (EPOLLRDHUP | EPOLLERR | EPOLLHUP))
+        if (c->cbs[0].function == NULL && c->cbs[1].function == NULL)
             co_fd_monitor_dealloc(set, c);
     }
 #else
