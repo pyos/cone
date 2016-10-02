@@ -20,7 +20,7 @@ static inline int
 co_vec~T~_reserve(struct co_vec~T~ *vec, size_t elems) {
     if (vec->size + elems > vec->cap) {
         size_t ncap = vec->cap + (elems > vec->cap ? elems : vec->cap);
-        void *r = realloc(vec->data, sizeof(~T~) * ncap);
+        ~T~ *r = (~T~*) realloc(vec->data, sizeof(~T~) * ncap);
         if (r == NULL)
             return -1;
         vec->data = r;

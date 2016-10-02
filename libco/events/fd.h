@@ -67,7 +67,7 @@ co_event_fd_open(struct co_event_fd *set, int fd) {
     #if COROUTINE_EPOLL
         struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|EPOLLET|EPOLLIN|EPOLLOUT, {.ptr = *b}};
         if (epoll_ctl(set->epoll, EPOLL_CTL_ADD, fd, &params))
-            *b = (free(*b), NULL);
+            free(*b), *b = NULL;
     #endif
     }
     return *b;

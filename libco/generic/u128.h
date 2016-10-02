@@ -6,7 +6,7 @@ struct co_u128
     uint64_t H, L;
 };
 
-#define CO_U128(x) ((struct co_u128){.L = x})
+#define CO_U128(x) ((struct co_u128){0, (uint64_t)x})
 #define CO_U128_MAX ((struct co_u128){UINT64_MAX, UINT64_MAX})
 
 static inline struct co_u128

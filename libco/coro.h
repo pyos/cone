@@ -140,7 +140,7 @@ coro_spawn(struct co_loop *loop, size_t size, struct co_closure body) {
 #if COROUTINE_XCHG_RSP
     c->regs[0] = 0;
     c->regs[1] = c->stack + size - sizeof(struct coro) - 8;
-    c->regs[2] = &coro_inner_code;
+    c->regs[2] = (void*)&coro_inner_code;
     c->regs[3] = c;
     memset(c->regs[1], 0, 8);
 #else
@@ -151,8 +151,10 @@ coro_spawn(struct co_loop *loop, size_t size, struct co_closure body) {
 #endif
     if (coro_schedule(c) ||
         co_event_vec_connect(&c->done, co_bind(&co_loop_dec, loop)) ||
-        co_event_vec_connect(&c->done, co_bind(&coro_decref, c)))
-        return coro_decref(c), NULL;
+        co_event_vec_connect(&c->done, co_bind(&coro_decref, c))) {
+        coro_decref(c);
+        return NULL;
+    }
     co_loop_inc(loop);
     return coro_incref(c);
 }

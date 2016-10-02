@@ -92,20 +92,25 @@ co_libc(int, sched_yield, void) {
 
 static void __attribute__((constructor))
 co_libc_init(void) {
-    co_libc_listen      = dlsym(RTLD_NEXT, "listen");
-    co_libc_accept3     = dlsym(RTLD_NEXT, "accept");
-#ifdef _GNU_SOURCE
-    co_libc_accept4     = dlsym(RTLD_NEXT, "accept4");
+#if __cplusplus
+#define co_libc_load(name, sym) name = (decltype(name)) dlsym(RTLD_NEXT, sym)
+#else
+#define co_libc_load(name, sym) name = dlsym(RTLD_NEXT, sym)
 #endif
-    co_libc_read        = dlsym(RTLD_NEXT, "read");
-    co_libc_recv        = dlsym(RTLD_NEXT, "recv");
-    co_libc_recvfrom    = dlsym(RTLD_NEXT, "recvfrom");
-    co_libc_recvmsg     = dlsym(RTLD_NEXT, "recvmsg");
-    co_libc_write       = dlsym(RTLD_NEXT, "write");
-    co_libc_send        = dlsym(RTLD_NEXT, "send");
-    co_libc_sendto      = dlsym(RTLD_NEXT, "sendto");
-    co_libc_sendmsg     = dlsym(RTLD_NEXT, "sendmsg");
-    co_libc_sleep       = dlsym(RTLD_NEXT, "sleep");
-    co_libc_nanosleep   = dlsym(RTLD_NEXT, "nanosleep");
-    co_libc_sched_yield = dlsym(RTLD_NEXT, "sched_yield");
+    co_libc_load(co_libc_listen,      "listen");
+    co_libc_load(co_libc_accept3,     "accept");
+#ifdef _GNU_SOURCE
+    co_libc_load(co_libc_accept4,     "accept4");
+#endif
+    co_libc_load(co_libc_read,        "read");
+    co_libc_load(co_libc_recv,        "recv");
+    co_libc_load(co_libc_recvfrom,    "recvfrom");
+    co_libc_load(co_libc_recvmsg,     "recvmsg");
+    co_libc_load(co_libc_write,       "write");
+    co_libc_load(co_libc_send,        "send");
+    co_libc_load(co_libc_sendto,      "sendto");
+    co_libc_load(co_libc_sendmsg,     "sendmsg");
+    co_libc_load(co_libc_sleep,       "sleep");
+    co_libc_load(co_libc_nanosleep,   "nanosleep");
+    co_libc_load(co_libc_sched_yield, "sched_yield");
 }
