@@ -55,7 +55,7 @@ co_fd_monitor(struct co_event_fd *set, int fd) {
     if (!*b && (*b = (struct co_fd_monitor *) calloc(1, sizeof(struct co_fd_monitor)))) {
         (*b)->fd = fd;
     #if COROUTINE_EPOLL
-        (*b)->params = (struct epoll_event){EPOLLRDHUP | EPOLLHUP | EPOLLET | EPOLLONESHOT, {.ptr = *b}};
+        (*b)->params = (struct epoll_event){EPOLLRDHUP|EPOLLHUP|EPOLLET|EPOLLIN|EPOLLOUT, {.ptr = *b}};
         if (epoll_ctl(set->epoll, EPOLL_CTL_ADD, fd, &(*b)->params))
             return free(*b), (*b = NULL);
     #endif
@@ -105,12 +105,7 @@ co_event_fd_connect(struct co_event_fd *set, int fd, int write, struct co_closur
     if (ev == NULL || ev->cbs[write].function)
         return -1;
     ev->cbs[write] = cb;
-#if COROUTINE_EPOLL
-    ev->params.events |= write ? EPOLLOUT : EPOLLIN;
-    return epoll_ctl(set->epoll, EPOLL_CTL_MOD, fd, &ev->params);
-#else
     return 0;
-#endif
 }
 
 static inline int
@@ -119,12 +114,7 @@ co_event_fd_disconnect(struct co_event_fd *set, int fd, int write, struct co_clo
     if (ev == NULL || ev->cbs[write].function != cb.function || ev->cbs[write].data != cb.data)
         return -1;
     ev->cbs[write] = (struct co_closure){};
-#if COROUTINE_EPOLL
-    ev->params.events &= ~(write ? EPOLLOUT : EPOLLIN);
-    return epoll_ctl(set->epoll, EPOLL_CTL_MOD, fd, &ev->params);
-#else
     return 0;
-#endif
 }
 
 static inline int
