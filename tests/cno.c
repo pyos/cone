@@ -86,19 +86,11 @@ int amain() {
     servaddr.sin_port = htons(8000);
     bind(fd, (struct sockaddr *) &servaddr, sizeof(servaddr));
     listen(fd, 127);
-
-    while (1) {
-        int client = accept(fd, NULL, NULL);
-        if (client < 0) {
-            if (errno == ECONNABORTED)
-                continue;
-            if (errno != EINVAL)
-                perror("accept");
-            break;
-        }
+    int client;
+    while ((client = accept(fd, NULL, NULL)) >= 0 || errno == ECONNABORTED)
         coro_decref(coro(&handle_connection, (void*)client));
-    }
-
+    if (errno != EINVAL)
+        perror("accept");
     close(fd);
     return 0;
 }
