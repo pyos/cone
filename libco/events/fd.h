@@ -29,10 +29,8 @@ struct co_event_fd_sub
 
 struct co_event_fd
 {
-    struct co_event_fd_sub *fds[127];
-#if COROUTINE_EPOLL
     int epoll;
-#endif
+    struct co_event_fd_sub *fds[127];
 };
 
 static inline int
@@ -40,7 +38,7 @@ co_event_fd_init(struct co_event_fd *set) {
 #if COROUTINE_EPOLL
     return (set->epoll = epoll_create1(0)) < 0 ? -1 : 0;
 #else
-    (void)set;
+    set->epoll = -1;
     return 0;
 #endif
 }
@@ -50,9 +48,8 @@ co_event_fd_fini(struct co_event_fd *set) {
     for (size_t i = 0; i < sizeof(set->fds) / sizeof(set->fds[0]); i++)
         for (struct co_event_fd_sub *c; (c = set->fds[i]) != NULL; free(c))
             set->fds[i] = c->link;
-#if COROUTINE_EPOLL
-    close(set->epoll);
-#endif
+    if (set->epoll >= 0)
+        close(set->epoll);
 }
 
 static inline struct co_event_fd_sub **
@@ -135,7 +132,7 @@ co_event_fd_emit(struct co_event_fd *set, struct co_nsec timeout) {
     }
     struct timeval us = {co_u128_div(timeout, 1000000000ull).L, timeout.L % 1000000000ull / 1000};
     if (select(max_fd, &fds[0], &fds[1], NULL, &us) < 0)
-        return errno == EINTR ? 0 : 1;
+        return errno == EINTR ? 0 : -1;
     for (size_t i = 0; i < sizeof(set->fds) / sizeof(set->fds[0]); i++)
         for (struct co_event_fd_sub *c = set->fds[i]; c; c = c->link)
             for (int i = 0; i < 2; i++)
