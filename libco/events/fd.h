@@ -16,8 +16,8 @@
 #include <sys/select.h>
 #endif
 
-#ifndef COROUTINE_TIMEOUT
-#define COROUTINE_TIMEOUT 30000000000ull
+#ifndef COROUTINE_IO_TIMEOUT
+#define COROUTINE_IO_TIMEOUT 30000000000ull
 #endif
 
 struct co_event_fd_sub
@@ -95,8 +95,8 @@ static inline int
 co_event_fd_emit(struct co_event_fd *set, struct co_nsec timeout) {
     if (co_u128_eq(timeout, CO_U128(0)))
         return -1;
-    if (co_u128_gt(timeout, CO_U128(COROUTINE_TIMEOUT)))
-        timeout = CO_U128(COROUTINE_TIMEOUT);
+    if (co_u128_gt(timeout, CO_U128(COROUTINE_IO_TIMEOUT)))
+        timeout = CO_U128(COROUTINE_IO_TIMEOUT);
 #if COROUTINE_EPOLL
     struct epoll_event evs[32];
     int got = epoll_wait(set->epoll, evs, 32, co_u128_div(timeout, 1000000ul).L);
@@ -112,9 +112,7 @@ co_event_fd_emit(struct co_event_fd *set, struct co_nsec timeout) {
             co_event_fd_close(set, c);
     }
 #else
-    fd_set fds[2];
-    FD_ZERO(&fds[0]);
-    FD_ZERO(&fds[1]);
+    fd_set fds[2] = {};
     int max_fd = 0;
     for (size_t i = 0; i < sizeof(set->fds) / sizeof(set->fds[0]); i++) {
         for (struct co_event_fd_sub *c = set->fds[i], *next = NULL; c; c = next) {
