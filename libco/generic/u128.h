@@ -11,21 +11,17 @@ struct co_u128
 
 static inline struct co_u128
 co_u128_add(struct co_u128 a, struct co_u128 b) {
-    a.L += b.L;
-    a.H += b.H + (a.L < b.L);
-    return a;
+    return (struct co_u128){.H = a.H + b.H + (a.L + b.L < a.L), .L = a.L + b.L};
 }
 
 static inline struct co_u128
 co_u128_sub(struct co_u128 a, struct co_u128 b) {
-    a.H -= b.H + (a.L < b.L);
-    a.L -= b.L;
-    return a;
+    return (struct co_u128){.H = a.H - b.H - (a.L < b.L), .L = a.L - b.L};
 }
 
 static inline struct co_u128
-co_u128_mul(uint64_t a, uint32_t b) {
-    return (struct co_u128){.H = ((a >> 32) * b) >> 32, .L = a * b};
+co_u128_mul(struct co_u128 a, uint32_t b) {
+    return (struct co_u128){.H = a.H * b + (((a.L >> 32) * b) >> 32), .L = a.L * b};
 }
 
 static inline struct co_u128

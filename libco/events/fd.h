@@ -16,68 +16,24 @@
 #include <sys/select.h>
 #endif
 
-#ifndef COROUTINE_FD_BUCKETS
-#define COROUTINE_FD_BUCKETS 127
+#ifndef COROUTINE_TIMEOUT
+#define COROUTINE_TIMEOUT 30000000000ull
 #endif
 
-#ifndef COROUTINE_FD_INTERVAL
-#define COROUTINE_FD_INTERVAL 30000000000ull
-#endif
-
-struct co_fd_monitor
+struct co_event_fd_sub
 {
     int fd;
     struct co_closure cbs[2];
-    struct co_fd_monitor *link;
-#if COROUTINE_EPOLL
-    struct epoll_event params;
-#endif
+    struct co_event_fd_sub *link;
 };
 
 struct co_event_fd
 {
-    struct co_fd_monitor *fds[COROUTINE_FD_BUCKETS];
+    struct co_event_fd_sub *fds[127];
 #if COROUTINE_EPOLL
     int epoll;
 #endif
 };
-
-static inline struct co_fd_monitor **
-co_fd_monitor_bucket(struct co_event_fd *set, int fd) {
-    struct co_fd_monitor **b = &set->fds[fd % COROUTINE_FD_BUCKETS];
-    while (*b && (*b)->fd != fd) b = &(*b)->link;
-    return b;
-}
-
-static inline struct co_fd_monitor *
-co_fd_monitor(struct co_event_fd *set, int fd) {
-    struct co_fd_monitor **b = co_fd_monitor_bucket(set, fd);
-    if (!*b && (*b = (struct co_fd_monitor *) calloc(1, sizeof(struct co_fd_monitor)))) {
-        (*b)->fd = fd;
-    #if COROUTINE_EPOLL
-        (*b)->params = (struct epoll_event){EPOLLRDHUP|EPOLLHUP|EPOLLET|EPOLLIN|EPOLLOUT, {.ptr = *b}};
-        if (epoll_ctl(set->epoll, EPOLL_CTL_ADD, fd, &(*b)->params))
-            return free(*b), (*b = NULL);
-    #endif
-    }
-    return *b;
-}
-
-static inline void
-co_fd_monitor_dealloc(struct co_event_fd *set, struct co_fd_monitor *ev) {
-#if COROUTINE_EPOLL
-    epoll_ctl(set->epoll, EPOLL_CTL_DEL, ev->fd, NULL);
-#endif
-    *co_fd_monitor_bucket(set, ev->fd) = ev->link;
-    free(ev);
-}
-
-static inline int
-co_fd_monitor_emit(struct co_fd_monitor *ev, int write) {
-    struct co_closure cb = ev->cbs[write];
-    ev->cbs[write] = (struct co_closure){};
-    return cb.function && cb.function(cb.data);
-}
 
 static inline int
 co_event_fd_init(struct co_event_fd *set) {
@@ -91,17 +47,47 @@ co_event_fd_init(struct co_event_fd *set) {
 
 static inline void
 co_event_fd_fini(struct co_event_fd *set) {
-    for (int i = 0; i < COROUTINE_FD_BUCKETS; i++)
-        while (set->fds[i])
-            co_fd_monitor_dealloc(set, set->fds[i]);
+    for (size_t i = 0; i < sizeof(set->fds) / sizeof(set->fds[0]); i++)
+        for (struct co_event_fd_sub *c; (c = set->fds[i]) != NULL; free(c))
+            set->fds[i] = c->link;
 #if COROUTINE_EPOLL
     close(set->epoll);
 #endif
 }
 
+static inline struct co_event_fd_sub **
+co_event_fd_bucket(struct co_event_fd *set, int fd) {
+    struct co_event_fd_sub **b = &set->fds[fd % (sizeof(set->fds) / sizeof(set->fds[0]))];
+    while (*b && (*b)->fd != fd) b = &(*b)->link;
+    return b;
+}
+
+static inline struct co_event_fd_sub *
+co_event_fd_open(struct co_event_fd *set, int fd) {
+    struct co_event_fd_sub **b = co_event_fd_bucket(set, fd);
+    if (!*b && (*b = (struct co_event_fd_sub *) calloc(1, sizeof(struct co_event_fd_sub)))) {
+        (*b)->fd = fd;
+    #if COROUTINE_EPOLL
+        struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|EPOLLET|EPOLLIN|EPOLLOUT, {.ptr = *b}};
+        if (epoll_ctl(set->epoll, EPOLL_CTL_ADD, fd, &params))
+            *b = (free(*b), NULL);
+    #endif
+    }
+    return *b;
+}
+
+static inline void
+co_event_fd_close(struct co_event_fd *set, struct co_event_fd_sub *ev) {
+#if COROUTINE_EPOLL
+    epoll_ctl(set->epoll, EPOLL_CTL_DEL, ev->fd, NULL);
+#endif
+    *co_event_fd_bucket(set, ev->fd) = ev->link;
+    free(ev);
+}
+
 static inline int
 co_event_fd_connect(struct co_event_fd *set, int fd, int write, struct co_closure cb) {
-    struct co_fd_monitor *ev = co_fd_monitor(set, fd);
+    struct co_event_fd_sub *ev = co_event_fd_open(set, fd);
     if (ev == NULL || ev->cbs[write].function)
         return -1;
     ev->cbs[write] = cb;
@@ -109,44 +95,35 @@ co_event_fd_connect(struct co_event_fd *set, int fd, int write, struct co_closur
 }
 
 static inline int
-co_event_fd_disconnect(struct co_event_fd *set, int fd, int write, struct co_closure cb) {
-    struct co_fd_monitor *ev = co_fd_monitor(set, fd);
-    if (ev == NULL || ev->cbs[write].function != cb.function || ev->cbs[write].data != cb.data)
-        return -1;
-    ev->cbs[write] = (struct co_closure){};
-    return 0;
-}
-
-static inline int
 co_event_fd_emit(struct co_event_fd *set, struct co_nsec timeout) {
     if (co_u128_eq(timeout, CO_U128(0)))
         return -1;
-    if (co_u128_gt(timeout, CO_U128(COROUTINE_FD_INTERVAL)))
-        timeout = CO_U128(COROUTINE_FD_INTERVAL);
+    if (co_u128_gt(timeout, CO_U128(COROUTINE_TIMEOUT)))
+        timeout = CO_U128(COROUTINE_TIMEOUT);
 #if COROUTINE_EPOLL
     struct epoll_event evs[32];
     int got = epoll_wait(set->epoll, evs, 32, co_u128_div(timeout, 1000000ul).L);
     if (got < 0)
         return errno == EINTR ? 0 : -1;
     for (size_t i = 0; i < (size_t)got; i++) {
-        struct co_fd_monitor *c = (struct co_fd_monitor*)evs[i].data.ptr;
+        struct co_event_fd_sub *c = (struct co_event_fd_sub*)evs[i].data.ptr;
         if (evs[i].events & (EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLHUP))
-            co_fd_monitor_emit(c, 0);
+            co_event_emit(&c->cbs[0]);
         if (evs[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP))
-            co_fd_monitor_emit(c, 1);
+            co_event_emit(&c->cbs[1]);
         if (c->cbs[0].function == NULL && c->cbs[1].function == NULL)
-            co_fd_monitor_dealloc(set, c);
+            co_event_fd_close(set, c);
     }
 #else
     fd_set fds[2];
     FD_ZERO(&fds[0]);
     FD_ZERO(&fds[1]);
     int max_fd = 0;
-    for (size_t i = 0; i < COROUTINE_FD_BUCKETS; i++) {
-        for (struct co_fd_monitor *c = set->fds[i], *next = NULL; c; c = next) {
+    for (size_t i = 0; i < sizeof(set->fds) / sizeof(set->fds[0]); i++) {
+        for (struct co_event_fd_sub *c = set->fds[i], *next = NULL; c; c = next) {
             next = c->link;
             if (c->cbs[0].function == NULL && c->cbs[1].function == NULL) {
-                co_fd_monitor_dealloc(set, c);
+                co_event_fd_close(set, c);
                 continue;
             }
             if (max_fd <= c->fd)
@@ -159,11 +136,11 @@ co_event_fd_emit(struct co_event_fd *set, struct co_nsec timeout) {
     struct timeval us = {co_u128_div(timeout, 1000000000ull).L, timeout.L % 1000000000ull / 1000};
     if (select(max_fd, &fds[0], &fds[1], NULL, &us) < 0)
         return errno == EINTR ? 0 : 1;
-    for (size_t i = 0; i < COROUTINE_FD_BUCKETS; i++)
-        for (struct co_fd_monitor *c = set->fds[i]; c; c = c->link)
+    for (size_t i = 0; i < sizeof(set->fds) / sizeof(set->fds[0]); i++)
+        for (struct co_event_fd_sub *c = set->fds[i]; c; c = c->link)
             for (int i = 0; i < 2; i++)
                 if (FD_ISSET(c->fd, &fds[i]))
-                    co_fd_monitor_emit(c, i);
+                    co_event_emit(&c->cbs[i]);
 #endif
     return 0;
 }

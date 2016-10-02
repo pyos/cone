@@ -66,7 +66,7 @@ coro_leave(struct coro *c) {
 
 static inline void __attribute__((noreturn))
 coro_inner_code(struct coro *c) {
-    if (c->body.function(c->body.data))
+    if (co_event_emit(&c->body))
         abort();
     for (size_t i = 0; i < c->done.slots.size; i++)
         if (co_event_schedule_connect(&c->loop->sched, CO_U128(0), c->done.slots.data[i]))
