@@ -26,55 +26,35 @@ bins = {
 }
 
 def scandeps(files, deps):
-    for file in files:
-        cdeps = set()
+    for file in files - deps.keys():
+        deps[file] = cdeps = set()
         with open(file) as fd:
-            for line in fd:
-                line = line.strip()
-                if not line.startswith('#'):
-                    continue
-                line = line[1:].lstrip()
-                if not line.startswith('include '):
-                    continue
-                line = line[7:].lstrip()
-                if not line.startswith('"'):
-                    continue
-                cdeps.add(os.path.normpath(os.path.join(os.path.dirname(file), line[1:-1])))
-        deps.update(scandeps({c for c in cdeps if c not in deps}, deps))
-        deps[file] = cdeps.union(*map(deps.__getitem__, cdeps))
-    return {k: v for k, v in deps.items() if k in files}
+            for line in filter(None, map(re.compile(r'^\s*#\s*include\s+"(.+?)"\s*$').match, fd)):
+                cdeps.add(os.path.normpath(os.path.join(os.path.dirname(file), line.group(1))))
+        scandeps(cdeps, deps)
+        cdeps |= set().union(*map(deps.__getitem__, cdeps))
+    return {k: deps[k] for k in files}
 
-def template(data, params, paramre=re.compile('~(\w+)~'), join='_', isalnum=re.compile('\w').match):
+def template(data, params, isalnum=re.compile('\w').match):
+    paramre = re.compile(r'(?P<L>\w?)(~(?P<name>\w+)~)(?P<R>\w?)')
     def subst(match):
-        start, end = match.span()
         try:
-            value = params[match.group(1)]
+            value = params[match.group('name')]
         except KeyError:
             raise Exception('unknown parameter {}'.format(match.group()))
-        if start > 0 and isalnum(match.string[start - 1]):
-            if value.startswith('struct '):
-                value = value[7:]
-            if value.startswith('co_'):
-                value = value[3:]
-            if not match.string[:start].endswith(join):
-                value = join + value
-        if end < len(match.string) and isalnum(match.string[end]):
-            if value.startswith('struct '):
-                value = value[7:]
-            if not match.string[end:].startswith(join):
-                value = value + join
+        if match.group('L'):
+            value = re.sub(r'^(_|._)_?(?:struct\s+)?(?:co_)?', r'\1', match.group('L') + '_' + value)
+        if match.group('R'):
+            value = re.sub(r'^(?:struct\s+)?(.+?)_?(_.|_)$', r'\1\2', value + '_' + match.group('R'))
         return value
     return paramre.sub(subst, data)
 
 if len(sys.argv) > 1 and sys.argv[1] == 'template':
     sys.stdout.write(template(sys.stdin.read(), dict(zip(*[iter(sys.argv[2:])] * 2))))
-elif len(sys.argv) > 1 and sys.argv[1] == 'clean':
-    os.system('make clean')
-    os.unlink('Makefile')
 else:
     temporaries = {'obj'}
     with open('Makefile', 'w') as m:
-        print('.PHONY: all clean', file=m)
+        print('.PHONY: all clean clean_all', file=m)
         print('all:', *map('obj/{}'.format, bins), file=m)
 
         for mod, targets in git_modules.items():
@@ -105,4 +85,5 @@ else:
                 ' '.join(map('-I{}'.format, incpaths))), file=m)
 
         print('clean:\n\trm -rf', *temporaries, file=m)
+        print('clean_all: clean\n\trm Makefile', file=m)
     os.execl('/usr/bin/env', '/usr/bin/env', 'make', *sys.argv[1:])
