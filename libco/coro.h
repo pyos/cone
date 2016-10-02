@@ -20,7 +20,7 @@ struct coro
     struct co_event_vec done;
     struct co_closure body;
 #if COROUTINE_XCHG_RSP
-    void *regs[4];
+    void *volatile *rsp;
 #else
     ucontext_t inner;
     ucontext_t outer;
@@ -34,18 +34,18 @@ static inline int
 coro_enter(struct coro *c) {
 #if COROUTINE_XCHG_RSP
     __asm__ volatile (
-        "lea %=f(%%rip), %%rcx\n"
-        #define XCHG(a, b, tmp) "mov " a ", " tmp " \n mov " b ", " a " \n mov " tmp ", " b "\n"
-        XCHG("%%rbp",  "0(%0)", "%%r8")  // gcc complains about clobbering %rbp with -fno-omit-frame-pointer
-        XCHG("%%rsp",  "8(%0)", "%%r9")
-        XCHG("%%rcx", "16(%0)", "%%r10")  // `xchg` is implicitly `lock`ed => slower than 3 `mov`s
-        XCHG("%%rdi", "24(%0)", "%%r11")
-        #undef XCHG
-        "jmp *%%rcx\n"
-        "%=:"
+               "jmp %=0f\n"
+        "%=1:" "push %%rbp\n"
+               "push %%rdi\n"
+               "mov  %%rsp, (%%rax)\n"
+               "mov  %%rcx, %%rsp\n"
+               "pop  %%rdi\n"
+               "pop  %%rbp\n"
+               "ret\n"
+        "%=0:" "call %=1b"
       :
-      : "a"(c->regs)
-      : "rbx", "rcx", "rdx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
+      : "a"(&c->rsp), "c"(c->rsp)
+      : "rbx", "rdx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
         "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9",
         "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15", "cc" // not "memory" (so don't read `regs`)
     );
@@ -138,11 +138,11 @@ coro_spawn(struct co_loop *loop, size_t size, struct co_closure body) {
         return NULL;
     *c = (struct coro){.refcount = 1, .loop = loop, .body = body};
 #if COROUTINE_XCHG_RSP
-    c->regs[0] = 0;
-    c->regs[1] = c->stack + size - sizeof(struct coro) - 8;
-    c->regs[2] = (void*)&coro_inner_code;
-    c->regs[3] = c;
-    memset(c->regs[1], 0, 8);
+    c->rsp = (void *volatile *)(c->stack + size - sizeof(struct coro)) - 4;
+    c->rsp[0] = c;                        // %rdi
+    c->rsp[1] = NULL;                     // %rbp
+    c->rsp[2] = (void*)&coro_inner_code;  // %rip
+    c->rsp[3] = NULL;                     // return address
 #else
     getcontext(&c->inner);
     c->inner.uc_stack.ss_sp = c->stack;
