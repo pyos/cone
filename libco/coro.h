@@ -72,6 +72,7 @@ coro_inner_code(struct coro *c) {
         if (co_event_schedule_connect(&c->loop->sched, CO_U128(0), c->done.slots.data[i]))
             abort();
     co_event_vec_fini(&c->done);
+    c->loop = NULL;
     coro_leave(c);
     abort();
 }
