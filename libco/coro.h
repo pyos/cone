@@ -34,7 +34,7 @@ static inline int
 coro_enter(struct coro *c) {
 #if COROUTINE_XCHG_RSP
     __asm__ volatile (
-        "lea LJMPRET%=(%%rip), %%rcx\n"
+        "lea %=f(%%rip), %%rcx\n"
         #define XCHG(a, b, tmp) "mov " a ", " tmp " \n mov " b ", " a " \n mov " tmp ", " b "\n"
         XCHG("%%rbp",  "0(%0)", "%%r8")  // gcc complains about clobbering %rbp with -fno-omit-frame-pointer
         XCHG("%%rsp",  "8(%0)", "%%r9")
@@ -42,7 +42,7 @@ coro_enter(struct coro *c) {
         XCHG("%%rdi", "24(%0)", "%%r11")
         #undef XCHG
         "jmp *%%rcx\n"
-        "LJMPRET%=:"
+        "%=:"
       :
       : "a"(c->regs)
       : "rbx", "rcx", "rdx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",

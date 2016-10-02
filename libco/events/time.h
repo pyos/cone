@@ -52,8 +52,7 @@ co_event_schedule_emit(struct co_event_schedule *ev) {
 static inline int
 co_event_schedule_connect(struct co_event_schedule *ev, struct co_nsec delay, struct co_closure cb) {
     struct co_call_at tcb = {cb, co_u128_add(co_nsec_monotonic(), delay)};
-    for (size_t i = 0; i < ev->queue.size; i++)
-        if (co_u128_lt(tcb.time, ev->queue.data[i].time))
-            return co_vec_call_at_insert(&ev->queue, i, &tcb);
-    return co_vec_call_at_append(&ev->queue, &tcb);
+    size_t i = 0;
+    while (i < ev->queue.size && !co_u128_lt(tcb.time, ev->queue.data[i].time)) i++;
+    return co_vec_call_at_insert(&ev->queue, i, &tcb);
 }
