@@ -29,7 +29,7 @@ co_event_vec_fini(struct co_event_vec *ev) {
 
 static inline int
 co_event_vec_connect(struct co_event_vec *ev, struct co_closure cb) {
-    return co_vec_closure_append(&ev->slots, &cb);
+    return co_vec_closure_insert(&ev->slots, ev->slots.size, &cb);
 }
 
 static inline int

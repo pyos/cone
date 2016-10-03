@@ -55,11 +55,6 @@ co_vec~T~_insert(struct co_vec~T~ *vec, size_t i, const ~T~ *elem) {
     return 0;
 }
 
-static inline int
-co_vec~T~_append(struct co_vec~T~ *vec, const ~T~ *x) {
-    return co_vec~T~_insert(vec, vec->size, x);
-}
-
 static inline void
 co_vec~T~_erase(struct co_vec~T~ *vec, size_t i, size_t n) {
     if (i + n == vec->size)
