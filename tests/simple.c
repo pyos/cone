@@ -1,4 +1,4 @@
-#include "../libco/coro.h"
+#include "../cone/cone.h"
 
 #include <sched.h>
 
@@ -21,7 +21,7 @@ static int c2() {
 int amain() {
     setnonblocking(0);
     setnonblocking(1);
-    coro_decref(coro(&c1, NULL));
-    coro_decref(coro(&c2, NULL));
+    cone_decref(cone(&c1, NULL));
+    cone_decref(cone(&c2, NULL));
     return 0;
 }

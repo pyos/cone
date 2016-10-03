@@ -4,25 +4,23 @@ import os
 import sys
 import shlex
 
-git_modules = {
-    'libcno': ['obj/libcno.a'],
-}
+git = {'cno': ['obj/libcno.a']}
 
-incpaths = ['libcno']
-libpaths = ['libcno/obj']
+incpaths = [p for p in git]
+libpaths = [p + '/obj' for p in git]
 libs = ['dl', 'cno']
 
-templates = {
-    'libco/generic/vec~T~.h': [
-        {'T': 'struct co_closure'},
-        {'T': 'struct co_call_at'},
-    ],
+bins = {
+    'test_simple': ['cone/cone.c', 'tests/simple.c'],
+    'test_yield':  ['cone/cone.c', 'tests/yield.c'],
+    'test_cno':    ['cone/cone.c', 'tests/cno.c'],
 }
 
-bins = {
-    'test_simple':      ['libco/coro.c', 'tests/simple.c'],
-    'test_time_switch': ['libco/coro.c', 'tests/time_switch.c'],
-    'test_cno':         ['libco/coro.c', 'tests/cno.c'],
+templates = {
+    'cone/vec~T~.h': [
+        {'_prefix': 'cone_', 'T': 'struct cone_closure'},
+        {'_prefix': 'cone_', 'T': 'struct cone_call_at'},
+    ],
 }
 
 def scandeps(files, deps):
@@ -37,13 +35,14 @@ def scandeps(files, deps):
 
 def template(data, params, isalnum=re.compile('\w').match):
     paramre = re.compile(r'(?P<L>\w?)(~(?P<name>\w+)~)(?P<R>\w?)')
+    prefix = re.escape(params.get('_prefix', ''))
     def subst(match):
         try:
             value = params[match.group('name')]
         except KeyError:
             raise Exception('unknown parameter {}'.format(match.group()))
         if match.group('L'):
-            value = re.sub(r'^(_|._)_?(?:struct\s+)?(?:co_)?', r'\1', match.group('L') + '_' + value)
+            value = re.sub(r'^(_|._)_?(?:struct\s+)?(?:{})?'.format(prefix), r'\1', match.group('L') + '_' + value)
         if match.group('R'):
             value = re.sub(r'^(?:struct\s+)?(.+?)_?(_.|_)$', r'\1\2', value + '_' + match.group('R'))
         return value
@@ -57,16 +56,17 @@ else:
         print('.PHONY: all clean clean_all', file=m)
         print('all:', *map('obj/{}'.format, bins), file=m)
 
-        for mod, targets in git_modules.items():
-            print('{0}/.git: .gitmodules\n\tgit submodule update --init {0}'.format(mod), file=m)
+        for mod, targets in git.items():
+            print('{0}/.git: .gitmodules\n\tgit submodule update --init {0}\n\ttouch {0}/.git'.format(mod), file=m)
             for target in targets:
                 print('{0}/{1}: {0}/.git\n\t$(MAKE) -C {0} {1}'.format(mod, target), file=m)
 
         for bin, srcs in bins.items():
             objs = ' '.join('obj/' + src.rpartition('.')[0] + '.o' for src in srcs)
-            print('obj/{0}: {1}\n\t$(CC) {2} {1} $(CFLAGS) -o obj/{0} {3}'.format(bin, objs,
+            print('obj/{0}: {1} {4}\n\t$(CC) {2} {1} $(CFLAGS) -o obj/{0} {3}'.format(bin, objs,
                 ' '.join(map('-L{}'.format, libpaths)),
-                ' '.join(map('-l{}'.format, libs))), file=m)
+                ' '.join(map('-l{}'.format, libs)),
+                ' '.join('{}/{}'.format(mod, target) for mod, targets in git.items() for target in targets)), file=m)
 
         for name, paramsets in templates.items():
             for params in paramsets:
@@ -86,4 +86,3 @@ else:
 
         print('clean:\n\trm -rf', *temporaries, file=m)
         print('clean_all: clean\n\trm Makefile', file=m)
-    os.execl('/usr/bin/env', '/usr/bin/env', 'make', *sys.argv[1:])

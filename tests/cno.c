@@ -1,4 +1,4 @@
-#include "../libco/coro.h"
+#include "../cone/cone.h"
 
 #include <errno.h>
 #include <netdb.h>
@@ -88,7 +88,7 @@ int amain() {
     listen(fd, 127);
     int client;
     while ((client = accept(fd, NULL, NULL)) >= 0 || errno == ECONNABORTED)
-        coro_decref(coro(&handle_connection, (void*)(long)client));
+        cone_decref(cone(&handle_connection, (void*)(long)client));
     if (errno != EINVAL)
         perror("accept");
     close(fd);
