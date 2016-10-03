@@ -1,6 +1,5 @@
-#define CONE_COMAIN
 #define COIL_INTERCEPT_DYNAMIC_LIBC 1
-#include "../cone/coin.h"
+#include "../cone/cone.h"
 #include "../cone/coil.h"
 
 #include <errno.h>
@@ -75,7 +74,7 @@ error:
     return 0;
 }
 
-int comain(int argc, const char **argv) {
+int comain() {
     signal(SIGINT, &sigint);
     signal(SIGPIPE, SIG_IGN);
     signal(SIGCHLD, SIG_IGN);

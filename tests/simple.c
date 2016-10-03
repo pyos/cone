@@ -1,5 +1,4 @@
-#define CONE_COMAIN
-#include "../cone/coin.h"
+#include "../cone/cone.h"
 #include "../cone/coil.h"
 
 #include <sched.h>
@@ -20,7 +19,7 @@ static int c2() {
     return 0;
 }
 
-int comain(int argc, const char **argv) {
+int comain() {
     setnonblocking(0);
     setnonblocking(1);
     cone_decref(cone(&c1, NULL));

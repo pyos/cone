@@ -1,5 +1,4 @@
-#define CONE_COMAIN
-#include "../cone/coin.h"
+#include "../cone/cone.h"
 #include "../cone/coil.h"
 
 #include <sched.h>
@@ -7,7 +6,7 @@
 
 static const int YIELDS = 1000000;
 
-int comain(int argc, const char **argv) {
+int comain() {
     struct cone_nsec a = cone_nsec_monotonic();
     for (int i = 0; i < YIELDS; i++)
         coil_sched_yield();
