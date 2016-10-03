@@ -11,9 +11,9 @@ libpaths = [p + '/obj' for p in git]
 libs = ['dl', 'cno']
 
 bins = {
-    'test_simple': ['cone/cone.c', 'cone/coin.c', 'tests/simple.c'],
-    'test_yield':  ['cone/cone.c', 'cone/coin.c', 'tests/yield.c'],
-    'test_cno':    ['cone/cone.c', 'cone/coin.c', 'tests/cno.c'],
+    'test_simple': ['cone/cone.c', 'tests/simple.c'],
+    'test_yield':  ['cone/cone.c', 'tests/yield.c'],
+    'test_cno':    ['cone/cone.c', 'tests/cno.c'],
 }
 
 templates = {
