@@ -38,6 +38,6 @@ co_event_vec_emit(struct co_event_vec *ev) {
     ev->slots = (struct co_vec_closure){};
     for (size_t i = 0; i < r.size; i++)
         if (co_event_emit(&r.data[i]))
-            return co_vec_closure_fini(&r), -1;
+            return co_vec_closure_fini(&r), -1;  // TODO not fail
     return co_vec_closure_fini(&r), 0;
 }

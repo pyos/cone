@@ -104,10 +104,10 @@ co_event_fd_emit(struct co_event_fd *set, struct co_nsec timeout) {
         return errno == EINTR ? 0 : -1;
     for (size_t i = 0; i < (size_t)got; i++) {
         struct co_event_fd_sub *c = (struct co_event_fd_sub*)evs[i].data.ptr;
-        if (evs[i].events & (EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLHUP))
-            co_event_emit(&c->cbs[0]);
-        if (evs[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP))
-            co_event_emit(&c->cbs[1]);
+        if ((evs[i].events & (EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLHUP)) && co_event_emit(&c->cbs[0]))
+            return -1;  // TODO not fail
+        if ((evs[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP)) && co_event_emit(&c->cbs[1]))
+            return -1;  // TODO not fail
         if (c->cbs[0].function == NULL && c->cbs[1].function == NULL)
             co_event_fd_close(set, c);
     }
@@ -134,8 +134,8 @@ co_event_fd_emit(struct co_event_fd *set, struct co_nsec timeout) {
     for (size_t i = 0; i < sizeof(set->fds) / sizeof(set->fds[0]); i++)
         for (struct co_event_fd_sub *c = set->fds[i]; c; c = c->link)
             for (int i = 0; i < 2; i++)
-                if (FD_ISSET(c->fd, &fds[i]))
-                    co_event_emit(&c->cbs[i]);
+                if (FD_ISSET(c->fd, &fds[i]) && co_event_emit(&c->cbs[i]))
+                    return -1;  // TODO not fail
 #endif
     return 0;
 }
