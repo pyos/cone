@@ -34,10 +34,10 @@ co_event_vec_connect(struct co_event_vec *ev, struct co_closure cb) {
 
 static inline int
 co_event_vec_emit(struct co_event_vec *ev) {
-    struct co_vec_closure r = ev->slots;
-    ev->slots = (struct co_vec_closure){};
-    for (size_t i = 0; i < r.size; i++)
-        if (co_event_emit(&r.data[i]))
-            return co_vec_closure_fini(&r), -1;  // TODO not fail
-    return co_vec_closure_fini(&r), 0;
+    while (ev->slots.size) {
+        if (co_event_emit(&ev->slots.data[0]))
+            return -1;  // TODO not fail
+        co_vec_closure_erase(&ev->slots, 0, 1);
+    }
+    return 0;
 }

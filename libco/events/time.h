@@ -42,7 +42,7 @@ co_event_schedule_emit(struct co_event_schedule *ev) {
         struct co_call_at next = ev->queue.data[0];
         if (co_u128_gt(next.time, now))
             return co_u128_sub(next.time, now);
-        co_vec_call_at_erase(&ev->queue, 0);
+        co_vec_call_at_erase(&ev->queue, 0, 1);
         if (co_event_emit(&next.cb))
             return CO_U128(0);  // TODO not fail
     }
