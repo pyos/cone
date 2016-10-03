@@ -6,9 +6,9 @@
 struct co_vec~T~
 {
     ~T~* data;
-    size_t size;
-    size_t shift;
-    size_t cap;
+    unsigned size;
+    unsigned cap;
+    unsigned shift;
 };
 
 static inline void
