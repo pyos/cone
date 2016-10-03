@@ -37,10 +37,10 @@ co_event_schedule_fini(struct co_event_schedule *ev) {
 
 static inline struct co_nsec
 co_event_schedule_emit(struct co_event_schedule *ev) {
-    struct co_nsec now = co_nsec_monotonic();
     while (ev->queue.size) {
+        struct co_nsec now = co_nsec_monotonic();
         struct co_call_at next = ev->queue.data[0];
-        if (co_u128_gt(next.time, now) && co_u128_gt(next.time, now = co_nsec_monotonic()))
+        if (co_u128_gt(next.time, now))
             return co_u128_sub(next.time, now);
         co_vec_call_at_erase(&ev->queue, 0);
         if (co_event_emit(&next.cb))
