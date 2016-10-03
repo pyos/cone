@@ -1,4 +1,6 @@
-#include "../cone/cone.h"
+#define CONE_COMAIN
+#include "../cone/coin.h"
+#include "../cone/coil.h"
 
 #include <errno.h>
 #include <netdb.h>
@@ -29,7 +31,7 @@ struct cno_data_t {
 
 static int writeall(struct cno_data_t *d, const char *data, size_t size) {
     while (size) {
-        ssize_t w = write(d->fd, data, size);
+        ssize_t w = coil_write(d->fd, data, size);
         if (w <= 0)
             return CNO_ERROR(TRANSPORT, "could not write to socket");
         data += w;
@@ -61,7 +63,7 @@ static int handle_connection(int client) {
         goto error;
     ssize_t rd;
     char data[4096];
-    while ((rd = read(client, data, sizeof(data))))
+    while ((rd = coil_read(client, data, sizeof(data))))
         if (rd < 0 || cno_connection_data_received(&d.conn, data, (size_t) rd))
             goto error;
     if (cno_connection_lost(&d.conn))
@@ -72,7 +74,7 @@ error:
     return 0;
 }
 
-int amain() {
+int comain(int argc, const char **argv) {
     signal(SIGINT, &sigint);
     signal(SIGPIPE, SIG_IGN);
     signal(SIGCHLD, SIG_IGN);
@@ -85,9 +87,9 @@ int amain() {
     servaddr.sin_addr.s_addr = htons(INADDR_ANY);
     servaddr.sin_port = htons(8000);
     bind(fd, (struct sockaddr *) &servaddr, sizeof(servaddr));
-    listen(fd, 127);
+    coil_listen(fd, 127);
     int client;
-    while ((client = accept(fd, NULL, NULL)) >= 0 || errno == ECONNABORTED)
+    while ((client = coil_accept(fd, NULL, NULL)) >= 0 || errno == ECONNABORTED)
         cone_decref(cone(&handle_connection, (void*)(long)client));
     if (errno != EINVAL)
         perror("accept");

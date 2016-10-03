@@ -1,24 +1,26 @@
-#include "../cone/cone.h"
+#define CONE_COMAIN
+#include "../cone/coin.h"
+#include "../cone/coil.h"
 
 #include <sched.h>
 
 static int c1() {
     char data[1024];
-    ssize_t size = read(0, data, sizeof(data));
-    sched_yield();
-    write(1, data, size);
+    ssize_t size = coil_read(0, data, sizeof(data));
+    coil_sched_yield();
+    coil_write(1, data, size);
     return 0;
 }
 
 static int c2() {
     for (int i = 0; i < 3; i++) {
-        sleep(i);
-        write(1, "Hello, World!\n", 14);
+        coil_sleep(i);
+        coil_write(1, "Hello, World!\n", 14);
     }
     return 0;
 }
 
-int amain() {
+int comain(int argc, const char **argv) {
     setnonblocking(0);
     setnonblocking(1);
     cone_decref(cone(&c1, NULL));

@@ -1,14 +1,21 @@
 #pragma once
-#include "ev-loop.h"
+#if !defined(CONE_EPOLL) && __linux__
+#define CONE_EPOLL 1
+#endif
 
 #if !defined(CONE_XCHG_RSP) && __linux__ && __x86_64__
 #define CONE_XCHG_RSP 1
+#endif
+
+#ifndef CONE_IO_TIMEOUT
+#define CONE_IO_TIMEOUT 30000000000ull
 #endif
 
 #ifndef CONE_DEFAULT_STACK
 #define CONE_DEFAULT_STACK 65536
 #endif
 
+#include "ev-loop.h"
 #if !CONE_XCHG_RSP
 #include <ucontext.h>
 #endif
@@ -152,10 +159,10 @@ cone_spawn(struct cone_loop *loop, size_t size, struct cone_closure body) {
 #define cone(f, arg) cone_spawn(cone->loop, 0, cone_bind(f, arg))
 
 static inline int
-cone_main(struct cone_closure body) {
+cone_main(size_t stksz, struct cone_closure body) {
     struct cone_loop loop = {};
     int err = cone_loop_init(&loop)
-           || cone_decref(cone_spawn(&loop, 0, body))
+           || cone_decref(cone_spawn(&loop, stksz, body))
            || cone_loop_run(&loop);
     return cone_loop_fini(&loop) || err ? -1 : 0;
 }

@@ -5,15 +5,6 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <unistd.h>
-
-#if !defined(CONE_EPOLL) && __linux__
-#define CONE_EPOLL 1
-#endif
-
-#ifndef CONE_IO_TIMEOUT
-#define CONE_IO_TIMEOUT 30000000000ull
-#endif
-
 #if CONE_EPOLL
 #include <sys/epoll.h>
 #else

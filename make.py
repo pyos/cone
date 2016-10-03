@@ -11,9 +11,9 @@ libpaths = [p + '/obj' for p in git]
 libs = ['dl', 'cno']
 
 bins = {
-    'test_simple': ['cone/cone.c', 'tests/simple.c'],
-    'test_yield':  ['cone/cone.c', 'tests/yield.c'],
-    'test_cno':    ['cone/cone.c', 'tests/cno.c'],
+    'test_simple': ['tests/simple.c'],
+    'test_yield':  ['tests/yield.c'],
+    'test_cno':    ['tests/cno.c'],
 }
 
 templates = {
@@ -81,7 +81,7 @@ else:
             obj = 'obj/' + src.rpartition('.')[0] + '.o'
             print('{}: {} {}'.format(obj, src, ' '.join(deps)), file=m)
             print('\t@mkdir -p {}'.format(os.path.dirname(obj)), file=m)
-            print('\t$(CC) -std=c11 -I. -Wall -Wextra -fPIC $(CFLAGS) {2} -D_GNU_SOURCE -c {0} -o {1}'.format(src, obj,
+            print('\t$(CC) -std=c11 -I. -Wall -Wextra -Wno-unused-parameter -fPIC $(CFLAGS) {2} -D_GNU_SOURCE -c {0} -o {1}'.format(src, obj,
                 ' '.join(map('-I{}'.format, incpaths))), file=m)
 
         print('clean:\n\trm -rf', *temporaries, file=m)
