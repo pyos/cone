@@ -1,23 +1,12 @@
-#pragma once
-#ifndef COIL_INTERCEPT_DYNAMIC_LIBC
-#define COIL_INTERCEPT_DYNAMIC_LIBC 0
-#endif
-
 #include "cone.h"
 
-#include <sys/socket.h>
-
-#if COIL_INTERCEPT_DYNAMIC_LIBC
 #include <dlfcn.h>
+#include <sys/socket.h>
 
 #define coil_libc_call(name, ...) coil_libc_##name(__VA_ARGS__)
 #define coil_libc_defn(ret, name, ...) \
     static ret (*coil_libc_##name)(__VA_ARGS__); \
     extern ret name(__VA_ARGS__)
-#else
-#define coil_libc_call(name, ...) name(__VA_ARGS__)
-#define coil_libc_defn(ret, name, ...) extern ret coil_##name(__VA_ARGS__)
-#endif
 
 #define coil_libc_io(fd, write, rettype, expr) { rettype r; coil_libc_io_impl(r, fd, write, expr); return r; }
 #define coil_libc_io_impl(r, fd, write, expr) \
@@ -33,10 +22,8 @@ coil_libc_defn(int, accept, int fd, struct sockaddr *addr, socklen_t *addrlen) {
     return client < 0 ? -1 : setnonblocking(client) ? (close(client), -1) : client;
 }
 
-#ifdef _GNU_SOURCE
 coil_libc_defn(int, accept4, int fd, struct sockaddr *addr, socklen_t *addrlen, int flags)
     coil_libc_io(fd, 0, int, coil_libc_call(accept4, fd, addr, addrlen, cone ? flags | SOCK_NONBLOCK : flags))
-#endif
 
 coil_libc_defn(ssize_t, read, int fd, void *buf, size_t count)
     coil_libc_io(fd, 0, ssize_t, coil_libc_call(read, fd, buf, count))
@@ -78,7 +65,6 @@ coil_libc_defn(int, sched_yield, void) {
 }
 #endif
 
-#if COIL_INTERCEPT_DYNAMIC_LIBC
 static void __attribute__((constructor))
 coil_libc_init(void) {
     coil_libc_listen      = dlsym(RTLD_NEXT, "listen");
@@ -98,4 +84,3 @@ coil_libc_init(void) {
     coil_libc_sched_yield = dlsym(RTLD_NEXT, "sched_yield");
 #endif
 }
-#endif

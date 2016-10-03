@@ -1,6 +1,4 @@
-#define COIL_INTERCEPT_DYNAMIC_LIBC 1
-#include "../cone/cone.h"
-#include "../cone/coil.h"
+#include "../cone.h"
 
 #include <errno.h>
 #include <netdb.h>

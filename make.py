@@ -11,13 +11,13 @@ libpaths = [p + '/obj' for p in git]
 libs = ['dl', 'cno']
 
 bins = {
-    'test_simple': ['cone/cone.c', 'tests/simple.c'],
-    'test_yield':  ['cone/cone.c', 'tests/yield.c'],
-    'test_cno':    ['cone/cone.c', 'tests/cno.c'],
+    'test_simple': ['cone.c', 'cold.c', 'tests/simple.c'],
+    'test_yield':  ['cone.c', 'cold.c', 'tests/yield.c'],
+    'test_cno':    ['cone.c', 'cold.c', 'tests/cno.c'],
 }
 
 templates = {
-    'cone/vec~T~.h': [
+    'vec~T~.h': [
         {'_prefix': 'cone_', 'T': 'struct cone_closure'},
         {'_prefix': 'cone_', 'T': 'struct cone_call_at'},
     ],
