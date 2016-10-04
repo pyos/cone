@@ -1,3 +1,7 @@
+/*
+ * collld / cone linked with linux libc dynamically
+ *          --   -           -     -    -
+ */
 #include "cone.h"
 
 #include <dlfcn.h>
@@ -57,16 +61,11 @@ collld_defn(int, nanosleep, const struct timespec *req, struct timespec *rem) {
     return !cone ? collld_call(nanosleep, req, rem) : cone_sleep(cot_nsec_from_timespec(*req));
 }
 
-#ifdef _POSIX_PRIORITY_SCHEDULING
-#include <sched.h>
-
 collld_defn(int, sched_yield, void) {
     return !cone ? collld_call(sched_yield) : cone_loop_ping(cone->loop) ? -1 : cone_wait(&cone->loop->on_ping);
 }
-#endif
 
-static void __attribute__((constructor))
-collld_init(void) {
+static __attribute__((constructor)) void collld_init(void) {
     collld_listen      = dlsym(RTLD_NEXT, "listen");
     collld_accept      = dlsym(RTLD_NEXT, "accept");
     collld_accept4     = dlsym(RTLD_NEXT, "accept4");

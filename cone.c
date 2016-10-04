@@ -1,11 +1,14 @@
+/*
+ * cone / coroutines
+ *        --     --
+ */
 #include "cone.h"
 
 _Thread_local struct cone * volatile cone;
 
 extern int comain(int argc, const char **argv);
 
-struct cone_comain
-{
+struct cone_comain {
     int retcode;
     int argc;
     const char **argv;
