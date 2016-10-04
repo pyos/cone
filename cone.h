@@ -168,27 +168,27 @@ cone_nsec_monotonic() {
 }
 
 static inline void
-cone_vec_fini(size_t stride, struct cone_vec *vec) {
+cone_vec_fini_s(size_t stride, struct cone_vec *vec) {
     free(vec->data - vec->shift * stride);
     *vec = (struct cone_vec){};
 }
 
 static inline void
-cone_vec_shift(size_t stride, struct cone_vec *vec, size_t start, int offset) {
+cone_vec_shift_s(size_t stride, struct cone_vec *vec, size_t start, int offset) {
     if (start < vec->size)
         memmove(vec->data + (start + offset) * stride, vec->data + start * stride, (vec->size - start) * stride);
     vec->size += offset;
 }
 
 static inline int
-cone_vec_reserve(size_t stride, struct cone_vec *vec, size_t elems) {
+cone_vec_reserve_s(size_t stride, struct cone_vec *vec, size_t elems) {
     if (vec->size + elems <= vec->cap)
         return 0;
     if (vec->shift) {
         vec->data -= vec->shift * stride;
         vec->size += vec->shift;
         vec->cap  += vec->shift;
-        cone_vec_shift(stride, vec, vec->shift, -(int)vec->shift);
+        cone_vec_shift_s(stride, vec, vec->shift, -(int)vec->shift);
         vec->shift = 0;
         if (vec->size + elems <= vec->cap)
             return 0;
@@ -203,16 +203,16 @@ cone_vec_reserve(size_t stride, struct cone_vec *vec, size_t elems) {
 }
 
 static inline int
-cone_vec_insert(size_t stride, struct cone_vec *vec, size_t i, const void *restrict elem) {
-    if (cone_vec_reserve(stride, vec, 1))
+cone_vec_splice_s(size_t stride, struct cone_vec *vec, size_t i, const void *restrict elems, size_t n) {
+    if (cone_vec_reserve_s(stride, vec, n))
         return -1;
-    cone_vec_shift(stride, vec, i, 1);
-    memcpy(vec->data + i * stride, elem, stride);
+    cone_vec_shift_s(stride, vec, i, n);
+    memcpy(vec->data + i * stride, elems, stride);
     return 0;
 }
 
 static inline void
-cone_vec_erase(size_t stride, struct cone_vec *vec, size_t i, size_t n) {
+cone_vec_erase_s(size_t stride, struct cone_vec *vec, size_t i, size_t n) {
     if (i + n == vec->size)
         vec->size -= n;
     else if (i == 0) {
@@ -221,15 +221,18 @@ cone_vec_erase(size_t stride, struct cone_vec *vec, size_t i, size_t n) {
         vec->cap   -= n;
         vec->shift += n;
     } else
-        cone_vec_shift(stride, vec, i + n, -(int)n);
+        cone_vec_shift_s(stride, vec, i + n, -(int)n);
 }
 
-#define cone_vec_strided(vec)              sizeof(*(vec)->data), &(vec)->decay
-#define cone_vec_fini(vec)                 cone_vec_fini(cone_vec_strided(vec))
-#define cone_vec_shift(vec, start, offset) cone_vec_shift(cone_vec_strided(vec), start, offset)
-#define cone_vec_reserve(vec, elems)       cone_vec_reserve(cone_vec_strided(vec), elems)
-#define cone_vec_insert(vec, i, elem)      cone_vec_insert(cone_vec_strided(vec), i, elem)
-#define cone_vec_erase(vec, i, n)          cone_vec_erase(cone_vec_strided(vec), i, n)
+#define cone_vec_strided(vec)              (size_t)sizeof(*(vec)->data), &(vec)->decay
+#define cone_vec_fini(vec)                 cone_vec_fini_s(cone_vec_strided(vec))
+#define cone_vec_shift(vec, start, offset) cone_vec_shift_s(cone_vec_strided(vec), start, offset)
+#define cone_vec_reserve(vec, elems)       cone_vec_reserve_s(cone_vec_strided(vec), elems)
+#define cone_vec_splice(vec, i, elems, n)  cone_vec_splice_s(cone_vec_strided(vec), i, elems, n)
+#define cone_vec_extend(vec, elems, n)     cone_vec_splice(vec, (vec)->size, elems, n)
+#define cone_vec_insert(vec, i, elem)      cone_vec_splice(vec, i, elem, 1)
+#define cone_vec_append(vec, elem)         cone_vec_extend(vec, elem, 1)
+#define cone_vec_erase(vec, i, n)          cone_vec_erase_s(cone_vec_strided(vec), i, n)
 
 static inline int
 cone_event_emit(struct cone_closure *ev) {
@@ -243,7 +246,7 @@ cone_event_vec_fini(struct cone_event_vec *ev) { cone_vec_fini(&ev->slots); }
 
 static inline int
 cone_event_vec_connect(struct cone_event_vec *ev, struct cone_closure cb) {
-    return cone_vec_insert(&ev->slots, ev->slots.size, &cb);
+    return cone_vec_append(&ev->slots, &cb);
 }
 
 static inline int
