@@ -1,8 +1,4 @@
 #pragma once
-/*
- * cone / coroutines
- *        --     --
- */
 #include "cot.h"
 
 struct cone_closure
@@ -13,9 +9,9 @@ struct cone_closure
 
 extern _Thread_local struct cone * volatile cone;
 int          cone_unblock (int fd);
-int          cone_main    (size_t stack, struct cone_closure);
+int          cone_root    (size_t stack, struct cone_closure);
 struct cone *cone_spawn   (size_t stack, struct cone_closure);
-struct cone *cone_incref  (struct cone *);
+void         cone_incref  (struct cone *);
 int          cone_decref  (struct cone *);
 int          cone_join    (struct cone *);
 int          cone_iowait  (int fd, int write);
