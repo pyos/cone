@@ -70,10 +70,11 @@ static inline cot_nsec cot_nsec_monotonic() {
 /* --- error handling --- */
 
 enum cot_errno {
-    cot_ok           = 0,
-    cot_errno_os     = 1,
-    cot_errno_assert = 2,
-    cot_errno_memory = 3,
+    cot_ok = 0,
+    cot_errno_os,
+    cot_errno_assert,
+    cot_errno_memory,
+    cot_errno_custom = 128,
 };
 
 struct cot_error_traceback {
@@ -141,7 +142,7 @@ static inline int cot_vec_splice_s(size_t stride, struct cot_vec *vec, size_t i,
     if (cot_vec_reserve_s(stride, vec, n))
         return cot_error_up();
     cot_vec_shift_s(stride, vec, i, n);
-    memcpy(vec->data + i * stride, elems, stride);
+    memcpy(vec->data + i * stride, elems, n * stride);
     return cot_ok;
 }
 
