@@ -3,6 +3,12 @@
 
 #include <stdarg.h>
 
+static const char *romp_error = NULL;
+
+static void ROMP_ERROR(const char *msg) {
+    romp_error = msg;
+}
+
 struct romp;
 
 struct romp_closure
@@ -26,13 +32,14 @@ enum ROMP_SIGN           // signature ::= {typesign}* '\0'
     ROMP_INT    = 'd',   //            | ROMP_INT  {octets :: digit}
     ROMP_DOUBLE = 'f',   //            | ROMP_DOUBLE
     ROMP_VEC    = 'v',   //            | ROMP_VEC {type :: typesign}
+    ROMP_SPACE  = ' ',   //            | ROMP_SPACE;
 };
 
 static inline int
 romp_encode_uint(struct romp_iovec *out, uint64_t in, unsigned width) {
     uint8_t packed[] = { in >> 56, in >> 48, in >> 40, in >> 32, in >> 24, in >> 16, in >> 8, in };
     if (width != 1 && width != 2 && width != 4 && width != 8)
-        return -1;
+        return ROMP_ERROR("invalid integer width"), -1;
     return cone_vec_extend(out, packed + 8 - width, width);
 }
 
@@ -90,6 +97,7 @@ struct romp_stride_info
 
 static inline struct romp_stride_info
 romp_stride_of(const char *sign) {
+    while (*sign == ROMP_SPACE) sign++;
     switch (*sign++) {
         case ROMP_DOUBLE:
             return (struct romp_stride_info){8, 1};
@@ -100,7 +108,7 @@ romp_stride_of(const char *sign) {
             if (*sign == '1' || *sign == '2' || *sign == '4' || *sign == '8')
                 return (struct romp_stride_info){*sign - '0', 2};
         default:
-            return (struct romp_stride_info){0, 0};
+            return ROMP_ERROR("bad signature"), (struct romp_stride_info){0, 0};
     }
 }
 
@@ -110,11 +118,11 @@ romp_encode_vec(struct romp_iovec *out, const char **sign, const struct cone_vec
     if (si.sign_length == 0)
         return -1;
     if (si.stride == 0)
-        return -1;  // TODO serialize vectors of vectors
+        return ROMP_ERROR("vectors of vectors not implemented"), -1;  // TODO serialize vectors of vectors
     if (romp_encode_uint(out, in->size, 4))
         return -1;
     if (cone_vec_extend(out, in->data, in->size * si.stride))
-        return -1;
+        return ROMP_ERROR("out of memory"), -1;
     *sign += si.sign_length;
     return 0;
 }
@@ -133,20 +141,23 @@ romp_decode_vec(struct romp_iovec *in, const char **sign, struct cone_vec *out) 
     if (cone_vec_splice_s(si.stride, out, 0, in->data, size))
         return -1;
     *sign += si.sign_length;
+    cone_vec_erase(in, 0, si.stride * size);
     return 0;
 }
 
 static int
 romp_vencode(struct romp_iovec *out, const char *sign, va_list args) {
     while (*sign) switch (*sign++) {
+        case ROMP_SPACE:
+            break;
         case ROMP_UINT: {
             uint64_t r = 0;
             switch (*sign) {
-                case '1': r = va_arg(args, unsigned);
-                case '2': r = va_arg(args, unsigned);
-                case '4': r = va_arg(args, unsigned long);
-                case '8': r = va_arg(args, unsigned long long);
-                default: return -1;
+                case '1': r = va_arg(args, unsigned); break;
+                case '2': r = va_arg(args, unsigned); break;
+                case '4': r = va_arg(args, unsigned long); break;
+                case '8': r = va_arg(args, unsigned long long); break;
+                default: return ROMP_ERROR("invalid integer size"), -1;
             }
             if (romp_encode_uint(out, r, *sign++ - '0'))
                 return -1;
@@ -155,11 +166,11 @@ romp_vencode(struct romp_iovec *out, const char *sign, va_list args) {
         case ROMP_INT: {
             int64_t r = 0;
             switch (*sign) {
-                case '1': r = va_arg(args, signed);
-                case '2': r = va_arg(args, signed);
-                case '4': r = va_arg(args, signed long);
-                case '8': r = va_arg(args, signed long long);
-                default: return -1;
+                case '1': r = va_arg(args, signed); break;
+                case '2': r = va_arg(args, signed); break;
+                case '4': r = va_arg(args, signed long); break;
+                case '8': r = va_arg(args, signed long long); break;
+                default: return ROMP_ERROR("invalid integer size"), -1;
             }
             if (romp_encode_int(out, r, *sign++ - '0'))
                 return -1;
@@ -181,15 +192,17 @@ romp_vencode(struct romp_iovec *out, const char *sign, va_list args) {
 static int
 romp_vdecode(struct romp_iovec *in, const char *sign, va_list args) {
     while (*sign) switch (*sign++) {
+        case ROMP_SPACE:
+            break;
         case ROMP_UINT: {
             uint64_t r = 0;
             if (romp_decode_uint(in, &r, *sign - '0'))
                 return -1;
             switch (*sign++) {
-                case '1': *va_arg(args, uint8_t  *) = r;
-                case '2': *va_arg(args, uint16_t *) = r;
-                case '4': *va_arg(args, uint32_t *) = r;
-                case '8': *va_arg(args, uint64_t *) = r;
+                case '1': *va_arg(args, uint8_t  *) = r; break;
+                case '2': *va_arg(args, uint16_t *) = r; break;
+                case '4': *va_arg(args, uint32_t *) = r; break;
+                case '8': *va_arg(args, uint64_t *) = r; break;
                 default: return -1;
             }
             break;
@@ -199,10 +212,10 @@ romp_vdecode(struct romp_iovec *in, const char *sign, va_list args) {
             if (romp_decode_int(in, &r, *sign - '0'))
                 return -1;
             switch (*sign++) {
-                case '1': *va_arg(args, int8_t  *) = r;
-                case '2': *va_arg(args, int16_t *) = r;
-                case '4': *va_arg(args, int32_t *) = r;
-                case '8': *va_arg(args, int64_t *) = r;
+                case '1': *va_arg(args, int8_t  *) = r; break;
+                case '2': *va_arg(args, int16_t *) = r; break;
+                case '4': *va_arg(args, int32_t *) = r; break;
+                case '8': *va_arg(args, int64_t *) = r; break;
                 default: return -1;
             }
             break;
