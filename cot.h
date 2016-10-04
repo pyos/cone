@@ -67,6 +67,40 @@ static inline cot_nsec cot_nsec_monotonic() {
     return clock_gettime(CLOCK_MONOTONIC, &val) ? COT_U128_MAX : cot_nsec_from_timespec(val);
 }
 
+/* --- error handling --- */
+
+enum cot_errno {
+    cot_ok           = 0,
+    cot_errno_os     = 1,
+    cot_errno_assert = 2,
+    cot_errno_memory = 3,
+};
+
+struct cot_error_traceback {
+    const char *file;
+    unsigned line;
+};
+
+struct cot_error {
+    enum cot_errno code;
+    const char *name;
+    char text[128];
+    struct cot_error_traceback trace[32];
+};
+
+const struct cot_error *cot_last_error(void);
+
+int cot_error(enum cot_errno code, const char *file, unsigned line,
+              const char *name, const char *fmt, ...) __attribute__((format(printf, 5, 6)));
+
+int cot_error_up(const char *file, int line);
+
+void cot_error_show(const char *prefix);
+
+#define cot_error(id, ...)    cot_error(cot_errno_##id, __FILE__, __LINE__, #id, __VA_ARGS__)
+#define cot_error_up()        cot_error_up(__FILE__, __LINE__)
+#define cot_error_os()        cot_error(os, "errno %d", errno)
+
 /* --- generic vector type --- */
 
 #define cot_vec(T) { T* data; unsigned size, cap, shift; }
@@ -86,31 +120,29 @@ static inline void cot_vec_shift_s(size_t stride, struct cot_vec *vec, size_t st
 
 static inline int cot_vec_reserve_s(size_t stride, struct cot_vec *vec, size_t elems) {
     if (vec->size + elems <= vec->cap)
-        return 0;
-    if (vec->shift) {
+        return cot_ok;
+    if (vec->size + elems <= vec->cap + vec->shift) {
         vec->data -= vec->shift * stride;
         vec->size += vec->shift;
         vec->cap  += vec->shift;
         cot_vec_shift_s(stride, vec, vec->shift, -(int)vec->shift);
         vec->shift = 0;
-        if (vec->size + elems <= vec->cap)
-            return 0;
+        return cot_ok;
     }
     size_t ncap = vec->cap + (elems > vec->cap ? elems : vec->cap);
-    void *r = realloc(vec->data, stride * ncap);
+    void *r = realloc(vec->data - vec->shift * stride, stride * ncap);
     if (r == NULL)
-        return -1;
-    vec->data = (char*) r;
-    vec->cap = ncap;
-    return 0;
+        return cot_error(memory, "%zu x %zu bytes", ncap, stride);
+    *vec = (struct cot_vec){.data = r, .size = vec->size, .cap = ncap};
+    return cot_ok;
 }
 
 static inline int cot_vec_splice_s(size_t stride, struct cot_vec *vec, size_t i, const void *elems, size_t n) {
     if (cot_vec_reserve_s(stride, vec, n))
-        return -1;
+        return cot_error_up();
     cot_vec_shift_s(stride, vec, i, n);
     memcpy(vec->data + i * stride, elems, stride);
-    return 0;
+    return cot_ok;
 }
 
 static inline void cot_vec_erase_s(size_t stride, struct cot_vec *vec, size_t i, size_t n) {

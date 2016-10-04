@@ -112,10 +112,10 @@ static inline int cone_event_vec_connect(struct cone_event_vec *ev, struct cone_
 static inline int cone_event_vec_emit(struct cone_event_vec *ev) {
     while (ev->size) {
         if (cone_event_emit(&ev->data[0]))
-            return -1;  // TODO not fail
+            return cot_error_up();  // TODO not fail
         cot_vec_erase(ev, 0, 1);
     }
-    return 0;
+    return cot_ok;
 }
 
 static inline void cone_event_schedule_fini(struct cone_event_schedule *ev) {
@@ -130,7 +130,7 @@ static inline cot_nsec cone_event_schedule_emit(struct cone_event_schedule *ev) 
             return cot_u128_sub(next.time, now);
         cot_vec_erase(ev, 0, 1);
         if (cone_event_emit(&next.f))
-            return (cot_u128){};  // TODO not fail
+            return cot_error_up(), (cot_u128){};  // TODO not fail
     }
     return COT_U128_MAX;
 }
@@ -150,10 +150,10 @@ static inline int cone_event_schedule_connect(struct cone_event_schedule *ev, co
 
 static inline int cone_event_fd_init(struct cone_event_fd *set) {
 #if CONE_EPOLL
-    return (set->epoll = epoll_create1(0)) < 0 ? -1 : 0;
+    return (set->epoll = epoll_create1(0)) < 0 ? cot_error_os() : cot_ok;
 #else
     set->epoll = -1;
-    return 0;
+    return cot_ok;
 #endif
 }
 
@@ -173,14 +173,16 @@ static inline struct cone_event_fd_sub **cone_event_fd_bucket(struct cone_event_
 
 static inline struct cone_event_fd_sub *cone_event_fd_open(struct cone_event_fd *set, int fd) {
     struct cone_event_fd_sub **b = cone_event_fd_bucket(set, fd);
-    if (!*b && (*b = (struct cone_event_fd_sub *) calloc(1, sizeof(struct cone_event_fd_sub)))) {
-        (*b)->fd = fd;
-    #if CONE_EPOLL
-        struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|EPOLLET|EPOLLIN|EPOLLOUT, {.ptr = *b}};
-        if (epoll_ctl(set->epoll, EPOLL_CTL_ADD, fd, &params))
-            free(*b), *b = NULL;
-    #endif
-    }
+    if (*b != NULL)
+        return *b;
+    if ((*b = (struct cone_event_fd_sub *) calloc(1, sizeof(struct cone_event_fd_sub))) == NULL)
+        return cot_error(memory, "-"), NULL;
+    (*b)->fd = fd;
+#if CONE_EPOLL
+    struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|EPOLLET|EPOLLIN|EPOLLOUT, {.ptr = *b}};
+    if (epoll_ctl(set->epoll, EPOLL_CTL_ADD, fd, &params))
+        cot_error_os(), free(*b), *b = NULL;
+#endif
     return *b;
 }
 
@@ -194,28 +196,30 @@ static inline void cone_event_fd_close(struct cone_event_fd *set, struct cone_ev
 
 static inline int cone_event_fd_connect(struct cone_event_fd *set, int fd, int write, struct cone_closure cb) {
     struct cone_event_fd_sub *ev = cone_event_fd_open(set, fd);
-    if (ev == NULL || ev->cbs[write].code)
-        return -1;
+    if (ev == NULL)
+        return cot_error_up();
+    if (ev->cbs[write].code)
+        return cot_error(assert, "two readers/writers on one file descriptor");
     ev->cbs[write] = cb;
     return 0;
 }
 
 static inline int cone_event_fd_emit(struct cone_event_fd *set, cot_nsec timeout) {
     if (cot_u128_eq(timeout, (cot_u128){}))
-        return -1;
+        return cot_error_up();
     if (cot_u128_gt(timeout, (cot_u128){0, CONE_IO_TIMEOUT}))
         timeout = (cot_u128){0, CONE_IO_TIMEOUT};
 #if CONE_EPOLL
     struct epoll_event evs[32];
     int got = epoll_wait(set->epoll, evs, 32, cot_u128_div(timeout, 1000000ul).L);
     if (got < 0)
-        return errno == EINTR ? 0 : -1;
+        return errno == EINTR ? cot_ok : cot_error_os();
     for (size_t i = 0; i < (size_t)got; i++) {
         struct cone_event_fd_sub *c = (struct cone_event_fd_sub*)evs[i].data.ptr;
         if ((evs[i].events & (EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLHUP)) && cone_event_emit(&c->cbs[0]))
-            return -1;  // TODO not fail
+            return cot_error_up();  // TODO not fail
         if ((evs[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP)) && cone_event_emit(&c->cbs[1]))
-            return -1;  // TODO not fail
+            return cot_error_up();  // TODO not fail
         if (c->cbs[0].code == NULL && c->cbs[1].code == NULL)
             cone_event_fd_close(set, c);
     }
@@ -238,26 +242,26 @@ static inline int cone_event_fd_emit(struct cone_event_fd *set, cot_nsec timeout
     }
     struct timeval us = {cot_u128_div(timeout, 1000000000ull).L, timeout.L % 1000000000ull / 1000};
     if (select(max_fd, &fds[0], &fds[1], NULL, &us) < 0)
-        return errno == EINTR ? 0 : -1;
+        return errno == EINTR ? cot_ok : cot_error_os();
     for (size_t i = 0; i < sizeof(set->fds) / sizeof(set->fds[0]); i++)
         for (struct cone_event_fd_sub *c = set->fds[i]; c; c = c->link)
             for (int i = 0; i < 2; i++)
                 if (FD_ISSET(c->fd, &fds[i]) && cone_event_emit(&c->cbs[i]))
-                    return -1;  // TODO not fail
+                    return cot_error_up();  // TODO not fail
 #endif
-    return 0;
+    return cot_ok;
 }
 
 static inline int cone_unblock(int fd) {
     int flags = fcntl(fd, F_GETFL);
-    return flags == -1 ? -1 : fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    return flags == -1 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) ? cot_error_os() : cot_ok;
 }
 
 static inline int cone_loop_consume_ping(struct cone_loop *loop) {
     ssize_t rd = read(loop->selfpipe[0], &rd, sizeof(rd));  // never yields
     atomic_store_explicit(&loop->pinged, 0, memory_order_release);
     if (cone_event_fd_connect(&loop->io, loop->selfpipe[0], 0, cone_bind(&cone_loop_consume_ping, loop)))
-        return -1;
+        return cot_error_up();
     return cone_event_schedule_connect(&loop->at, (cot_u128){}, cone_bind(&cone_event_vec_emit, &loop->on_ping));
 }
 
@@ -275,36 +279,36 @@ static inline int cone_loop_fini(struct cone_loop *loop) {
 static inline int cone_loop_init(struct cone_loop *loop) {
 #ifdef _GNU_SOURCE
     if (pipe2(loop->selfpipe, O_NONBLOCK))
-        return -1;
+        return cot_error_os();
 #else
     if (pipe(loop->selfpipe))
-        return -1;
+        return cot_error_os();
     if (cone_unblock(loop->selfpipe[0]) || cone_unblock(loop->selfpipe[1]))
-        return cone_loop_fini(loop), -1;
+        return cone_loop_fini(loop), cot_error_up();
 #endif
     atomic_init(&loop->active, 0);
     atomic_init(&loop->pinged, 0);
     cone_event_fd_init(&loop->io);
     if (cone_event_fd_connect(&loop->io, loop->selfpipe[0], 0, cone_bind(&cone_loop_consume_ping, loop)))
-        return cone_loop_fini(loop), -1;
-    return 0;
+        return cone_loop_fini(loop), cot_error_up();
+    return cot_ok;
 }
 
 static inline int cone_loop_run(struct cone_loop *loop) {
     while (atomic_load_explicit(&loop->active, memory_order_acquire))
         if (cone_event_fd_emit(&loop->io, cone_event_schedule_emit(&loop->at)))
-            return -1;
-    return 0;
+            return cot_error_up();
+    return cot_ok;
 }
 
 static inline int cone_loop_ping(struct cone_loop *loop) {
     _Bool expect = 0;
     if (!atomic_compare_exchange_strong_explicit(&loop->pinged, &expect, 1, memory_order_acq_rel, memory_order_relaxed))
-        return 0;
+        return cot_ok;
     if (write(loop->selfpipe[1], "", 1) == 1)
-        return 0;
+        return cot_ok;
     atomic_store(&loop->pinged, 0);
-    return -1;
+    return cot_error_os();
 }
 
 static inline void cone_loop_inc(struct cone_loop *loop) {
@@ -312,7 +316,7 @@ static inline void cone_loop_inc(struct cone_loop *loop) {
 }
 
 static inline int cone_loop_dec(struct cone_loop *loop) {
-    return atomic_fetch_sub_explicit(&loop->active, 1, memory_order_release) == 1 ? cone_loop_ping(loop) : 0;
+    return atomic_fetch_sub_explicit(&loop->active, 1, memory_order_release) == 1 ? cone_loop_ping(loop) : cot_ok;
 }
 
 static inline int cone_switch(struct cone *c) {
@@ -334,10 +338,13 @@ static inline int cone_switch(struct cone *c) {
         "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9",
         "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15", "cc"
     );
-    return 0;
 #else
-    return c->flags & CONE_RUNNING ? swapcontext(&c->outer, &c->inner) : swapcontext(&c->inner, &c->outer);
+    if (c->flags & CONE_RUNNING)
+        swapcontext(&c->outer, &c->inner);
+    else
+        swapcontext(&c->inner, &c->outer);
 #endif
+    return cot_ok;
 }
 
 static inline int cone_run(struct cone *c) {
@@ -350,12 +357,13 @@ static inline int cone_run(struct cone *c) {
 
 static inline int cone_schedule(struct cone *c) {
     if (cone_event_schedule_connect(&c->loop->at, (cot_u128){}, cone_bind(&cone_run, c)))
-        return -1;
+        return cot_error_up();
     c->flags |= CONE_SCHEDULED;
-    return 0;
+    return cot_ok;
 }
 
-#define cone_pause(connect, ...) { return !cone || connect(__VA_ARGS__, cone_bind(&cone_schedule, cone)) ? -1 : cone_switch(cone); }
+#define cone_pause(connect, ...) { \
+    return connect(__VA_ARGS__, cone_bind(&cone_schedule, cone)) ? cot_error_up() : cone_switch(cone); }
 
 static inline int cone_wait(struct cone_event_vec *ev) cone_pause(cone_event_vec_connect, ev)
 
@@ -363,14 +371,17 @@ static inline int cone_iowait(int fd, int write) cone_pause(cone_event_fd_connec
 
 static inline int cone_sleep(cot_nsec delay) cone_pause(cone_event_schedule_connect, &cone->loop->at, delay)
 
-static inline struct cone *cone_incref(struct cone *c) { c->refcount++; return c; }
+static inline struct cone *cone_incref(struct cone *c) {
+    c->refcount++;
+    return c;
+}
 
 static inline int cone_decref(struct cone *c) {
     if (c && --c->refcount == 0) {
         cone_event_vec_fini(&c->done);
         free(c);
     }
-    return c ? 0 : -1;
+    return c ? cot_ok : cot_error_up();
 }
 
 static inline int cone_join(struct cone *c) {
@@ -396,7 +407,7 @@ static inline struct cone *cone_spawn(struct cone_loop *loop, size_t size, struc
         size = CONE_DEFAULT_STACK;
     struct cone *c = (struct cone *)malloc(size);
     if (c == NULL)
-        return NULL;
+        return cot_error(memory, "-"), NULL;
     *c = (struct cone){.refcount = 1, .loop = loop, .body = body};
 #if CONE_XCHG_RSP
     c->rsp = (void **)(c->stack + size - sizeof(struct cone)) - 4;
@@ -415,7 +426,7 @@ static inline struct cone *cone_spawn(struct cone_loop *loop, size_t size, struc
         cone_event_vec_connect(&c->done, cone_bind(&cone_decref, c)) ||
         cone_schedule(c)) {
         cone_decref(c);
-        return NULL;
+        return cot_error_up(), NULL;
     }
     cone_loop_inc(loop);
     return cone_incref(c);
@@ -428,5 +439,5 @@ static inline int cone_main(size_t stksz, struct cone_closure body) {
     int err = cone_loop_init(&loop)
            || cone_decref(cone_spawn(&loop, stksz, body))
            || cone_loop_run(&loop);
-    return cone_loop_fini(&loop) || err ? -1 : 0;
+    return cone_loop_fini(&loop) || err ? cot_error_up() : cot_ok;
 }

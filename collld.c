@@ -14,7 +14,7 @@
 
 #define collld_io(fd, write, rettype, expr) { rettype r; collld_io_impl(r, fd, write, expr); return r; }
 #define collld_io_impl(r, fd, write, expr) \
-    do r = expr; while (r < 0 && (errno == EWOULDBLOCK || errno == EAGAIN) && !cone_iowait(fd, write));
+    do r = expr; while (cone && r < 0 && (errno == EWOULDBLOCK || errno == EAGAIN) && !cone_iowait(fd, write));
 
 collld_defn(int, listen, int fd, int backlog) {
     return cone && cone_unblock(fd) < 0 ? -1 : collld_call(listen, fd, backlog);
