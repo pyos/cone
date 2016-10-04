@@ -21,7 +21,7 @@
 #    include <ucontext.h>
 #endif
 
-struct cone_event_vec cot_vec(struct cone_closure);
+struct cone_event_vec veil_vec(struct cone_closure);
 
 static int cone_event_emit(struct cone_closure *ev) {
     struct cone_closure cb = *ev;
@@ -30,48 +30,48 @@ static int cone_event_emit(struct cone_closure *ev) {
 }
 
 static int cone_event_vec_connect(struct cone_event_vec *ev, struct cone_closure cb) {
-    return cot_vec_append(ev, &cb);
+    return veil_vec_append(ev, &cb);
 }
 
 static int cone_event_vec_emit(struct cone_event_vec *ev) {
     while (ev->size) {
         if (cone_event_emit(&ev->data[0]))
-            return cot_error_up();  // TODO not fail
-        cot_vec_erase(ev, 0, 1);
+            return veil_error_up();  // TODO not fail
+        veil_vec_erase(ev, 0, 1);
     }
-    return cot_ok;
+    return veil_ok;
 }
 
 struct cone_scheduled
 {
     struct cone_closure f;
-    cot_nsec time;
+    veil_nsec time;
 };
 
-struct cone_event_schedule cot_vec(struct cone_scheduled);
+struct cone_event_schedule veil_vec(struct cone_scheduled);
 
-static int cone_event_schedule_connect(struct cone_event_schedule *ev, cot_nsec delay, struct cone_closure cb) {
-    struct cone_scheduled r = {cb, cot_u128_add(cot_nsec_monotonic(), delay)};
+static int cone_event_schedule_connect(struct cone_event_schedule *ev, veil_nsec delay, struct cone_closure cb) {
+    struct cone_scheduled r = {cb, veil_u128_add(veil_nsec_monotonic(), delay)};
     size_t left = 0, right = ev->size;
     while (left != right) {
         size_t mid = (right + left) / 2;
-        if (cot_u128_lt(r.time, ev->data[mid].time))
+        if (veil_u128_lt(r.time, ev->data[mid].time))
             right = mid;
         else
             left = mid + 1;
     }
-    return cot_vec_insert(ev, left, &r);
+    return veil_vec_insert(ev, left, &r);
 }
 
-static cot_nsec cone_event_schedule_emit(struct cone_event_schedule *ev) {
+static veil_nsec cone_event_schedule_emit(struct cone_event_schedule *ev) {
     while (ev->size) {
-        cot_nsec now = cot_nsec_monotonic();
+        veil_nsec now = veil_nsec_monotonic();
         struct cone_scheduled next = ev->data[0];
-        if (cot_u128_gt(next.time, now))
-            return cot_u128_sub(next.time, now);
-        cot_vec_erase(ev, 0, 1);
+        if (veil_u128_gt(next.time, now))
+            return veil_u128_sub(next.time, now);
+        veil_vec_erase(ev, 0, 1);
         if (cone_event_emit(&next.f))
-            return cot_error_up(), (cot_u128){};  // TODO not fail
+            return veil_error_up(), (veil_u128){};  // TODO not fail
     }
     return COT_U128_MAX;
 }
@@ -91,10 +91,10 @@ struct cone_event_fd
 
 static int cone_event_fd_init(struct cone_event_fd *set) {
 #if CONE_EPOLL
-    return (set->epoll = epoll_create1(0)) < 0 ? cot_error_os() : cot_ok;
+    return (set->epoll = epoll_create1(0)) < 0 ? veil_error_os() : veil_ok;
 #else
     set->epoll = -1;
-    return cot_ok;
+    return veil_ok;
 #endif
 }
 
@@ -117,12 +117,12 @@ static struct cone_ioclosure *cone_event_fd_open(struct cone_event_fd *set, int 
     if (*b != NULL)
         return *b;
     if ((*b = (struct cone_ioclosure *) calloc(1, sizeof(struct cone_ioclosure))) == NULL)
-        return cot_error(memory, "-"), NULL;
+        return veil_error(memory, "-"), NULL;
     (*b)->fd = fd;
 #if CONE_EPOLL
     struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|EPOLLET|EPOLLIN|EPOLLOUT, {.ptr = *b}};
     if (epoll_ctl(set->epoll, EPOLL_CTL_ADD, fd, &params))
-        cot_error_os(), free(*b), *b = NULL;
+        veil_error_os(), free(*b), *b = NULL;
 #endif
     return *b;
 }
@@ -138,29 +138,29 @@ static void cone_event_fd_close(struct cone_event_fd *set, struct cone_ioclosure
 static int cone_event_fd_connect(struct cone_event_fd *set, int fd, int write, struct cone_closure cb) {
     struct cone_ioclosure *ev = cone_event_fd_open(set, fd);
     if (ev == NULL)
-        return cot_error_up();
+        return veil_error_up();
     if (ev->fs[write].code)
-        return cot_error(assert, "two readers/writers on one file descriptor");
+        return veil_error(assert, "two readers/writers on one file descriptor");
     ev->fs[write] = cb;
     return 0;
 }
 
-static int cone_event_fd_emit(struct cone_event_fd *set, cot_nsec timeout) {
-    if (cot_u128_eq(timeout, (cot_u128){}))
-        return cot_error_up();
-    if (cot_u128_gt(timeout, (cot_u128){0, 60000000000ull}))
-        timeout = (cot_u128){0, 60000000000ull};
+static int cone_event_fd_emit(struct cone_event_fd *set, veil_nsec timeout) {
+    if (veil_u128_eq(timeout, (veil_u128){}))
+        return veil_error_up();
+    if (veil_u128_gt(timeout, (veil_u128){0, 60000000000ull}))
+        timeout = (veil_u128){0, 60000000000ull};
 #if CONE_EPOLL
     struct epoll_event evs[32];
-    int got = epoll_wait(set->epoll, evs, 32, cot_u128_div(timeout, 1000000ul).L);
+    int got = epoll_wait(set->epoll, evs, 32, veil_u128_div(timeout, 1000000ul).L);
     if (got < 0)
-        return errno == EINTR ? cot_ok : cot_error_os();
+        return errno == EINTR ? veil_ok : veil_error_os();
     for (size_t i = 0; i < (size_t)got; i++) {
         struct cone_ioclosure *c = (struct cone_ioclosure*)evs[i].data.ptr;
         if ((evs[i].events & (EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLHUP)) && cone_event_emit(&c->fs[0]))
-            return cot_error_up();  // TODO not fail
+            return veil_error_up();  // TODO not fail
         if ((evs[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP)) && cone_event_emit(&c->fs[1]))
-            return cot_error_up();  // TODO not fail
+            return veil_error_up();  // TODO not fail
         if (c->fs[0].code == NULL && c->fs[1].code == NULL)
             cone_event_fd_close(set, c);
     }
@@ -181,16 +181,16 @@ static int cone_event_fd_emit(struct cone_event_fd *set, cot_nsec timeout) {
                     FD_SET(c->fd, &fds[i]);
         }
     }
-    struct timeval us = {cot_u128_div(timeout, 1000000000ull).L, timeout.L % 1000000000ull / 1000};
+    struct timeval us = {veil_u128_div(timeout, 1000000000ull).L, timeout.L % 1000000000ull / 1000};
     if (select(max_fd, &fds[0], &fds[1], NULL, &us) < 0)
-        return errno == EINTR ? cot_ok : cot_error_os();
+        return errno == EINTR ? veil_ok : veil_error_os();
     for (size_t i = 0; i < sizeof(set->fds) / sizeof(set->fds[0]); i++)
         for (struct cone_ioclosure *c = set->fds[i]; c; c = c->link)
             for (int i = 0; i < 2; i++)
                 if (FD_ISSET(c->fd, &fds[i]) && cone_event_emit(&c->fs[i]))
-                    return cot_error_up();  // TODO not fail
+                    return veil_error_up();  // TODO not fail
 #endif
-    return cot_ok;
+    return veil_ok;
 }
 
 struct cone_loop
@@ -205,58 +205,58 @@ struct cone_loop
 
 int cone_unblock(int fd) {
     int flags = fcntl(fd, F_GETFL);
-    return flags == -1 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) ? cot_error_os() : cot_ok;
+    return flags == -1 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) ? veil_error_os() : veil_ok;
 }
 
 static int cone_loop_consume_ping(struct cone_loop *loop) {
     ssize_t rd = read(loop->selfpipe[0], &rd, sizeof(rd));  // never yields
     atomic_store_explicit(&loop->pinged, 0, memory_order_release);
     if (cone_event_fd_connect(&loop->io, loop->selfpipe[0], 0, cone_bind(&cone_loop_consume_ping, loop)))
-        return cot_error_up();
-    return cone_event_schedule_connect(&loop->at, (cot_u128){}, cone_bind(&cone_event_vec_emit, &loop->ping));
+        return veil_error_up();
+    return cone_event_schedule_connect(&loop->at, (veil_u128){}, cone_bind(&cone_event_vec_emit, &loop->ping));
 }
 
 static void cone_loop_fini(struct cone_loop *loop) {
     close(loop->selfpipe[0]);
     close(loop->selfpipe[1]);
     cone_event_fd_fini(&loop->io);
-    cot_vec_fini(&loop->ping);
-    cot_vec_fini(&loop->at);
+    veil_vec_fini(&loop->ping);
+    veil_vec_fini(&loop->at);
 }
 
 static int cone_loop_init(struct cone_loop *loop) {
 #ifdef _GNU_SOURCE
     if (pipe2(loop->selfpipe, O_NONBLOCK))
-        return cot_error_os();
+        return veil_error_os();
 #else
     if (pipe(loop->selfpipe))
-        return cot_error_os();
+        return veil_error_os();
     if (cone_unblock(loop->selfpipe[0]) || cone_unblock(loop->selfpipe[1]))
-        return cone_loop_fini(loop), cot_error_up();
+        return cone_loop_fini(loop), veil_error_up();
 #endif
     atomic_init(&loop->active, 0);
     atomic_init(&loop->pinged, 0);
     if (cone_event_fd_init(&loop->io) ||
         cone_event_fd_connect(&loop->io, loop->selfpipe[0], 0, cone_bind(&cone_loop_consume_ping, loop)))
-        return cone_loop_fini(loop), cot_error_up();
-    return cot_ok;
+        return cone_loop_fini(loop), veil_error_up();
+    return veil_ok;
 }
 
 static int cone_loop_run(struct cone_loop *loop) {
     while (atomic_load_explicit(&loop->active, memory_order_acquire))
         if (cone_event_fd_emit(&loop->io, cone_event_schedule_emit(&loop->at)))
-            return cot_error_up();
-    return cot_ok;
+            return veil_error_up();
+    return veil_ok;
 }
 
 static int cone_loop_ping(struct cone_loop *loop) {
     _Bool expect = 0;
     if (!atomic_compare_exchange_strong_explicit(&loop->pinged, &expect, 1, memory_order_acq_rel, memory_order_relaxed))
-        return cot_ok;
+        return veil_ok;
     if (write(loop->selfpipe[1], "", 1) == 1)
-        return cot_ok;
+        return veil_ok;
     atomic_store(&loop->pinged, 0);
-    return cot_error_os();
+    return veil_error_os();
 }
 
 static void cone_loop_inc(struct cone_loop *loop) {
@@ -264,7 +264,7 @@ static void cone_loop_inc(struct cone_loop *loop) {
 }
 
 static int cone_loop_dec(struct cone_loop *loop) {
-    return atomic_fetch_sub_explicit(&loop->active, 1, memory_order_release) == 1 ? cone_loop_ping(loop) : cot_ok;
+    return atomic_fetch_sub_explicit(&loop->active, 1, memory_order_release) == 1 ? cone_loop_ping(loop) : veil_ok;
 }
 
 enum
@@ -306,9 +306,9 @@ static int cone_switch(struct cone *c) {
         "xmm8",  "xmm9",  "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
 #else
     if ((c->flags ^= CONE_FLAG_CTX_A) & CONE_FLAG_CTX_A ? swapcontext(&c->ctxb, &c->ctxa) : swapcontext(&c->ctxa, &c->ctxb))
-        return cot_error_os();
+        return veil_error_os();
 #endif
-    return cot_ok;
+    return veil_ok;
 }
 
 static int cone_run(struct cone *c) {
@@ -319,17 +319,17 @@ static int cone_run(struct cone *c) {
 }
 
 static int cone_schedule(struct cone *c) {
-    return cone_event_schedule_connect(&c->loop->at, (cot_u128){}, cone_bind(&cone_run, c));
+    return cone_event_schedule_connect(&c->loop->at, (veil_u128){}, cone_bind(&cone_run, c));
 }
 
 #define cone_pause(connect, ...) { \
-    return connect(__VA_ARGS__, cone_bind(&cone_schedule, cone)) ? cot_error_up() : cone_switch(cone); }
+    return connect(__VA_ARGS__, cone_bind(&cone_schedule, cone)) ? veil_error_up() : cone_switch(cone); }
 
 static int cone_wait(struct cone_event_vec *ev) cone_pause(cone_event_vec_connect, ev)
 
 int cone_iowait(int fd, int write) cone_pause(cone_event_fd_connect, &cone->loop->io, fd, write)
 
-int cone_sleep(cot_nsec delay) cone_pause(cone_event_schedule_connect, &cone->loop->at, delay)
+int cone_sleep(veil_nsec delay) cone_pause(cone_event_schedule_connect, &cone->loop->at, delay)
 
 int cone_yield(void) {
     return cone_loop_ping(cone->loop) ? -1 : cone_wait(&cone->loop->ping);
@@ -341,10 +341,10 @@ void cone_incref(struct cone *c) {
 
 int cone_decref(struct cone *c) {
     if (c && --c->refcount == 0) {
-        cot_vec_fini(&c->done);
+        veil_vec_fini(&c->done);
         free(c);
     }
-    return c ? cot_ok : cot_error_up();
+    return c ? veil_ok : veil_error_up();
 }
 
 int cone_join(struct cone *c) {
@@ -355,11 +355,11 @@ int cone_join(struct cone *c) {
 
 static __attribute__((noreturn)) void cone_body(struct cone *c) {
     if (cone_event_emit(&c->body))
-        cot_error_show("cone:uncaught");
+        veil_error_show("cone:uncaught");
     c->flags |= CONE_FLAG_FINISHED;
     for (size_t i = 0; i < c->done.size; i++)
-        if (cone_event_schedule_connect(&c->loop->at, (cot_u128){}, c->done.data[i]))
-            cot_error_show("cone:cleanup"), abort();
+        if (cone_event_schedule_connect(&c->loop->at, (veil_u128){}, c->done.data[i]))
+            veil_error_show("cone:cleanup"), abort();
     cone_switch(c);
     abort();
 }
@@ -370,7 +370,7 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
         size = CONE_DEFAULT_STACK;
     struct cone *c = (struct cone *)malloc(size);
     if (c == NULL)
-        return cot_error(memory, "-"), NULL;
+        return veil_error(memory, "-"), NULL;
     *c = (struct cone){.refcount = 1, .loop = loop, .body = body};
 #if CONE_XCHG_RSP
     c->rsp = (void **)(c->stack + size - sizeof(struct cone)) - 4;
@@ -388,7 +388,7 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
      || cone_event_vec_connect(&c->done, cone_bind(&cone_decref, c))
      || cone_schedule(c)) {
         cone_decref(c);
-        return cot_error_up(), NULL;
+        return veil_error_up(), NULL;
     }
     cone_loop_inc(loop);
     return cone_incref(c), c;
@@ -404,7 +404,7 @@ int cone_root(size_t stksz, struct cone_closure body) {
            || cone_decref(cone_spawn_on(&loop, stksz, body))
            || cone_loop_run(&loop);
     cone_loop_fini(&loop);
-    return err ? cot_error_up() : cot_ok;
+    return err ? veil_error_up() : veil_ok;
 }
 
 struct cone_main
@@ -424,6 +424,6 @@ static int cone_main(struct cone_main *c) {
 extern int main(int argc, const char **argv) {
     struct cone_main c = {1, argc, argv};
     if (cone_root(0, cone_bind(&cone_main, &c)) || c.retcode == -1)
-        cot_error_show("cone:main");
+        veil_error_show("cone:main");
     return c.retcode == -1 ? 1 : c.retcode;
 }

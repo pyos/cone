@@ -13,11 +13,11 @@ int enctest(struct romp_iovec *out) {
     int32_t  i32 = -32;
     int64_t  i64 = -64;
     double   dbl = 1234.5678;
-    struct cot_vec(char) str = {.data = "Hello, World!\n", .size = 14};
+    struct veil_vec(char) str = {.data = "Hello, World!\n", .size = 14};
 
     if (romp_encode(out, "u1 u2 u4 u8 f vi1 i1 i2 i4 i8", u8, u16, u32, u64, dbl, &str, i8, i16, i32, i64))
-        return cot_error_up();
-    return cot_ok;
+        return veil_error_up();
+    return veil_ok;
 }
 
 int dectest(struct romp_iovec *in) {
@@ -30,9 +30,9 @@ int dectest(struct romp_iovec *in) {
     int32_t  i32 = 0;
     int64_t  i64 = 0;
     double   dbl = 0;
-    struct cot_vec(char) str = {};
+    struct veil_vec(char) str = {};
     if (romp_decode(in, "u1 u2 u4 u8 f vi1 i1 i2 i4 i8", &u8, &u16, &u32, &u64, &dbl, &str, &i8, &i16, &i32, &i64))
-        return cot_error_up();
+        return veil_error_up();
     printf("u8  = %u\n", u8);
     printf("u16 = %u\n", u16);
     printf("u32 = %u\n", u32);
@@ -43,15 +43,15 @@ int dectest(struct romp_iovec *in) {
     printf("i64 = %" PRIi64 "\n", i64);
     printf("dbl = %f\n", dbl);
     printf("str = %.*s\n", (int)str.size, str.data);
-    return cot_ok;
+    return veil_ok;
 }
 
 int comain() {
     struct romp_iovec vec = {};
     if (enctest(&vec))
-        return cot_error_up();
+        return veil_error_up();
     struct romp_iovec rd = vec;
     if (dectest(&rd))
-        return cot_error_up();
+        return veil_error_up();
     return 0;
 }
