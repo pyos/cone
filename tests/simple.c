@@ -5,23 +5,24 @@
 static int c1() {
     char data[1024];
     ssize_t size = read(0, data, sizeof(data));
-    sched_yield();
-    write(1, data, size);
-    return 0;
+    if (size < 0 || sched_yield() || write(1, data, size) < 0)
+        return cot_error_os();
+    return cot_ok;
 }
 
 static int c2() {
     for (int i = 0; i < 3; i++) {
         sleep(i);
-        write(1, "Hello, World!\n", 14);
+        if (write(1, "Hello, World!\n", 14) < 0)
+            return cot_error_os();
     }
-    return 0;
+    return cot_ok;
 }
 
 int comain() {
-    setnonblocking(0);
-    setnonblocking(1);
-    cone_decref(cone(&c1, NULL));
-    cone_decref(cone(&c2, NULL));
+    cone_unblock(0);
+    cone_unblock(1);
+    if (cone_decref(cone(&c1, NULL)) || cone_decref(cone(&c2, NULL)))
+        return cot_error_up();
     return 0;
 }
