@@ -43,6 +43,7 @@ static inline int veil_u128_gt(veil_u128 a, veil_u128 b) {
     return a.H > b.H || (a.H == b.H && a.L > b.L);
 }
 
+
 typedef veil_u128 veil_nsec;
 
 static inline veil_nsec veil_nsec_from_timespec(struct timespec val) {
@@ -58,6 +59,7 @@ static inline veil_nsec veil_nsec_monotonic() {
     struct timespec val;
     return clock_gettime(CLOCK_MONOTONIC, &val) ? COT_U128_MAX : veil_nsec_from_timespec(val);
 }
+
 
 enum
 {
@@ -85,17 +87,15 @@ struct veil_error
 };
 
 const struct veil_error *veil_last_error(void);
-
-int veil_error(unsigned, const char *name, const char *file, const char *func, unsigned line,
-               const char *fmt, ...) __attribute__((format(printf, 6, 7)));
-
-int veil_error_up(const char *file, const char *func, unsigned line);
-
+int  veil_error(unsigned, const char *name, const char *file, const char *func, unsigned line,
+                const char *fmt, ...) __attribute__((format(printf, 6, 7)));
+int  veil_error_up(const char *file, const char *func, unsigned line);
 void veil_error_show(const char *prefix);
 
 #define veil_error(id, ...) veil_error(veil_errno_##id, #id, __FILE__, __FUNCTION__, __LINE__, __VA_ARGS__)
 #define veil_error_os()     veil_error(os, "errno %d", errno)
 #define veil_error_up()     veil_error_up(__FILE__, __FUNCTION__, __LINE__)
+
 
 #define veil_vec(T) { T* data; unsigned size, cap, shift; }
 
@@ -112,18 +112,16 @@ static inline void veil_vec_shift_s(size_t stride, struct veil_vec *vec, size_t 
     vec->size += offset;
 }
 
-static inline int veil_vec_reserve_s(size_t stride, struct veil_vec *vec, size_t elems) {
-    if (vec->size + elems <= vec->cap)
+static inline int veil_vec_reserve_s(size_t stride, struct veil_vec *vec, size_t n) {
+    if (vec->size + n <= vec->cap - vec->shift)
         return veil_ok;
-    if (vec->size + elems <= vec->cap + vec->shift) {
+    if (vec->size + n <= vec->cap) {
+        memmove(vec->data - vec->shift * stride, vec->data, stride * vec->size);
         vec->data -= vec->shift * stride;
-        vec->size += vec->shift;
-        vec->cap  += vec->shift;
-        veil_vec_shift_s(stride, vec, vec->shift, -(int)vec->shift);
         vec->shift = 0;
         return veil_ok;
     }
-    size_t ncap = vec->cap + (elems > vec->cap ? elems : vec->cap);
+    size_t ncap = vec->cap + (n > vec->cap ? n : vec->cap);
     void *r = realloc(vec->data - vec->shift * stride, stride * ncap);
     if (r == NULL)
         return veil_error(memory, "%zu x %zu bytes", ncap, stride);
@@ -142,13 +140,13 @@ static inline int veil_vec_splice_s(size_t stride, struct veil_vec *vec, size_t 
 static inline void veil_vec_erase_s(size_t stride, struct veil_vec *vec, size_t i, size_t n) {
     if (i + n == vec->size)
         vec->size -= n;
-    else if (i == 0) {
+    else if (i)
+        veil_vec_shift_s(stride, vec, i + n, -(int)n);
+    else {
         vec->data  += n * stride;
         vec->size  -= n;
-        vec->cap   -= n;
         vec->shift += n;
-    } else
-        veil_vec_shift_s(stride, vec, i + n, -(int)n);
+    }
 }
 
 #define veil_vec_strided(vec)              (size_t)sizeof(*(vec)->data), (struct veil_vec*)(vec)
