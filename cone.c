@@ -424,6 +424,6 @@ static int cone_main(struct cone_main *c) {
 extern int main(int argc, const char **argv) {
     struct cone_main c = {1, argc, argv};
     if (cone_root(0, cone_bind(&cone_main, &c)) || c.retcode == -1)
-        cot_error_show("cot:main");
+        cot_error_show("cone:main");
     return c.retcode == -1 ? 1 : c.retcode;
 }
