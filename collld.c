@@ -13,13 +13,13 @@
     do r = expr; while (r < 0 && (errno == EWOULDBLOCK || errno == EAGAIN) && !cone_iowait(fd, write));
 
 collld_defn(int, listen, int fd, int backlog) {
-    return cone && setnonblocking(fd) < 0 ? -1 : collld_call(listen, fd, backlog);
+    return cone && cone_unblock(fd) < 0 ? -1 : collld_call(listen, fd, backlog);
 }
 
 collld_defn(int, accept, int fd, struct sockaddr *addr, socklen_t *addrlen) {
     int client;
     collld_io_impl(client, fd, 0, collld_call(accept, fd, addr, addrlen));
-    return client < 0 ? -1 : setnonblocking(client) ? (close(client), -1) : client;
+    return client < 0 ? -1 : cone_unblock(client) ? (close(client), -1) : client;
 }
 
 collld_defn(int, accept4, int fd, struct sockaddr *addr, socklen_t *addrlen, int flags)
@@ -50,11 +50,11 @@ collld_defn(ssize_t, sendmsg, int fd, const struct msghdr *msg, int flags)
     collld_io(fd, 1, ssize_t, collld_call(sendmsg, fd, msg, flags))
 
 collld_defn(unsigned, sleep, unsigned sec) {
-    return !cone ? collld_call(sleep, sec) : cone_sleep(CONE_U128((uint64_t)sec * 1000000000ull)) ? sec : 0;
+    return !cone ? collld_call(sleep, sec) : cone_sleep(cot_u128_mul((cot_nsec){0, sec}, 1000000000ul)) ? sec : 0;
 }
 
 collld_defn(int, nanosleep, const struct timespec *req, struct timespec *rem) {
-    return !cone ? collld_call(nanosleep, req, rem) : cone_sleep(cone_nsec_from_timespec(*req));
+    return !cone ? collld_call(nanosleep, req, rem) : cone_sleep(cot_nsec_from_timespec(*req));
 }
 
 #ifdef _POSIX_PRIORITY_SCHEDULING

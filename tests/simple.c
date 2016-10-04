@@ -19,8 +19,8 @@ static int c2() {
 }
 
 int comain() {
-    setnonblocking(0);
-    setnonblocking(1);
+    cone_unblock(0);
+    cone_unblock(1);
     cone_decref(cone(&c1, NULL));
     cone_decref(cone(&c2, NULL));
     return 0;

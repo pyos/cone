@@ -1,4 +1,10 @@
 #pragma once
+#include "cot.h"
+
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdatomic.h>
+
 #if !defined(CONE_EPOLL) && __linux__
 #define CONE_EPOLL 1
 #endif
@@ -15,16 +21,6 @@
 #define CONE_DEFAULT_STACK 65536
 #endif
 
-#include <time.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <stdbool.h>
-#include <stdatomic.h>
 #if CONE_EPOLL
 #include <sys/epoll.h>
 #else
@@ -33,35 +29,6 @@
 #if !CONE_XCHG_RSP
 #include <ucontext.h>
 #endif
-
-static inline int
-setnonblocking(int fd) {
-    int flags = fcntl(fd, F_GETFL);
-    return flags == -1 ? -1 : fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-}
-
-struct cone_u128 { uint64_t H, L; };
-
-#define CONE_U128(x) ((struct cone_u128){0, (uint64_t)x})
-#define CONE_U128_MAX ((struct cone_u128){UINT64_MAX, UINT64_MAX})
-
-#define cone_nsec cone_u128
-
-#define cone_vec_impl(T) { \
-    T* data;               \
-    unsigned size;         \
-    unsigned cap;          \
-    unsigned shift;        \
-}
-
-struct cone_vec cone_vec_impl(char);
-
-#define cone_vec(T) {            \
-    union {                      \
-        struct cone_vec decay;   \
-        struct cone_vec_impl(T); \
-    };                           \
-}
 
 struct cone_closure
 {
@@ -72,12 +39,12 @@ struct cone_closure
 struct cone_call_at
 {
     struct cone_closure f;
-    struct cone_nsec time;
+    cot_nsec time;
 };
 
-struct cone_event_vec { struct cone_vec(struct cone_closure) slots; };
+struct cone_event_vec cot_vec(struct cone_closure);
 
-struct cone_event_schedule { struct cone_vec(struct cone_call_at) queue; };
+struct cone_event_schedule cot_vec(struct cone_call_at);
 
 struct cone_event_fd_sub
 {
@@ -130,117 +97,6 @@ extern _Thread_local struct cone * volatile cone;
 
 #define cone_bind(f, data) ((struct cone_closure){(int(*)(void*))f, data})
 
-static inline struct cone_u128
-cone_u128_add(struct cone_u128 a, struct cone_u128 b) {
-    return (struct cone_u128){.H = a.H + b.H + (a.L + b.L < a.L), .L = a.L + b.L};
-}
-
-static inline struct cone_u128
-cone_u128_sub(struct cone_u128 a, struct cone_u128 b) {
-    return (struct cone_u128){.H = a.H - b.H - (a.L < b.L), .L = a.L - b.L};
-}
-
-static inline struct cone_u128
-cone_u128_mul(struct cone_u128 a, uint32_t b) {
-    return (struct cone_u128){.H = a.H * b + (((a.L >> 32) * b) >> 32), .L = a.L * b};
-}
-
-static inline struct cone_u128
-cone_u128_div(struct cone_u128 a, uint32_t b) {
-    uint64_t r = (a.H % b) << 32 | a.L >> 32;
-    return (struct cone_u128){.H = a.H / b, .L = (r / b) << 32 | (((r % b) << 32 | (a.L & UINT32_MAX)) / b)};
-}
-
-static inline double
-cone_u128_to_double(struct cone_u128 x) { return (double)x.H * (1ull << 63) * 2 + x.L; }
-
-static inline int
-cone_u128_eq(struct cone_u128 a, struct cone_u128 b) { return a.H == b.H && a.L == b.L; }
-
-static inline int
-cone_u128_lt(struct cone_u128 a, struct cone_u128 b) { return a.H < b.H || (a.H == b.H && a.L < b.L); }
-
-static inline int
-cone_u128_gt(struct cone_u128 a, struct cone_u128 b) { return a.H > b.H || (a.H == b.H && a.L > b.L); }
-
-static inline struct cone_nsec
-cone_nsec_from_timespec(struct timespec val) {
-    return cone_u128_add(cone_u128_mul(CONE_U128(val.tv_sec), 1000000000ull), CONE_U128(val.tv_nsec));
-}
-
-static inline struct cone_nsec
-cone_nsec_monotonic() {
-    struct timespec val;
-    return clock_gettime(CLOCK_MONOTONIC, &val) ? CONE_U128_MAX : cone_nsec_from_timespec(val);
-}
-
-static inline void
-cone_vec_fini_s(size_t stride, struct cone_vec *vec) {
-    free(vec->data - vec->shift * stride);
-    *vec = (struct cone_vec){};
-}
-
-static inline void
-cone_vec_shift_s(size_t stride, struct cone_vec *vec, size_t start, int offset) {
-    if (start < vec->size)
-        memmove(vec->data + (start + offset) * stride, vec->data + start * stride, (vec->size - start) * stride);
-    vec->size += offset;
-}
-
-static inline int
-cone_vec_reserve_s(size_t stride, struct cone_vec *vec, size_t elems) {
-    if (vec->size + elems <= vec->cap)
-        return 0;
-    if (vec->shift) {
-        vec->data -= vec->shift * stride;
-        vec->size += vec->shift;
-        vec->cap  += vec->shift;
-        cone_vec_shift_s(stride, vec, vec->shift, -(int)vec->shift);
-        vec->shift = 0;
-        if (vec->size + elems <= vec->cap)
-            return 0;
-    }
-    size_t ncap = vec->cap + (elems > vec->cap ? elems : vec->cap);
-    void *r = realloc(vec->data, stride * ncap);
-    if (r == NULL)
-        return -1;
-    vec->data = (char*) r;
-    vec->cap = ncap;
-    return 0;
-}
-
-static inline int
-cone_vec_splice_s(size_t stride, struct cone_vec *vec, size_t i, const void *restrict elems, size_t n) {
-    if (cone_vec_reserve_s(stride, vec, n))
-        return -1;
-    cone_vec_shift_s(stride, vec, i, n);
-    memcpy(vec->data + i * stride, elems, stride);
-    return 0;
-}
-
-static inline void
-cone_vec_erase_s(size_t stride, struct cone_vec *vec, size_t i, size_t n) {
-    if (i + n == vec->size)
-        vec->size -= n;
-    else if (i == 0) {
-        vec->data  += n * stride;
-        vec->size  -= n;
-        vec->cap   -= n;
-        vec->shift += n;
-    } else
-        cone_vec_shift_s(stride, vec, i + n, -(int)n);
-}
-
-#define cone_vec_strided(vec)              (size_t)sizeof(*(vec)->data), &(vec)->decay
-#define cone_vec_fini(vec)                 cone_vec_fini_s(cone_vec_strided(vec))
-#define cone_vec_shift(vec, start, offset) cone_vec_shift_s(cone_vec_strided(vec), start, offset)
-#define cone_vec_reserve(vec, elems)       cone_vec_reserve_s(cone_vec_strided(vec), elems)
-#define cone_vec_splice(vec, i, elems, n)  cone_vec_splice_s(cone_vec_strided(vec), i, elems, n)
-#define cone_vec_extend(vec, elems, n)     cone_vec_splice(vec, (vec)->size, elems, n)
-#define cone_vec_insert(vec, i, elem)      cone_vec_splice(vec, i, elem, 1)
-#define cone_vec_append(vec, elem)         cone_vec_extend(vec, elem, 1)
-#define cone_vec_erase(vec, i, n)          cone_vec_erase_s(cone_vec_strided(vec), i, n)
-
 static inline int
 cone_event_emit(struct cone_closure *ev) {
     struct cone_closure cb = *ev;
@@ -249,52 +105,56 @@ cone_event_emit(struct cone_closure *ev) {
 }
 
 static inline void
-cone_event_vec_fini(struct cone_event_vec *ev) { cone_vec_fini(&ev->slots); }
+cone_event_vec_fini(struct cone_event_vec *ev) {
+    cot_vec_fini(ev);
+}
 
 static inline int
 cone_event_vec_connect(struct cone_event_vec *ev, struct cone_closure cb) {
-    return cone_vec_append(&ev->slots, &cb);
+    return cot_vec_append(ev, &cb);
 }
 
 static inline int
 cone_event_vec_emit(struct cone_event_vec *ev) {
-    while (ev->slots.size) {
-        if (cone_event_emit(&ev->slots.data[0]))
+    while (ev->size) {
+        if (cone_event_emit(&ev->data[0]))
             return -1;  // TODO not fail
-        cone_vec_erase(&ev->slots, 0, 1);
+        cot_vec_erase(ev, 0, 1);
     }
     return 0;
 }
 
 static inline void
-cone_event_schedule_fini(struct cone_event_schedule *ev) { cone_vec_fini(&ev->queue); }
+cone_event_schedule_fini(struct cone_event_schedule *ev) {
+    cot_vec_fini(ev);
+}
 
-static inline struct cone_nsec
+static inline cot_nsec
 cone_event_schedule_emit(struct cone_event_schedule *ev) {
-    while (ev->queue.size) {
-        struct cone_nsec now = cone_nsec_monotonic();
-        struct cone_call_at next = ev->queue.data[0];
-        if (cone_u128_gt(next.time, now))
-            return cone_u128_sub(next.time, now);
-        cone_vec_erase(&ev->queue, 0, 1);
+    while (ev->size) {
+        cot_nsec now = cot_nsec_monotonic();
+        struct cone_call_at next = ev->data[0];
+        if (cot_u128_gt(next.time, now))
+            return cot_u128_sub(next.time, now);
+        cot_vec_erase(ev, 0, 1);
         if (cone_event_emit(&next.f))
-            return CONE_U128(0);  // TODO not fail
+            return (cot_u128){};  // TODO not fail
     }
-    return CONE_U128_MAX;
+    return COT_U128_MAX;
 }
 
 static inline int
-cone_event_schedule_connect(struct cone_event_schedule *ev, struct cone_nsec delay, struct cone_closure cb) {
-    struct cone_call_at r = {cb, cone_u128_add(cone_nsec_monotonic(), delay)};
-    size_t left = 0, right = ev->queue.size;
+cone_event_schedule_connect(struct cone_event_schedule *ev, cot_nsec delay, struct cone_closure cb) {
+    struct cone_call_at r = {cb, cot_u128_add(cot_nsec_monotonic(), delay)};
+    size_t left = 0, right = ev->size;
     while (left != right) {
         size_t mid = (right + left) / 2;
-        if (cone_u128_lt(r.time, ev->queue.data[mid].time))
+        if (cot_u128_lt(r.time, ev->data[mid].time))
             right = mid;
         else
             left = mid + 1;
     }
-    return cone_vec_insert(&ev->queue, left, &r);
+    return cot_vec_insert(ev, left, &r);
 }
 
 static inline int
@@ -356,14 +216,14 @@ cone_event_fd_connect(struct cone_event_fd *set, int fd, int write, struct cone_
 }
 
 static inline int
-cone_event_fd_emit(struct cone_event_fd *set, struct cone_nsec timeout) {
-    if (cone_u128_eq(timeout, CONE_U128(0)))
+cone_event_fd_emit(struct cone_event_fd *set, cot_nsec timeout) {
+    if (cot_u128_eq(timeout, (cot_u128){}))
         return -1;
-    if (cone_u128_gt(timeout, CONE_U128(CONE_IO_TIMEOUT)))
-        timeout = CONE_U128(CONE_IO_TIMEOUT);
+    if (cot_u128_gt(timeout, (cot_u128){0, CONE_IO_TIMEOUT}))
+        timeout = (cot_u128){0, CONE_IO_TIMEOUT};
 #if CONE_EPOLL
     struct epoll_event evs[32];
-    int got = epoll_wait(set->epoll, evs, 32, cone_u128_div(timeout, 1000000ul).L);
+    int got = epoll_wait(set->epoll, evs, 32, cot_u128_div(timeout, 1000000ul).L);
     if (got < 0)
         return errno == EINTR ? 0 : -1;
     for (size_t i = 0; i < (size_t)got; i++) {
@@ -392,7 +252,7 @@ cone_event_fd_emit(struct cone_event_fd *set, struct cone_nsec timeout) {
                     FD_SET(c->fd, &fds[i]);
         }
     }
-    struct timeval us = {cone_u128_div(timeout, 1000000000ull).L, timeout.L % 1000000000ull / 1000};
+    struct timeval us = {cot_u128_div(timeout, 1000000000ull).L, timeout.L % 1000000000ull / 1000};
     if (select(max_fd, &fds[0], &fds[1], NULL, &us) < 0)
         return errno == EINTR ? 0 : -1;
     for (size_t i = 0; i < sizeof(set->fds) / sizeof(set->fds[0]); i++)
@@ -405,12 +265,18 @@ cone_event_fd_emit(struct cone_event_fd *set, struct cone_nsec timeout) {
 }
 
 static inline int
+cone_unblock(int fd) {
+    int flags = fcntl(fd, F_GETFL);
+    return flags == -1 ? -1 : fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+static inline int
 cone_loop_consume_ping(struct cone_loop *loop) {
     ssize_t rd = read(loop->selfpipe[0], &rd, sizeof(rd));  // never yields
-    atomic_store_explicit(&loop->pinged, false, memory_order_release);
+    atomic_store_explicit(&loop->pinged, 0, memory_order_release);
     if (cone_event_fd_connect(&loop->io, loop->selfpipe[0], 0, cone_bind(&cone_loop_consume_ping, loop)))
         return -1;
-    return cone_event_schedule_connect(&loop->at, CONE_U128(0), cone_bind(&cone_event_vec_emit, &loop->on_ping));
+    return cone_event_schedule_connect(&loop->at, (cot_u128){}, cone_bind(&cone_event_vec_emit, &loop->on_ping));
 }
 
 static inline int
@@ -433,11 +299,11 @@ cone_loop_init(struct cone_loop *loop) {
 #else
     if (pipe(loop->selfpipe))
         return -1;
-    if (setnonblocking(loop->selfpipe[0]) || setnonblocking(loop->selfpipe[1]))
+    if (cone_unblock(loop->selfpipe[0]) || cone_unblock(loop->selfpipe[1]))
         return cone_loop_fini(loop), -1;
 #endif
     atomic_init(&loop->active, 0);
-    atomic_init(&loop->pinged, false);
+    atomic_init(&loop->pinged, 0);
     cone_event_fd_init(&loop->io);
     if (cone_event_fd_connect(&loop->io, loop->selfpipe[0], 0, cone_bind(&cone_loop_consume_ping, loop)))
         return cone_loop_fini(loop), -1;
@@ -454,12 +320,12 @@ cone_loop_run(struct cone_loop *loop) {
 
 static inline int
 cone_loop_ping(struct cone_loop *loop) {
-    bool expect = false;
-    if (!atomic_compare_exchange_strong_explicit(&loop->pinged, &expect, true, memory_order_acq_rel, memory_order_relaxed))
+    _Bool expect = 0;
+    if (!atomic_compare_exchange_strong_explicit(&loop->pinged, &expect, 1, memory_order_acq_rel, memory_order_relaxed))
         return 0;
     if (write(loop->selfpipe[1], "", 1) == 1)
         return 0;
-    atomic_store(&loop->pinged, false);
+    atomic_store(&loop->pinged, 0);
     return -1;
 }
 
@@ -510,7 +376,7 @@ cone_run(struct cone *c) {
 
 static inline int
 cone_schedule(struct cone *c) {
-    if (cone_event_schedule_connect(&c->loop->at, CONE_U128(0), cone_bind(&cone_run, c)))
+    if (cone_event_schedule_connect(&c->loop->at, (cot_u128){}, cone_bind(&cone_run, c)))
         return -1;
     c->flags |= CONE_SCHEDULED;
     return 0;
@@ -525,7 +391,7 @@ static inline int
 cone_iowait(int fd, int write) cone_pause(cone_event_fd_connect, &cone->loop->io, fd, write)
 
 static inline int
-cone_sleep(struct cone_nsec delay) cone_pause(cone_event_schedule_connect, &cone->loop->at, delay)
+cone_sleep(cot_nsec delay) cone_pause(cone_event_schedule_connect, &cone->loop->at, delay)
 
 static inline struct cone *
 cone_incref(struct cone *c) { c->refcount++; return c; }
@@ -550,8 +416,8 @@ static inline void __attribute__((noreturn))
 cone_body(struct cone *c) {
     if (cone_event_emit(&c->body))
         abort();
-    for (size_t i = 0; i < c->done.slots.size; i++)
-        if (cone_event_schedule_connect(&c->loop->at, CONE_U128(0), c->done.slots.data[i]))
+    for (size_t i = 0; i < c->done.size; i++)
+        if (cone_event_schedule_connect(&c->loop->at, (cot_u128){}, c->done.data[i]))
             abort();
     c->flags |= CONE_FINISHED;
     cone_switch(c);
