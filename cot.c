@@ -1,7 +1,3 @@
-/*
- * cot / common toolbox
- *       --     -
- */
 #include "cot.h"
 #undef cot_error
 #undef cot_error_up

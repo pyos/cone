@@ -1,7 +1,3 @@
-/*
- * collld / cone linked with linux libc dynamically
- *          --   -           -     -    -
- */
 #include "cone.h"
 
 #include <dlfcn.h>

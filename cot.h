@@ -1,8 +1,4 @@
 #pragma once
-/*
- * cot / common toolbox
- *       --     -
- */
 #include <time.h>
 #include <errno.h>
 #include <stddef.h>

@@ -1,8 +1,4 @@
 #pragma once
-/*
- * romp / remote object messaging protocol
- *        -      -      -         -
- */
 #include "cot.h"
 
 #include <stdarg.h>
