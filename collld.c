@@ -5,6 +5,7 @@
 #include "cone.h"
 
 #include <dlfcn.h>
+#include <unistd.h>
 #include <sys/socket.h>
 
 #define collld_call(name, ...) collld_##name(__VA_ARGS__)
@@ -62,7 +63,7 @@ collld_defn(int, nanosleep, const struct timespec *req, struct timespec *rem) {
 }
 
 collld_defn(int, sched_yield, void) {
-    return !cone ? collld_call(sched_yield) : cone_loop_ping(cone->loop) ? -1 : cone_wait(&cone->loop->on_ping);
+    return !cone ? collld_call(sched_yield) : cone_yield();
 }
 
 static __attribute__((constructor)) void collld_init(void) {
