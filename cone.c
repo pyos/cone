@@ -269,9 +269,8 @@ static int cone_loop_dec(struct cone_loop *loop) {
 
 enum
 {
-    CONE_RUNNING   = 0x1,
-    CONE_FINISHED  = 0x2,
-    CONE_CANCELLED = 0x4,
+    CONE_FLAG_FINISHED = 0x1,
+    CONE_FLAG_CTX_A = !CONE_XCHG_RSP << 15,
 };
 
 struct cone
@@ -283,8 +282,7 @@ struct cone
 #if CONE_XCHG_RSP
     void **rsp;
 #else
-    ucontext_t inner;
-    ucontext_t outer;
+    ucontext_t ctxa, ctxb;
 #endif
     char stack[];
 };
@@ -292,26 +290,22 @@ struct cone
 _Thread_local struct cone * volatile cone;
 
 static int cone_switch(struct cone *c) {
-    c->flags ^= CONE_RUNNING;
 #if CONE_XCHG_RSP
-    __asm__ volatile (
-               "jmp %=0f\n"
-        "%=1:" "push %%rbp\n"
-               "push %%rdi\n"
-               "mov  %%rsp, (%%rax)\n"
-               "mov  %%rcx, %%rsp\n"
-               "pop  %%rdi\n"
-               "pop  %%rbp\n"
-               "ret\n"
-        "%=0:" "call %=1b"
-      :
+    __asm__(" jmp  %=0f       \n"
+        "%=1: push %%rbp      \n"
+        "     push %%rdi      \n"
+        "     mov  %%rsp, (%0)\n"
+        "     mov  %1, %%rsp  \n"
+        "     pop  %%rdi      \n"
+        "     pop  %%rbp      \n"
+        "     ret             \n"
+        "%=0: call %=1b       \n" :
       : "a"(&c->rsp), "c"(c->rsp)
-      : "rbx", "rdx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
-        "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9",
-        "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15", "cc"
-    );
+      : "rbx", "rdx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc",
+        "xmm0",  "xmm1",  "xmm2",  "xmm3",  "xmm4",  "xmm5",  "xmm6",  "xmm7",
+        "xmm8",  "xmm9",  "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
 #else
-    if (c->flags & CONE_RUNNING ? swapcontext(&c->outer, &c->inner) : swapcontext(&c->inner, &c->outer))
+    if ((c->flags ^= CONE_FLAG_CTX_A) & CONE_FLAG_CTX_A ? swapcontext(&c->ctxb, &c->ctxa) : swapcontext(&c->ctxa, &c->ctxb))
         return cot_error_os();
 #endif
     return cot_ok;
@@ -354,18 +348,18 @@ int cone_decref(struct cone *c) {
 }
 
 int cone_join(struct cone *c) {
-    int ret = c->flags & CONE_FINISHED ? 0 : cone_wait(&c->done);
+    int ret = c->flags & CONE_FLAG_FINISHED ? 0 : cone_wait(&c->done);
     cone_decref(c);
     return ret;
 }
 
 static __attribute__((noreturn)) void cone_body(struct cone *c) {
     if (cone_event_emit(&c->body))
-        abort();
+        cot_error_show("cone:uncaught");
+    c->flags |= CONE_FLAG_FINISHED;
     for (size_t i = 0; i < c->done.size; i++)
         if (cone_event_schedule_connect(&c->loop->at, (cot_u128){}, c->done.data[i]))
-            abort();
-    c->flags |= CONE_FINISHED;
+            cot_error_show("cone:cleanup"), abort();
     cone_switch(c);
     abort();
 }
@@ -385,15 +379,14 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
     c->rsp[2] = (void*)&cone_body;  // %rip
     c->rsp[3] = NULL;               // return address
 #else
-    getcontext(&c->inner);
-    c->inside = 0;
-    c->inner.uc_stack.ss_sp = c->stack;
-    c->inner.uc_stack.ss_size = size - sizeof(struct cone);
-    makecontext(&c->inner, (void(*)(void))&cone_body, 1, c);
+    getcontext(&c->ctxa);
+    c->ctxa.uc_stack.ss_sp = c->stack;
+    c->ctxa.uc_stack.ss_size = size - sizeof(struct cone);
+    makecontext(&c->ctxa, (void(*)(void))&cone_body, 1, c);
 #endif
-    if (cone_event_vec_connect(&c->done, cone_bind(&cone_loop_dec, loop)) ||
-        cone_event_vec_connect(&c->done, cone_bind(&cone_decref, c)) ||
-        cone_schedule(c)) {
+    if (cone_event_vec_connect(&c->done, cone_bind(&cone_loop_dec, loop))
+     || cone_event_vec_connect(&c->done, cone_bind(&cone_decref, c))
+     || cone_schedule(c)) {
         cone_decref(c);
         return cot_error_up(), NULL;
     }
