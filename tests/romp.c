@@ -46,7 +46,7 @@ int dectest(struct romp_iovec *in) {
     return cot_ok;
 }
 
-int comain(void) {
+int comain() {
     struct romp_iovec vec = {};
     if (enctest(&vec))
         return cot_error_up();
