@@ -3,23 +3,16 @@
 
 all: tests/mun tests/cone
 
-cno/.git: .gitmodules
-	git submodule update --init cno
-	touch cno/.git
-
-cno/obj/libcno.a: cno/.git
-	$(MAKE) -C cno obj/libcno.a
-
 tests/%: obj/tests/%
 	$<
 
-obj/tests/%: tests/%.c tests/base.c obj/mun.o obj/cone.o obj/romp.o obj/cold.o cno/obj/libcno.a
+obj/tests/%: tests/%.c tests/base.c obj/mun.o obj/cone.o obj/romp.o obj/cold.o
 	@mkdir -p $(dir $@)
-	$(CC) -std=c11 -I. -Wall -Wextra -fPIC $(CFLAGS) -Icno -D_GNU_SOURCE -DSRC=$< -Lcno/obj obj/mun.o obj/cone.o obj/romp.o obj/cold.o tests/base.c -o $@ -ldl -lcno
+	$(CC) -std=c11 -I. -Wall -Wextra -fPIC $(CFLAGS) -D_GNU_SOURCE -DSRC=$< obj/mun.o obj/cone.o obj/romp.o obj/cold.o tests/base.c -o $@ -ldl
 
-obj/%.o: %.c cone.h mun.h romp.h cno/.git
+obj/%.o: %.c cone.h mun.h romp.h
 	@mkdir -p $(dir $@)
-	$(CC) -std=c11 -I. -Wall -Wextra -fPIC $(CFLAGS) -Icno -D_GNU_SOURCE -c $< -o $@
+	$(CC) -std=c11 -I. -Wall -Wextra -fPIC $(CFLAGS) -D_GNU_SOURCE -c $< -o $@
 
 clean:
 	rm -rf obj
