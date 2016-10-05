@@ -20,7 +20,7 @@ cold_defn(int, listen, int fd, int backlog) {
 cold_defn(int, accept, int fd, struct sockaddr *addr, socklen_t *addrlen) {
     int client;
     cold_io_impl(client, fd, 0, cold_call(accept, fd, addr, addrlen));
-    return client < 0 ? -1 : cone_unblock(client) ? (close(client), -1) : client;
+    return client < 0 ? -1 : cone && cone_unblock(client) ? (close(client), -1) : client;
 }
 
 cold_defn(int, accept4, int fd, struct sockaddr *addr, socklen_t *addrlen, int flags)
