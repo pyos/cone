@@ -1,19 +1,11 @@
 #include <inttypes.h>
 
-struct mun_vec_vec mun_vec(struct mun_vec);
-
-static inline void mun_vec_vec_fini(struct mun_vec_vec *v) {
-    for (size_t i = 0; i < v->size; i++)
-        mun_vec_fini(&v->data[i]);
-    mun_vec_fini(v);
-}
-
 static int test_romp_primitive() {
     int16_t i2 = -12345L, i2dec = 0;
     uint64_t u8 = 9876543210123456789ULL, u8dec = 0;
     double f = 5123456.2435463, fdec = 0;
 
-    struct romp_iovec out = mun_vec_static_initializer(64);
+    struct romp_iovec out = mun_vec_init_static(char, 64);
     if (romp_encode(&out, "i2 u8 f", i2, u8, f))
         return mun_error_up();
     if (out.size != 18)
@@ -27,10 +19,10 @@ static int test_romp_primitive() {
 }
 
 static int test_romp_vec() {
-    struct mun_vec(char) original = {.data = "test", .size = 4};
-    struct mun_vec(char) decoded = mun_vec_static_initializer(16);
+    struct mun_vec(char) original = mun_vec_init_str("text");
+    struct mun_vec(char) decoded = mun_vec_init_static(char, 16);
 
-    struct romp_iovec out = mun_vec_static_initializer(16);
+    struct romp_iovec out = mun_vec_init_static(char, 16);
     if (romp_encode(&out, "vi1", &original))
         return mun_error_up();
     struct romp_iovec in = out;
@@ -41,30 +33,29 @@ static int test_romp_vec() {
     return mun_ok;
 }
 
-export { "romp:primitive", &test_romp_primitive }
-     , { "romp:vec[primitive]", &test_romp_vec }
-//   , { "romp:vec[vec[primitive]]", &test_romp_vec_vec }
+static int test_romp_vec_vec() {
+    char arena[32];
+    struct charvec mun_vec(char);
+    struct charvec raw[] = {mun_vec_init_str("abc"), mun_vec_init_str("defgh")};
+    struct mun_vec(struct charvec) original = mun_vec_init_array(raw);
+    struct mun_vec(struct charvec) decoded = mun_vec_init_static(struct mun_vec, sizeof(arena) / 8);
+    for (unsigned i = 0; i < decoded.size; i++)
+        decoded.data[i] = (struct charvec)mun_vec_init_borrow(arena + 8 * i, 8);
 
-/*
-int enctest(struct romp_iovec *out) {
-    struct mun_vec str = {.data = "Hello, World!\n", .size = 14};
-    struct mun_vec s[] = {{.data = "asd", .size = 3}, {.data = "qwe", .size = 3}, {.data = "zxc", .size = 3}};
-    struct vecvec stn = {.data = s, .size = 3};
-
-    if (romp_encode(out, "u1 u2 u4 u8 f vi1 i1 i2 i4 i8 vvi1", u8, u16, u32, u64, dbl, &str, i8, i16, i32, i64, &stn))
+    struct romp_iovec out = mun_vec_init_static(char, 32);
+    if (romp_encode(&out, "vvi1", &original))
         return mun_error_up();
+    struct romp_iovec in = out;
+    if (romp_decode(&in, "vvi1", &decoded))
+        return mun_error_up();
+    if (decoded.size != original.size)
+        return mun_error(assert, "sizes of outer vectors differ");
+    for (unsigned i = 0; i < decoded.size; i++)
+        if (!mun_vec_eq(&original.data[i], &decoded.data[i]))
+            return mun_error(assert, "inner vectors differ");
     return mun_ok;
 }
 
-int dectest(struct romp_iovec *in) {
-    struct mun_vec(char) str = {};
-    struct vecvec stn = {};
-    if (romp_decode(in, "u1 u2 u4 u8 f vi1 i1 i2 i4 i8 vvi1", &u8, &u16, &u32, &u64, &dbl, &str, &i8, &i16, &i32, &i64, &stn))
-        return mun_vec_fini(&str), vecvec_fini(&stn), mun_error_up();
-    printf("str = %.*s\n", (int)str.size, str.data);
-    printf("vec = [%u]\n", stn.size);
-    for (unsigned i = 0; i < stn.size; i++)
-        printf("      [%u] = %.*s\n", i, (int)stn.data[i].size, stn.data[i].data);
-    return mun_vec_fini(&str), vecvec_fini(&stn), mun_ok;
-}
-*/
+export { "romp:primitive", &test_romp_primitive }
+     , { "romp:vec[primitive]", &test_romp_vec }
+     , { "romp:vec[vec[primitive]]", &test_romp_vec_vec }
