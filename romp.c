@@ -104,15 +104,18 @@ static int romp_decode_vec(struct romp_iovec *in, const char **sign, struct mun_
     struct romp_sign s = romp_sign(sign);
     if (!s.sign || romp_decode_uint(in, &size, 4))
         return mun_error_up();
-    mun_vec_erase_s(s.stride, out, 0, out->size);
+    if (out->size)
+        return mun_error(assert, "non-empty vector passed to romp_decode");
     if (mun_vec_reserve_s(s.stride, out, size))
         return mun_error_up();
     if (s.sign == ROMP_SIGN_VEC) {
         for (const char *signreset = *sign; size--; ) {
-            struct mun_vec tmp = {};
-            if (*sign = signreset, romp_decode_vec(in, sign, &tmp))
+            if (out->flags & MUN_VEC_STATIC)
+                out->size++;
+            else
+                mun_vec_splice_s(s.stride, out, out->size, &(struct mun_vec){}, 1);
+            if (*sign = signreset, romp_decode_vec(in, sign, (struct mun_vec *)&out->data[(out->size - 1) * s.stride]))
                 return mun_error_up();
-            mun_vec_splice_s(s.stride, out, out->size, &tmp, 1);
         }
     } else
         mun_vec_splice_s(s.stride, out, 0, in->data, size);
