@@ -19,7 +19,7 @@ static inline mun_u128 mun_u128_sub(mun_u128 a, mun_u128 b) {
 }
 
 static inline mun_u128 mun_u128_mul(mun_u128 a, uint32_t b) {
-    return (mun_u128){a.H * b + (((a.L >> 32) * b) >> 32), a.L * b};
+    return (mun_u128){a.H * b + (((a.L >> 32) * b + ((a.L & UINT32_MAX) * b >> 32)) >> 32), a.L * b};
 }
 
 static inline mun_u128 mun_u128_div(mun_u128 a, uint32_t b) {
