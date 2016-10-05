@@ -1,7 +1,7 @@
 .PHONY: all clean tests/%
 .PRECIOUS: obj/%.o obj/tests/%
 
-all: obj/test_cno obj/test_yield obj/test_simple obj/test_romp
+all: tests/mun tests/cone
 
 cno/.git: .gitmodules
 	git submodule update --init cno
