@@ -100,7 +100,7 @@ static int romp_encode_vec(struct romp_iovec *out, const char **sign, const stru
 }
 
 static int romp_decode_vec(struct romp_iovec *in, const char **sign, struct mun_vec *out) {
-    uint64_t size;
+    uint64_t size = 0;
     struct romp_sign s = romp_sign(sign);
     if (!s.sign || romp_decode_uint(in, &size, 4))
         return mun_error_up();
