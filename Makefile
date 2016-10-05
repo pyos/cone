@@ -1,7 +1,7 @@
 .PHONY: all clean tests/%
 .PRECIOUS: obj/%.o obj/tests/%
 
-all: tests/mun tests/cone
+all: tests/mun tests/cone tests/romp
 
 tests/%: obj/tests/%
 	$<
