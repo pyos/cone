@@ -1,6 +1,7 @@
 #pragma once
 #include <time.h>
 #include <errno.h>
+#include <string.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -103,7 +104,10 @@ enum
 };
 
 #define mun_vec(T) { T* data; unsigned size, cap, shift, flags; }
-#define mun_vec_static_initializer(T, size) {.data = (void*)(char[size * sizeof(T)]){}, .cap = size, .flags = MUN_VEC_STATIC}
+#define mun_vec_init_static(T, n) {.data = (void*)(char[n * sizeof(T)]){}, .cap = n, .flags = MUN_VEC_STATIC}
+#define mun_vec_init_borrow(ptr, n) {.data = (void*)ptr, .size = n, .cap = n, .flags = MUN_VEC_STATIC}
+#define mun_vec_init_array(array) mun_vec_init_borrow(array, sizeof(array) / sizeof((array)[0]))
+#define mun_vec_init_str(string) mun_vec_init_borrow(string, strlen(string))
 
 struct mun_vec mun_vec(char);
 
