@@ -51,11 +51,11 @@ cold_defn(ssize_t, sendmsg, int fd, const struct msghdr *msg, int flags)
     cold_io(fd, 1, ssize_t, cold_call(sendmsg, fd, msg, flags))
 
 cold_defn(unsigned, sleep, unsigned sec) {
-    return !cone ? cold_call(sleep, sec) : cone_sleep(veil_u128_mul((veil_nsec){0, sec}, 1000000000ul)) ? sec : 0;
+    return !cone ? cold_call(sleep, sec) : cone_sleep(mun_u128_mul((mun_nsec){0, sec}, 1000000000ul)) ? sec : 0;
 }
 
 cold_defn(int, nanosleep, const struct timespec *req, struct timespec *rem) {
-    return !cone ? cold_call(nanosleep, req, rem) : cone_sleep(veil_nsec_from_timespec(*req));
+    return !cone ? cold_call(nanosleep, req, rem) : cone_sleep(mun_nsec_from_timespec(*req));
 }
 
 cold_defn(int, sched_yield, void) {

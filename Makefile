@@ -10,10 +10,10 @@ cno/.git: .gitmodules
 cno/obj/libcno.a: cno/.git
 	$(MAKE) -C cno obj/libcno.a
 
-obj/test_%: obj/tests/%.o obj/veil.o obj/cone.o obj/romp.o obj/cold.o cno/obj/libcno.a
-	$(CC) -Lcno/obj obj/veil.o obj/cone.o obj/romp.o obj/cold.o $< $(CFLAGS) -o $@ -ldl -lcno
+obj/test_%: obj/tests/%.o obj/mun.o obj/cone.o obj/romp.o obj/cold.o cno/obj/libcno.a
+	$(CC) -Lcno/obj obj/mun.o obj/cone.o obj/romp.o obj/cold.o $< $(CFLAGS) -o $@ -ldl -lcno
 
-obj/%.o: %.c cone.h veil.h romp.h cno/.git
+obj/%.o: %.c cone.h mun.h romp.h cno/.git
 	@mkdir -p $(dir $@)
 	$(CC) -std=c11 -I. -Wall -Wextra -fPIC $(CFLAGS) -Icno -D_GNU_SOURCE -c $< -o $@
 

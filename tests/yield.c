@@ -6,10 +6,10 @@
 static const int YIELDS = 1000000;
 
 int comain() {
-    veil_nsec a = veil_nsec_monotonic();
+    mun_nsec a = mun_nsec_monotonic();
     for (int i = 0; i < YIELDS; i++)
         sched_yield();
-    veil_nsec b = veil_nsec_monotonic();
-    printf("%f ns/switch\n", veil_u128_to_double(veil_u128_sub(b, a)) / YIELDS);
+    mun_nsec b = mun_nsec_monotonic();
+    printf("%f ns/switch\n", mun_u128_to_double(mun_u128_sub(b, a)) / YIELDS);
     return 0;
 }

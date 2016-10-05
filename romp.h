@@ -1,13 +1,13 @@
 #pragma once
-#include "veil.h"
+#include "mun.h"
 #include <stdarg.h>
 
-struct romp_iovec veil_vec(uint8_t);
+struct romp_iovec mun_vec(uint8_t);
 
 enum
 {
-    veil_errno_romp_protocol = veil_errno_custom,
-    veil_errno_romp_sign_syntax,
+    mun_errno_romp_protocol = mun_errno_custom,
+    mun_errno_romp_sign_syntax,
 };
 
 int romp_vencode(struct romp_iovec *out, const char *sign, va_list args);

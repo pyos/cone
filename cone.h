@@ -1,5 +1,5 @@
 #pragma once
-#include "veil.h"
+#include "mun.h"
 
 struct cone_closure
 {
@@ -15,7 +15,7 @@ void         cone_incref  (struct cone *);
 int          cone_decref  (struct cone *);
 int          cone_join    (struct cone *);
 int          cone_iowait  (int fd, int write);
-int          cone_sleep   (veil_nsec delay);
+int          cone_sleep   (mun_nsec delay);
 int          cone_yield   (void);
 
 #define cone_bind(f, data) ((struct cone_closure){(int(*)(void*))f, data})
