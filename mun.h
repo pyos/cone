@@ -97,13 +97,23 @@ void mun_error_show(const char *prefix);
 #define mun_error_up()     mun_error_up(__FILE__, __FUNCTION__, __LINE__)
 
 
-#define mun_vec(T) { T* data; unsigned size, cap, shift; }
+enum
+{
+    MUN_VEC_STATIC = 0x1,
+};
+
+#define mun_vec(T) { T* data; unsigned size, cap, shift, flags; }
+#define mun_vec_static_initializer(size) {.data = (void*)(char[size]){}, .cap = size, .flags = MUN_VEC_STATIC}
 
 struct mun_vec mun_vec(char);
 
 static inline void mun_vec_fini_s(size_t stride, struct mun_vec *vec) {
     free(vec->data - vec->shift * stride);
     *vec = (struct mun_vec){};
+}
+
+static inline int mun_vec_eq_s(size_t stride1, const struct mun_vec *a, size_t stride2, const struct mun_vec *b) {
+    return stride1 == stride2 && a->size == b->size && !memcmp(a->data, b->data, a->size * stride1);
 }
 
 static inline void mun_vec_shift_s(size_t stride, struct mun_vec *vec, size_t start, int offset) {
@@ -121,6 +131,8 @@ static inline int mun_vec_reserve_s(size_t stride, struct mun_vec *vec, size_t n
         vec->shift = 0;
         return mun_ok;
     }
+    if (vec->flags & MUN_VEC_STATIC)
+        return mun_error(memory, "static vector of %u cannot fit %zu", vec->cap, vec->size + n);
     size_t ncap = vec->cap + (n > vec->cap ? n : vec->cap);
     void *r = realloc(vec->data - vec->shift * stride, stride * ncap);
     if (r == NULL)
@@ -150,6 +162,7 @@ static inline void mun_vec_erase_s(size_t stride, struct mun_vec *vec, size_t i,
 }
 
 #define mun_vec_strided(vec)              (size_t)sizeof(*(vec)->data), (struct mun_vec*)(vec)
+#define mun_vec_eq(a, b)                  mun_vec_eq_s(mun_vec_strided(a), mun_vec_strided(b))
 #define mun_vec_fini(vec)                 mun_vec_fini_s(mun_vec_strided(vec))
 #define mun_vec_shift(vec, start, offset) mun_vec_shift_s(mun_vec_strided(vec), start, offset)
 #define mun_vec_reserve(vec, elems)       mun_vec_reserve_s(mun_vec_strided(vec), elems)
