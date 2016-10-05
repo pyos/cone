@@ -8,7 +8,7 @@
 
 typedef struct { uint64_t H, L; } mun_u128;
 
-#define COT_U128_MAX ((mun_u128){UINT64_MAX, UINT64_MAX})
+#define MUN_U128_MAX ((mun_u128){UINT64_MAX, UINT64_MAX})
 
 static inline mun_u128 mun_u128_add(mun_u128 a, mun_u128 b) {
     return (mun_u128){a.H + b.H + (a.L + b.L < a.L), a.L + b.L};
@@ -52,12 +52,12 @@ static inline mun_nsec mun_nsec_from_timespec(struct timespec val) {
 
 static inline mun_nsec mun_nsec_now() {
     struct timespec val;
-    return clock_gettime(CLOCK_REALTIME, &val) ? COT_U128_MAX : mun_nsec_from_timespec(val);
+    return clock_gettime(CLOCK_REALTIME, &val) ? MUN_U128_MAX : mun_nsec_from_timespec(val);
 }
 
 static inline mun_nsec mun_nsec_monotonic() {
     struct timespec val;
-    return clock_gettime(CLOCK_MONOTONIC, &val) ? COT_U128_MAX : mun_nsec_from_timespec(val);
+    return clock_gettime(CLOCK_MONOTONIC, &val) ? MUN_U128_MAX : mun_nsec_from_timespec(val);
 }
 
 

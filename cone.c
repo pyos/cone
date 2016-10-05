@@ -73,7 +73,7 @@ static mun_nsec cone_event_schedule_emit(struct cone_event_schedule *ev) {
         if (cone_event_emit(&next.f))
             return mun_error_up(), (mun_u128){};  // TODO not fail
     }
-    return COT_U128_MAX;
+    return MUN_U128_MAX;
 }
 
 struct cone_ioclosure
