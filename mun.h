@@ -103,7 +103,7 @@ enum
 };
 
 #define mun_vec(T) { T* data; unsigned size, cap, shift, flags; }
-#define mun_vec_static_initializer(size) {.data = (void*)(char[size]){}, .cap = size, .flags = MUN_VEC_STATIC}
+#define mun_vec_static_initializer(T, size) {.data = (void*)(char[size * sizeof(T)]){}, .cap = size, .flags = MUN_VEC_STATIC}
 
 struct mun_vec mun_vec(char);
 
