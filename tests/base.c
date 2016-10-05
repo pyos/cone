@@ -21,7 +21,7 @@ int comain()
     for (unsigned i = 0; i < sizeof(__tests) / sizeof(*__tests); i++) {
         buf[0] = 0;
         printf("\033[33;1m * \033[0m\033[1m%s\033[0m\n", __tests[i].name);
-        if (!cone_root(0, cone_bind(__tests[i].impl, buf)))
+        if (!__tests[i].impl(buf))
             printf("\033[A\033[32;1m + \033[0m\033[1m%s\033[0m\033[K%s%s\n", __tests[i].name, buf[0] ? ": " : "", buf);
         else {
             const struct mun_error *e = mun_last_error();
