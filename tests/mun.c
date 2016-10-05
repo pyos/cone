@@ -26,7 +26,7 @@ static int u128_sub() u128_fuzz2(100000, -, mun_u128_sub);
 static int u128_mul() u128_fuzz1(100000, *, mun_u128_mul);
 static int u128_div() u128_fuzz1(100000, /, mun_u128_div);
 
-export { "u128 + u128", &u128_add }
-     , { "u128 - u128", &u128_sub }
-     , { "u128 * u32", &u128_mul }
-     , { "u128 / u32", &u128_div }
+export { "mun:u128+u128", &u128_add }
+     , { "mun:u128-u128", &u128_sub }
+     , { "mun:u128*u32", &u128_mul }
+     , { "mun:u128/u32", &u128_div }

@@ -48,5 +48,5 @@ static int yield(char *msg) {
     return mun_ok;
 }
 
-export { "reader and writer", &rdwr }
-     , { "yield loop", &yield }
+export { "cone:reader+writer", &rdwr }
+     , { "cone:sched_yield", &yield }
