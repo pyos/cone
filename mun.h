@@ -69,6 +69,7 @@ enum
     mun_errno_assert,
     mun_errno_memory,
     mun_errno_not_implemented,
+    mun_errno_cancelled,
     mun_errno_custom = 128,
 };
 
@@ -93,7 +94,7 @@ int  mun_error_restore(const struct mun_error *);
 int  mun_error(unsigned, const char *name, const char *file, const char *func, unsigned line,
                 const char *fmt, ...) __attribute__((format(printf, 6, 7)));
 int  mun_error_up(const char *file, const char *func, unsigned line);
-void mun_error_show(const char *prefix);
+void mun_error_show(const char *prefix, const struct mun_error *err);
 
 #define mun_error(id, ...) mun_error(mun_errno_##id, #id, __FILE__, __FUNCTION__, __LINE__, __VA_ARGS__)
 #define mun_error_os()     mun_error(os, "errno %d", errno)

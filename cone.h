@@ -13,6 +13,7 @@ extern _Thread_local struct cone * volatile cone;
 int          cone_unblock (int fd);
 int          cone_root    (size_t stack, struct cone_closure);
 struct cone *cone_spawn   (size_t stack, struct cone_closure);
+int          cone_cancel  (struct cone *);
 void         cone_incref  (struct cone *);
 int          cone_decref  (struct cone *);
 int          cone_join    (struct cone *);

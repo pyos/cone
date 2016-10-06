@@ -32,9 +32,11 @@ int mun_error_up(const char *file, const char *func, unsigned line) {
     return -1;
 }
 
-void mun_error_show(const char *prefix) {
-    fprintf(stderr, "[error %d] %s %s: %s\n          at ", e.code, prefix, e.name, e.text);
-    for (unsigned i = 0; i < e.stacklen; i++)
-        fprintf(stderr, "%s%s line %u, in %s\n", i ? "             " : "", e.stack[i].file, e.stack[i].line, e.stack[i].func);
+void mun_error_show(const char *prefix, const struct mun_error *err) {
+    if (err == NULL)
+        err = &e;
+    fprintf(stderr, "[error %d] %s %s: %s\n          at ", err->code, prefix, err->name, err->text);
+    for (unsigned i = 0; i < err->stacklen; i++)
+        fprintf(stderr, "%s%s line %u, in %s\n", i ? "             " : "", err->stack[i].file, err->stack[i].line, err->stack[i].func);
     fprintf(stderr, "\n");
 }

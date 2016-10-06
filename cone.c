@@ -31,6 +31,12 @@ static int cone_cond_connect(struct cone_cond *ev, struct cone_closure cb) {
     return mun_vec_append(ev, &cb);
 }
 
+static void cone_cond_disconnect(struct cone_cond *ev, struct cone_closure cb) {
+    for (unsigned i = 0; i < ev->size; i++)
+        if (ev->data[i].code == cb.code && ev->data[i].data == cb.data)
+            return (void)mun_vec_erase(ev, i, 1);
+}
+
 int cone_notify(struct cone_cond *ev) {
     while (ev->size) {
         if (cone_event_emit(&ev->data[0]))
@@ -141,6 +147,17 @@ static int cone_event_fd_connect(struct cone_event_fd *set, int fd, int write, s
         return mun_error(assert, "two readers/writers on one file descriptor");
     ev->fs[write] = cb;
     return 0;
+}
+
+static void cone_event_fd_disconnect(struct cone_event_fd *set, int fd, int write, struct cone_closure cb) {
+    struct cone_ioclosure *ev = *cone_event_fd_bucket(set, fd);
+    if (ev == NULL)
+        return;
+    if (ev->fs[write].code != cb.code || ev->fs[write].data != cb.data)
+        return;
+    ev->fs[write] = (struct cone_closure){};
+    if (ev->fs[!write].code == NULL)
+        cone_event_fd_close(set, ev);
 }
 
 static int cone_event_fd_emit(struct cone_event_fd *set, mun_nsec timeout) {
@@ -267,9 +284,13 @@ static int cone_loop_dec(struct cone_loop *loop) {
 
 enum
 {
-    CONE_FLAG_FINISHED = 0x1,
-    CONE_FLAG_FAILED   = 0x2,
-    CONE_FLAG_RETHROWN = 0x4,
+    CONE_FLAG_RUNNING         = 0x01,
+    CONE_FLAG_FINISHED        = 0x02,
+    CONE_FLAG_FAILED          = 0x04,
+    CONE_FLAG_RETHROWN        = 0x08,
+    CONE_FLAG_SCHEDULED       = 0x10,
+    CONE_FLAG_CANCELLED       = 0x20,
+    CONE_FLAG_UNINTERRUPTIBLE = 0x40,
     CONE_FLAG_CTX_A = !CONE_XCHG_RSP << 15,
 };
 
@@ -313,24 +334,62 @@ static int cone_switch(struct cone *c) {
 }
 
 static int cone_run(struct cone *c) {
+    c->flags &= ~CONE_FLAG_SCHEDULED;
+    c->flags |= CONE_FLAG_RUNNING;
     struct cone* preempted = cone;
     int ret = cone_switch(cone = c);
     cone = preempted;
+    c->flags &= ~CONE_FLAG_RUNNING;
     return ret;
 }
 
 static int cone_schedule(struct cone *c) {
-    return cone_event_schedule_connect(&c->loop->at, (mun_u128){}, cone_bind(&cone_run, c));
+    if (!(c->flags & CONE_FLAG_SCHEDULED))
+        if (cone_event_schedule_connect(&c->loop->at, (mun_u128){}, cone_bind(&cone_run, c)))
+            return mun_error_up();
+    c->flags |= CONE_FLAG_SCHEDULED;
+    return mun_ok;
 }
 
-#define cone_pause(connect, ...) { \
-    return connect(__VA_ARGS__, cone_bind(&cone_schedule, cone)) ? mun_error_up() : cone_switch(cone); }
+#define cone_pause(connect, ...) (connect(__VA_ARGS__, cone_bind(&cone_schedule, cone)) || cone_switch(cone))
 
-int cone_wait(struct cone_cond *ev) cone_pause(cone_cond_connect, ev)
+int cone_wait(struct cone_cond *ev) {
+    if (cone_pause(cone_cond_connect, ev))
+        return mun_error_up();
+    if (cone->flags & CONE_FLAG_CANCELLED) {
+        cone_cond_disconnect(ev, cone_bind(&cone_schedule, cone));
+        cone->flags &= ~CONE_FLAG_CANCELLED;
+        errno = ECANCELED;
+        return mun_error(cancelled, "-");
+    }
+    return mun_ok;
+}
 
-int cone_iowait(int fd, int write) cone_pause(cone_event_fd_connect, &cone->loop->io, fd, write)
+int cone_iowait(int fd, int write) {
+    if (cone_pause(cone_event_fd_connect, &cone->loop->io, fd, write))
+        return mun_error_up();
+    if (cone->flags & CONE_FLAG_CANCELLED) {
+        cone_event_fd_disconnect(&cone->loop->io, fd, write, cone_bind(&cone_schedule, cone));
+        cone->flags &= ~CONE_FLAG_CANCELLED;
+        errno = ECANCELED;
+        return mun_error(cancelled, "-");
+    }
+    return mun_ok;
+}
 
-int cone_sleep(mun_nsec delay) cone_pause(cone_event_schedule_connect, &cone->loop->at, delay)
+int cone_sleep(mun_nsec delay) {
+    cone->flags |= CONE_FLAG_UNINTERRUPTIBLE;
+    int err = cone_pause(cone_event_schedule_connect, &cone->loop->at, delay);
+    cone->flags &= ~CONE_FLAG_UNINTERRUPTIBLE;
+    if (err) return mun_error_up();
+
+    if (cone->flags & CONE_FLAG_CANCELLED) {
+        cone->flags &= ~CONE_FLAG_CANCELLED;
+        errno = ECANCELED;
+        return mun_error(cancelled, "-");
+    }
+    return mun_ok;
+}
 
 int cone_yield(void) {
     return cone_loop_ping(cone->loop) ? -1 : cone_wait(&cone->loop->ping);
@@ -343,7 +402,7 @@ void cone_incref(struct cone *c) {
 int cone_decref(struct cone *c) {
     if (c && --c->refcount == 0) {
         if (c->flags & CONE_FLAG_FAILED && !(c->flags & CONE_FLAG_RETHROWN))
-            mun_error_show("cone: uncaught");
+            mun_error_show("cone: uncaught", &c->error);
         mun_vec_fini(&c->done);
         free(c);
     }
@@ -360,6 +419,15 @@ int cone_join(struct cone *c) {
     return ret;
 }
 
+int cone_cancel(struct cone *c) {
+    if (c->flags & CONE_FLAG_FINISHED)
+        return mun_ok;
+    c->flags |= CONE_FLAG_CANCELLED;
+    if (c->flags & CONE_FLAG_RUNNING)
+        return mun_error(cancelled, "self-cancel");
+    return c->flags & CONE_FLAG_UNINTERRUPTIBLE ? mun_ok : cone_schedule(c);
+}
+
 static __attribute__((noreturn)) void cone_body(struct cone *c) {
     if (cone_event_emit(&c->body)) {
         c->error = *mun_last_error();
@@ -368,7 +436,7 @@ static __attribute__((noreturn)) void cone_body(struct cone *c) {
     c->flags |= CONE_FLAG_FINISHED;
     for (size_t i = 0; i < c->done.size; i++)
         if (cone_event_schedule_connect(&c->loop->at, (mun_u128){}, c->done.data[i]))
-            mun_error_show("cone: fatal"), abort();
+            mun_error_show("cone: fatal", NULL), abort();
     cone_switch(c);
     abort();
 }
@@ -439,6 +507,6 @@ static int cone_main(struct cone_main *c) {
 extern int main(int argc, const char **argv) {
     struct cone_main c = {1, argc, argv};
     if (cone_root(0, cone_bind(&cone_main, &c)) || c.retcode == -1)
-        mun_error_show("cone:main");
+        mun_error_show("cone:main", NULL);
     return c.retcode == -1 ? 1 : c.retcode;
 }
