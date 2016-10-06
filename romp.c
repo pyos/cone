@@ -2,11 +2,12 @@
 
 enum romp_signo
 {
-    ROMP_SIGN_NONE   = 0,     // signature ::= typesign* '\0'
+    ROMP_SIGN_NONE   = 0,     // signature ::= typesign*
     ROMP_SIGN_UINT   = 'u',   // typesign ::= 'u' {octets :: digit}
     ROMP_SIGN_INT    = 'i',   //            | 'd' {octets :: digit}
     ROMP_SIGN_DOUBLE = 'f',   //            | 'f'
-    ROMP_SIGN_VEC    = 'v',   //            | 'v' {type :: typesign};
+    ROMP_SIGN_VEC    = 'v',   //            | 'v' {type :: typesign}
+    ROMP_SIGN_STRUCT = '(',   //            | '(' {contents :: signature} ')';
 };
 
 struct romp_sign
@@ -22,7 +23,8 @@ static struct romp_sign romp_sign(const char **sign) {
         case ' ':
             (*sign)++;
             break;
-        case ROMP_SIGN_NONE:
+        case 0:
+        case ')':
             return mun_error(romp_sign_syntax, "expected a type"), (struct romp_sign){};
         case ROMP_SIGN_DOUBLE:
             return (struct romp_sign){*(*sign)++, 8};
@@ -33,6 +35,8 @@ static struct romp_sign romp_sign(const char **sign) {
             if ((*sign)[1] == '1' || (*sign)[1] == '2' || (*sign)[1] == '4' || (*sign)[1] == '8')
                 return (struct romp_sign){*(*sign)++, *(*sign)++ - '0'};
             return mun_error(romp_sign_syntax, "`%c' is not a valid int size", (*sign)[1]), (struct romp_sign){};
+        case ROMP_SIGN_STRUCT:
+            return mun_error(not_implemented, "romp: struct sign"), (struct romp_sign){};
         default:
             return mun_error(romp_sign_syntax, "`%c' is not a known type", (*sign)[0]), (struct romp_sign){};
     }
@@ -152,6 +156,8 @@ int romp_vencode(struct romp_iovec *out, const char *sign, va_list args) {
                 if (romp_encode_vec(out, &sign, va_arg(args, const struct mun_vec *)))
                     return mun_error_up();
                 break;
+            case ROMP_SIGN_STRUCT:
+                return mun_error(not_implemented, "romp_encode_struct");
         }
     }
     return 0;
@@ -192,6 +198,8 @@ int romp_vdecode(struct romp_iovec *in, const char *sign, va_list args) {
                 if (romp_decode_vec(in, &sign, va_arg(args, struct mun_vec *)))
                     return mun_error_up();
                 break;
+            case ROMP_SIGN_STRUCT:
+                return mun_error(not_implemented, "romp_decode_struct");
         }
     }
     return 0;
