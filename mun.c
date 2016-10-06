@@ -33,9 +33,8 @@ int mun_error_up(const char *file, const char *func, unsigned line) {
 }
 
 void mun_error_show(const char *prefix) {
-    fprintf(stderr, "%s: error %d (%s): %s\n", prefix, e.code, e.name, e.text);
-    fprintf(stderr, "== traceback == most recent call first ==\n");
+    fprintf(stderr, "[error %d] %s %s: %s\n          at ", e.code, prefix, e.name, e.text);
     for (unsigned i = 0; i < e.stacklen; i++)
-        fprintf(stderr, "%s line %u, in %s\n", e.stack[i].file, e.stack[i].line, e.stack[i].func);
-    fprintf(stderr, "== traceback end ==\n");
+        fprintf(stderr, "%s%s line %u, in %s\n", i ? "             " : "", e.stack[i].file, e.stack[i].line, e.stack[i].func);
+    fprintf(stderr, "\n");
 }
