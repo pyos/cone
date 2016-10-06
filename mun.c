@@ -34,6 +34,8 @@ int mun_error_at(unsigned n, const char *name, const char *file, const char *fun
     va_start(args, fmt);
     if (n != mun_errno_os || strerror_r((e.code |= errno) & ~mun_errno_os, e.text, sizeof(e.text)))
         vsnprintf(e.text, sizeof(e.text), fmt, args);
+    if (n == (mun_errno_os | ECANCELED))
+        e.code = mun_errno_cancelled;
     va_end(args);
     return mun_error_up_at(file, func, line);
 }

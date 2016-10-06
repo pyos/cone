@@ -367,7 +367,7 @@ void cone_incref(struct cone *c) {
 int cone_decref(struct cone *c) {
     if (c && --c->refcount == 0) {
         if (c->flags & CONE_FLAG_FAILED)
-            if (c->error.code != mun_errno_cancelled && c->error.code != (mun_errno_os | ECANCELED))
+            if (c->error.code != mun_errno_cancelled)
                 mun_error_show("cone destroyed with", &c->error);
         mun_vec_fini(&c->done);
         free(c);
