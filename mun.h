@@ -68,6 +68,7 @@ enum
     mun_errno_os,
     mun_errno_assert,
     mun_errno_memory,
+    mun_errno_not_implemented,
     mun_errno_custom = 128,
 };
 
