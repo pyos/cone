@@ -1,6 +1,7 @@
 #include "cone.h"
 
 #include <dlfcn.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <sys/socket.h>
 
@@ -23,8 +24,10 @@ cold_defn(int, accept, int fd, struct sockaddr *addr, socklen_t *addrlen) {
     return client < 0 ? -1 : cone && cone_unblock(client) ? (close(client), -1) : client;
 }
 
+#ifdef __linux__
 cold_defn(int, accept4, int fd, struct sockaddr *addr, socklen_t *addrlen, int flags)
     cold_io(fd, 0, int, cold_call(accept4, fd, addr, addrlen, cone ? flags | SOCK_NONBLOCK : flags))
+#endif
 
 cold_defn(ssize_t, read, int fd, void *buf, size_t count)
     cold_io(fd, 0, ssize_t, cold_call(read, fd, buf, count))
@@ -62,10 +65,15 @@ cold_defn(int, sched_yield, void) {
     return !cone ? cold_call(sched_yield) : cone_yield();
 }
 
+#ifndef RTLD_NEXT
+#define RTLD_NEXT (void*)(uintptr_t)-1
+#endif
 static __attribute__((constructor)) void cold_init(void) {
     cold_listen      = dlsym(RTLD_NEXT, "listen");
     cold_accept      = dlsym(RTLD_NEXT, "accept");
+#ifdef __linux__
     cold_accept4     = dlsym(RTLD_NEXT, "accept4");
+#endif
     cold_read        = dlsym(RTLD_NEXT, "read");
     cold_recv        = dlsym(RTLD_NEXT, "recv");
     cold_recvfrom    = dlsym(RTLD_NEXT, "recvfrom");
