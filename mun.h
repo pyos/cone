@@ -65,12 +65,12 @@ static inline mun_nsec mun_nsec_monotonic() {
 enum
 {
     mun_ok = 0,
-    mun_errno_os,
     mun_errno_assert,
     mun_errno_memory,
     mun_errno_not_implemented,
     mun_errno_cancelled,
     mun_errno_custom = 128,
+    mun_errno_os = 0x1000,
 };
 
 struct mun_stacktrace
@@ -97,7 +97,7 @@ int  mun_error_up(const char *file, const char *func, unsigned line);
 void mun_error_show(const char *prefix, const struct mun_error *err);
 
 #define mun_error(id, ...) mun_error(mun_errno_##id, #id, __FILE__, __FUNCTION__, __LINE__, __VA_ARGS__)
-#define mun_error_os()     mun_error(os, "errno %d", errno)
+#define mun_error_os()     mun_error(os, "-")
 #define mun_error_up()     mun_error_up(__FILE__, __FUNCTION__, __LINE__)
 
 

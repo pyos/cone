@@ -1,9 +1,26 @@
 #include "mun.h"
 #undef mun_error
 #undef mun_error_up
+#ifndef MUN_ANSI_TERM
+#    define MUN_ANSI_TERM 1
+#endif
+#if MUN_ANSI_TERM
+#    define ANSI_ITALIC "\033[5m"
+#    define ANSI_RED    "\033[31;1m"
+#    define ANSI_YELLOW "\033[33;1m"
+#    define ANSI_BLUE   "\033[34;1m"
+#    define ANSI_RESET  "\033[0m"
+#else
+#    define ANSI_ITALIC
+#    define ANSI_RED
+#    define ANSI_YELLOW
+#    define ANSI_BLUE
+#    define ANSI_RESET
+#endif
 
 #include <stdio.h>
 #include <stdarg.h>
+#include <string.h>
 
 static _Thread_local struct mun_error e;
 
@@ -20,7 +37,10 @@ int mun_error(unsigned n, const char *name, const char *file, const char *func, 
     e = (struct mun_error){.code = n, .stacklen = 0, .name = name};
     va_list args;
     va_start(args, fmt);
-    vsnprintf(e.text, sizeof(e.text), fmt, args);
+    if (n == mun_errno_os && strerror_r((e.code |= errno) & ~mun_errno_os, e.text, sizeof(e.text)))
+        snprintf(e.text, sizeof(e.text), "Unknown OS error");
+    else
+        vsnprintf(e.text, sizeof(e.text), fmt, args);
     va_end(args);
     return mun_error_up(file, func, line);
 }
@@ -35,8 +55,9 @@ int mun_error_up(const char *file, const char *func, unsigned line) {
 void mun_error_show(const char *prefix, const struct mun_error *err) {
     if (err == NULL)
         err = &e;
-    fprintf(stderr, "[error %d] %s %s: %s\n          at ", err->code, prefix, err->name, err->text);
+    fprintf(stderr, ANSI_RED " # mun:" ANSI_RESET " %s error " ANSI_RED "%u" ANSI_RESET " "
+                    ANSI_ITALIC "(%s)" ANSI_RESET ": %s\n", prefix, err->code & ~mun_errno_os, err->name, err->text);
     for (unsigned i = 0; i < err->stacklen; i++)
-        fprintf(stderr, "%s%s line %u, in %s\n", i ? "             " : "", err->stack[i].file, err->stack[i].line, err->stack[i].func);
-    fprintf(stderr, "\n");
+        fprintf(stderr, "      " ANSI_YELLOW "@ " ANSI_RESET "%s() " ANSI_ITALIC "(%s:%u)" ANSI_RESET "\n",
+                        err->stack[i].func, err->stack[i].file, err->stack[i].line);
 }
