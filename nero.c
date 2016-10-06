@@ -28,9 +28,10 @@ static int nero_writer(struct nero *n) {
     char local[4096];
     while (n->buffer.size) {
         size_t size = n->buffer.size > sizeof(local) ? sizeof(local) : n->buffer.size;
-        const char *data = memcpy(local, n->buffer.data, size);
-        for (ssize_t wr; size; data += wr, size -= wr) {
-            if ((wr = write(n->fd, data, size)) < 0)
+        size_t remaining = size;
+        const char *data = memcpy(local, n->buffer.data, remaining);
+        for (ssize_t wr; remaining; data += wr, remaining -= wr) {
+            if ((wr = write(n->fd, data, remaining)) < 0)
                 return mun_error_os();
         }
         mun_vec_erase(&n->buffer, 0, size);
@@ -100,7 +101,6 @@ int nero_init(struct nero *n) {
     } while (state == 0);
     close(urandom);
 
-    fprintf(stderr, "%p will be a %s\n", n, state == 1 ? "server" : "client");
     cno_connection_init(n->http, state == 1 ? CNO_SERVER : CNO_CLIENT);
     n->http->cb_data = n;
     n->http->on_write = (int(*)(void*, const char*, size_t)) &nero_on_write;
