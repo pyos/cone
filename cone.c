@@ -21,19 +21,17 @@
 #    include <ucontext.h>
 #endif
 
-struct cone_event_vec mun_vec(struct cone_closure);
-
 static int cone_event_emit(struct cone_closure *ev) {
     struct cone_closure cb = *ev;
     *ev = (struct cone_closure){};
     return cb.code && cb.code(cb.data);
 }
 
-static int cone_event_vec_connect(struct cone_event_vec *ev, struct cone_closure cb) {
+static int cone_cond_connect(struct cone_cond *ev, struct cone_closure cb) {
     return mun_vec_append(ev, &cb);
 }
 
-static int cone_event_vec_emit(struct cone_event_vec *ev) {
+int cone_notify(struct cone_cond *ev) {
     while (ev->size) {
         if (cone_event_emit(&ev->data[0]))
             return mun_error_up();  // TODO not fail
@@ -198,8 +196,8 @@ struct cone_loop
     int selfpipe[2];
     volatile _Atomic unsigned active;
     volatile _Atomic _Bool pinged;
+    struct cone_cond ping;
     struct cone_event_fd io;
-    struct cone_event_vec ping;
     struct cone_event_schedule at;
 };
 
@@ -213,7 +211,7 @@ static int cone_loop_consume_ping(struct cone_loop *loop) {
     atomic_store_explicit(&loop->pinged, 0, memory_order_release);
     if (cone_event_fd_connect(&loop->io, loop->selfpipe[0], 0, cone_bind(&cone_loop_consume_ping, loop)))
         return mun_error_up();
-    return cone_event_schedule_connect(&loop->at, (mun_u128){}, cone_bind(&cone_event_vec_emit, &loop->ping));
+    return cone_event_schedule_connect(&loop->at, (mun_u128){}, cone_bind(&cone_notify, &loop->ping));
 }
 
 static void cone_loop_fini(struct cone_loop *loop) {
@@ -280,7 +278,7 @@ struct cone
     unsigned refcount, flags;
     struct cone_loop *loop;
     struct cone_closure body;
-    struct cone_event_vec done;
+    struct cone_cond done;
     struct mun_error error;
 #if CONE_XCHG_RSP
     void **rsp;
@@ -328,7 +326,7 @@ static int cone_schedule(struct cone *c) {
 #define cone_pause(connect, ...) { \
     return connect(__VA_ARGS__, cone_bind(&cone_schedule, cone)) ? mun_error_up() : cone_switch(cone); }
 
-static int cone_wait(struct cone_event_vec *ev) cone_pause(cone_event_vec_connect, ev)
+int cone_wait(struct cone_cond *ev) cone_pause(cone_cond_connect, ev)
 
 int cone_iowait(int fd, int write) cone_pause(cone_event_fd_connect, &cone->loop->io, fd, write)
 
@@ -395,8 +393,8 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
     c->ctxa.uc_stack.ss_size = size - sizeof(struct cone);
     makecontext(&c->ctxa, (void(*)(void))&cone_body, 1, c);
 #endif
-    if (cone_event_vec_connect(&c->done, cone_bind(&cone_loop_dec, loop))
-     || cone_event_vec_connect(&c->done, cone_bind(&cone_decref, c))
+    if (cone_cond_connect(&c->done, cone_bind(&cone_loop_dec, loop))
+     || cone_cond_connect(&c->done, cone_bind(&cone_decref, c))
      || cone_schedule(c)) {
         cone_decref(c);
         return mun_error_up(), NULL;

@@ -7,6 +7,8 @@ struct cone_closure
     void *data;
 };
 
+struct cone_cond mun_vec(struct cone_closure);
+
 extern _Thread_local struct cone * volatile cone;
 int          cone_unblock (int fd);
 int          cone_root    (size_t stack, struct cone_closure);
@@ -14,6 +16,8 @@ struct cone *cone_spawn   (size_t stack, struct cone_closure);
 void         cone_incref  (struct cone *);
 int          cone_decref  (struct cone *);
 int          cone_join    (struct cone *);
+int          cone_wait    (struct cone_cond *);
+int          cone_notify  (struct cone_cond *);
 int          cone_iowait  (int fd, int write);
 int          cone_sleep   (mun_nsec delay);
 int          cone_yield   (void);
