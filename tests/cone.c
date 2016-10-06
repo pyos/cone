@@ -23,7 +23,7 @@ static int reader(struct args *aptr) {
     return mun_ok;
 }
 
-static int rdwr() {
+static int test_rdwr() {
     int fds[2];
     if (pipe(fds))
         return mun_error_os();
@@ -38,15 +38,28 @@ static int rdwr() {
     return close(fds[0]), close(fds[1]), mun_ok;
 }
 
-static int yield(char *msg) {
+static int test_sleep(char *msg) {
+    mun_nsec a = mun_nsec_monotonic();
+    if (sleep(2))
+        return mun_error(assert, "did not sleep");
+    mun_nsec b = mun_nsec_monotonic();
+    double sec = mun_u128_to_double(mun_u128_sub(b, a)) / 1000000000.0;
+    if (sec < 2)
+        return mun_error(assert, "slept for less than wanted");
+    sprintf(msg, "wanted 2s, got %fs", sec);
+    return mun_ok;
+}
+
+static int test_yield(char *msg) {
     const unsigned N = 1000000;
     mun_nsec a = mun_nsec_monotonic();
     for (unsigned i = 0; i < N; i++)
         sched_yield();
     mun_nsec b = mun_nsec_monotonic();
-    sprintf(msg, "%f ns", mun_u128_to_double(mun_u128_sub(b, a)) / N);
+    sprintf(msg, "%f ns/yield", mun_u128_to_double(mun_u128_sub(b, a)) / N);
     return mun_ok;
 }
 
-export { "cone:reader+writer", &rdwr }
-     , { "cone:sched_yield", &yield }
+export { "cone:reader+writer", &test_rdwr }
+     , { "cone:sleep", &test_sleep }
+     , { "cone:sched_yield", &test_yield }
