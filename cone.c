@@ -395,7 +395,7 @@ int cone_cancel(struct cone *c) {
 }
 
 static __attribute__((noreturn)) void cone_body(struct cone *c) {
-    if (c->body.code(c->body.data)) {
+    if (c->flags & CONE_FLAG_CANCELLED ? mun_error(cancelled, "cone_cancel") : c->body.code(c->body.data)) {
         c->error = *mun_last_error();
         c->flags |= CONE_FLAG_FAILED;
     }
