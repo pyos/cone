@@ -49,6 +49,21 @@ static int test_sleep(char *msg) {
     return mun_ok;
 }
 
+static int test_concurrent_sleep(char *msg) {
+    struct cone *a = cone(&test_sleep, msg);
+    struct cone *b = cone(&test_sleep, msg);
+    if (a == NULL || b == NULL)
+        return cone_decref(a), cone_decref(b), mun_error_up();
+    mun_usec start = mun_usec_monotonic();
+    if (cone_join(a))
+        return cone_decref(b), mun_error_up();
+    if (cone_join(b))
+        return mun_error_up();
+    if (mun_usec_monotonic() - start > 1100000)
+        return mun_error(assert, "slept too much");
+    return mun_ok;
+}
+
 static int test_yield(char *msg) {
     const unsigned N = 1000000;
     mun_usec a = mun_usec_monotonic();
@@ -59,6 +74,7 @@ static int test_yield(char *msg) {
     return mun_ok;
 }
 
-export { "cone:reader+writer", &test_rdwr }
-     , { "cone:sleep", &test_sleep }
+export { "cone:sleep", &test_sleep }
+     , { "cone:concurrent sleep", &test_concurrent_sleep }
      , { "cone:sched_yield", &test_yield }
+     , { "cone:reader + writer", &test_rdwr }
