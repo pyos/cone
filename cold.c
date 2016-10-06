@@ -54,7 +54,7 @@ cold_defn(ssize_t, sendmsg, int fd, const struct msghdr *msg, int flags)
     cold_io(fd, 1, ssize_t, cold_call(sendmsg, fd, msg, flags))
 
 cold_defn(unsigned, sleep, unsigned sec) {
-    return !cone ? cold_call(sleep, sec) : cone_sleep(mun_u128_mul((mun_nsec){0, sec}, 1000000000ul)) ? sec : 0;
+    return !cone ? cold_call(sleep, sec) : cone_sleep(mun_u128_mul(mun_u128(sec), 1000000000ul)) ? sec : 0;
 }
 
 cold_defn(int, nanosleep, const struct timespec *req, struct timespec *rem) {

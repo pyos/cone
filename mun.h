@@ -7,48 +7,69 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct { uint64_t H, L; } mun_u128;
+#if !defined(MUN_U128_NATIVE) && defined(__GNUC__) && defined(__x86_64__)
+#    define MUN_U128_NATIVE 1
+#endif
 
-#define MUN_U128_MAX ((mun_u128){UINT64_MAX, UINT64_MAX})
+#if MUN_U128_NATIVE
+    typedef __uint128_t mun_u128;
+    #define mun_u128(x) ((mun_u128)(x))
+    #define mun_u128_to_u64(x) ((uint64_t)(x))
+    #define mun_u128_to_double(x) ((double)(x))
+    #define MUN_U128_MAX (mun_u128(UINT64_MAX)<<64|UINT64_MAX)
+    #define mun_u128_add(a, b) ((a) + (b))
+    #define mun_u128_sub(a, b) ((a) - (b))
+    #define mun_u128_mul(a, b) ((a) * (b))
+    #define mun_u128_div(a, b) ((a) / (b))
+    #define mun_u128_eq(a, b) ((a) == (b))
+    #define mun_u128_lt(a, b) ((a) < (b))
+    #define mun_u128_gt(a, b) ((a) > (b))
+#else
+    typedef struct { uint64_t H, L; } mun_u128;
+    #define mun_u128(x) ((mun_u128){0, x})
+    #define MUN_U128_MAX ((mun_u128){UINT64_MAX, UINT64_MAX})
 
-static inline mun_u128 mun_u128_add(mun_u128 a, mun_u128 b) {
-    return (mun_u128){a.H + b.H + (a.L + b.L < a.L), a.L + b.L};
-}
+    #define mun_u128_to_u64(x) ((x).L)
 
-static inline mun_u128 mun_u128_sub(mun_u128 a, mun_u128 b) {
-    return (mun_u128){a.H - b.H - (a.L < b.L), a.L - b.L};
-}
+    static inline double mun_u128_to_double(mun_u128 x) {
+        return (double)x.H * (1ull << 63) * 2 + x.L;
+    }
 
-static inline mun_u128 mun_u128_mul(mun_u128 a, uint32_t b) {
-    return (mun_u128){a.H * b + (((a.L >> 32) * b + ((a.L & UINT32_MAX) * b >> 32)) >> 32), a.L * b};
-}
+    static inline mun_u128 mun_u128_add(mun_u128 a, mun_u128 b) {
+        return (mun_u128){a.H + b.H + (a.L + b.L < a.L), a.L + b.L};
+    }
 
-static inline mun_u128 mun_u128_div(mun_u128 a, uint32_t b) {
-    uint64_t r = (a.H % b) << 32 | a.L >> 32;
-    return (mun_u128){a.H / b, (r / b) << 32 | (((r % b) << 32 | (a.L & UINT32_MAX)) / b)};
-}
+    static inline mun_u128 mun_u128_sub(mun_u128 a, mun_u128 b) {
+        return (mun_u128){a.H - b.H - (a.L < b.L), a.L - b.L};
+    }
 
-static inline double mun_u128_to_double(mun_u128 x) {
-    return (double)x.H * (1ull << 63) * 2 + x.L;
-}
+    static inline mun_u128 mun_u128_mul(mun_u128 a, uint32_t b) {
+        return (mun_u128){a.H * b + (((a.L >> 32) * b + ((a.L & UINT32_MAX) * b >> 32)) >> 32), a.L * b};
+    }
 
-static inline int mun_u128_eq(mun_u128 a, mun_u128 b) {
-    return a.H == b.H && a.L == b.L;
-}
+    static inline mun_u128 mun_u128_div(mun_u128 a, uint32_t b) {
+        uint64_t r = (a.H % b) << 32 | a.L >> 32;
+        return (mun_u128){a.H / b, (r / b) << 32 | (((r % b) << 32 | (a.L & UINT32_MAX)) / b)};
+    }
 
-static inline int mun_u128_lt(mun_u128 a, mun_u128 b) {
-    return a.H < b.H || (a.H == b.H && a.L < b.L);
-}
+    static inline int mun_u128_eq(mun_u128 a, mun_u128 b) {
+        return a.H == b.H && a.L == b.L;
+    }
 
-static inline int mun_u128_gt(mun_u128 a, mun_u128 b) {
-    return a.H > b.H || (a.H == b.H && a.L > b.L);
-}
+    static inline int mun_u128_lt(mun_u128 a, mun_u128 b) {
+        return a.H < b.H || (a.H == b.H && a.L < b.L);
+    }
+
+    static inline int mun_u128_gt(mun_u128 a, mun_u128 b) {
+        return a.H > b.H || (a.H == b.H && a.L > b.L);
+    }
+#endif
 
 
 typedef mun_u128 mun_nsec;
 
 static inline mun_nsec mun_nsec_from_timespec(struct timespec val) {
-    return mun_u128_add(mun_u128_mul((mun_u128){0, val.tv_sec}, 1000000000ull), (mun_u128){0, val.tv_nsec});
+    return mun_u128_add(mun_u128_mul(mun_u128(val.tv_sec), 1000000000ull), mun_u128(val.tv_nsec));
 }
 
 static inline mun_nsec mun_nsec_now() {

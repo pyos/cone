@@ -75,7 +75,7 @@ static mun_nsec cone_event_schedule_emit(struct cone_event_schedule *ev) {
             return mun_u128_sub(next.time, now);
         mun_vec_erase(ev, 0, 1);
         if (cone_event_emit(&next.f))
-            return mun_error_up(), (mun_u128){};  // TODO not fail
+            return mun_error_up(), mun_u128(0);  // TODO not fail
     }
     return MUN_U128_MAX;
 }
@@ -161,13 +161,13 @@ static void cone_event_fd_disconnect(struct cone_event_fd *set, int fd, int writ
 }
 
 static int cone_event_fd_emit(struct cone_event_fd *set, mun_nsec timeout) {
-    if (mun_u128_eq(timeout, (mun_u128){}))
+    if (mun_u128_eq(timeout, mun_u128(0)))
         return mun_error_up();
-    if (mun_u128_gt(timeout, (mun_u128){0, 60000000000ull}))
-        timeout = (mun_u128){0, 60000000000ull};
+    if (mun_u128_gt(timeout, mun_u128(60000000000ull)))
+        timeout = mun_u128(60000000000ull);
 #if CONE_EPOLL
     struct epoll_event evs[32];
-    int got = epoll_wait(set->epoll, evs, 32, mun_u128_div(timeout, 1000000ul).L);
+    int got = epoll_wait(set->epoll, evs, 32, mun_u128_to_u64(mun_u128_div(timeout, 1000000ul)));
     if (got < 0)
         return errno == EINTR ? mun_ok : mun_error_os();
     for (size_t i = 0; i < (size_t)got; i++) {
@@ -196,7 +196,7 @@ static int cone_event_fd_emit(struct cone_event_fd *set, mun_nsec timeout) {
                     FD_SET(c->fd, &fds[i]);
         }
     }
-    struct timeval us = {mun_u128_div(timeout, 1000000000ull).L, timeout.L % 1000000000ull / 1000};
+    struct timeval us = {mun_u128_to_u64(mun_u128_div(timeout, 1000000000ull)), mun_u128_to_u64(timeout) % 1000000000ull / 1000};
     if (select(max_fd, &fds[0], &fds[1], NULL, &us) < 0)
         return errno == EINTR ? mun_ok : mun_error_os();
     for (size_t i = 0; i < sizeof(set->fds) / sizeof(set->fds[0]); i++)
@@ -228,7 +228,7 @@ static int cone_loop_consume_ping(struct cone_loop *loop) {
     atomic_store_explicit(&loop->pinged, 0, memory_order_release);
     if (cone_event_fd_connect(&loop->io, loop->selfpipe[0], 0, cone_bind(&cone_loop_consume_ping, loop)))
         return mun_error_up();
-    return cone_event_schedule_connect(&loop->at, (mun_u128){}, cone_bind(&cone_notify, &loop->ping));
+    return cone_event_schedule_connect(&loop->at, mun_u128(0), cone_bind(&cone_notify, &loop->ping));
 }
 
 static void cone_loop_fini(struct cone_loop *loop) {
@@ -343,7 +343,7 @@ static int cone_run(struct cone *c) {
 
 static int cone_schedule(struct cone *c) {
     if (!(c->flags & CONE_FLAG_SCHEDULED))
-        if (cone_event_schedule_connect(&c->loop->at, (mun_u128){}, cone_bind(&cone_run, c)))
+        if (cone_event_schedule_connect(&c->loop->at, mun_u128(0), cone_bind(&cone_run, c)))
             return mun_error_up();
     c->flags |= CONE_FLAG_SCHEDULED;
     return mun_ok;
@@ -434,7 +434,7 @@ static __attribute__((noreturn)) void cone_body(struct cone *c) {
     }
     c->flags |= CONE_FLAG_FINISHED;
     for (size_t i = 0; i < c->done.size; i++)
-        if (cone_event_schedule_connect(&c->loop->at, (mun_u128){}, c->done.data[i]))
+        if (cone_event_schedule_connect(&c->loop->at, mun_u128(0), c->done.data[i]))
             mun_error_show("cone fatal", NULL), abort();
     cone_switch(c);
     abort();
