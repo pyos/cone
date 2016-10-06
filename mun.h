@@ -83,8 +83,8 @@ struct mun_error
     unsigned code;
     unsigned stacklen;
     const char *name;
-    const char *text;
-    const struct mun_stacktrace *stack;
+    char text[128];
+    struct mun_stacktrace stack[16];
 };
 
 const struct mun_error *mun_last_error(void);
