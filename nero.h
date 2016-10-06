@@ -8,22 +8,11 @@ enum
     mun_errno_nero_http2 = mun_errno_custom + 31,
 };
 
-struct nero_object;
-
-typedef int nero_point(struct nero_object *, struct romp_iovec *in, struct romp_iovec *out);
-
-struct nero_method
+struct nero_closure
 {
     const char *name;
-    nero_point *func;
-};
-
-struct nero_object mun_vec(struct nero_method);
-
-struct nero_service
-{
-    const char *name;
-    struct nero_object *obj;
+    int (*func)(void *, struct romp_iovec *in, struct romp_iovec *out);
+    void *data;
 };
 
 struct nero
@@ -33,14 +22,18 @@ struct nero
     struct cone *writer;
     struct romp_iovec buffer;
     struct cno_connection_t *http;
-    struct mun_vec(struct nero_service) services;
     struct mun_vec(struct nero_future) queued;
+    struct mun_vec(struct nero_closure) exported;
 };
 
-int  nero_sub  (struct nero_object *, const char *name, nero_point);
-int  nero_add  (struct nero *, const char *name, struct nero_object *);
+static inline int nero_add(struct nero *n, const struct nero_closure *cbs, size_t count) {
+    return mun_vec_extend(&n->exported, cbs, count);
+}
+
 int  nero_init (struct nero *);
 void nero_fini (struct nero *);
 int  nero_run  (struct nero *);
 int  nero_stop (struct nero *);
 int  nero_call (struct nero *, const char *service, const char *fn, ...);
+
+#define nero_closure(name, f, data) ((struct nero_closure){name, (int(*)(void*,struct romp_iovec*,struct romp_iovec*))(f), data})

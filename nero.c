@@ -15,21 +15,11 @@ struct nero_future
     struct romp_iovec *data;
 };
 
-int nero_sub(struct nero_object *n, const char *name, nero_point impl) {
-    struct nero_method m = {name, impl};
-    return mun_vec_append(n, &m);
-}
-
-int nero_add(struct nero *n, const char *name, struct nero_object *obj) {
-    struct nero_service srv = {name, obj};
-    return mun_vec_append(&n->services, &srv);
-}
-
 enum
 {
-    MUN_FRAME_REQUEST = CNO_FRAME_UNKNOWN,
-    MUN_FRAME_RESPONSE,
-    MUN_FRAME_ERROR,
+    NERO_FRAME_REQUEST = CNO_FRAME_UNKNOWN,
+    NERO_FRAME_RESPONSE,
+    NERO_FRAME_ERROR,
 };
 
 static int nero_writer(struct nero *n) {
@@ -62,15 +52,15 @@ static int nero_on_write(struct nero *n, const char *data, size_t size) {
 static int nero_on_frame(struct nero *n, const struct cno_frame_t *frame) {
     (void)n;
     switch (frame->type) {
-        case MUN_FRAME_REQUEST:
+        case NERO_FRAME_REQUEST:
             // ...
-            return CNO_ERROR(NOT_IMPLEMENTED, "MUN_FRAME_REQUEST");
-        case MUN_FRAME_RESPONSE:
+            return CNO_ERROR(NOT_IMPLEMENTED, "NERO_FRAME_REQUEST");
+        case NERO_FRAME_RESPONSE:
             // ...
-            return CNO_ERROR(NOT_IMPLEMENTED, "MUN_FRAME_RESPONSE");
-        case MUN_FRAME_ERROR:
+            return CNO_ERROR(NOT_IMPLEMENTED, "NERO_FRAME_RESPONSE");
+        case NERO_FRAME_ERROR:
             // ...
-            return CNO_ERROR(NOT_IMPLEMENTED, "MUN_FRAME_ERROR");
+            return CNO_ERROR(NOT_IMPLEMENTED, "NERO_FRAME_ERROR");
     }
     return CNO_OK;
 }
@@ -115,8 +105,8 @@ int nero_run(struct nero *n) {
 
 void nero_fini(struct nero *n) {
     mun_vec_fini(&n->buffer);
-    mun_vec_fini(&n->services);
     mun_vec_fini(&n->queued);
+    mun_vec_fini(&n->exported);
     if (n->writer) {
         cone_cancel(n->writer);
         cone_decref(n->writer);
