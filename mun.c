@@ -2,17 +2,17 @@
 #undef mun_error
 #undef mun_error_up
 #if MUN_ANSI_TERM
-#    define ANSI_ITALIC "\033[5m"
-#    define ANSI_RED    "\033[31;1m"
-#    define ANSI_YELLOW "\033[33;1m"
-#    define ANSI_BLUE   "\033[34;1m"
-#    define ANSI_RESET  "\033[0m"
+#define ANSI_ITALIC "\033[5m"
+#define ANSI_RED    "\033[31;1m"
+#define ANSI_YELLOW "\033[33;1m"
+#define ANSI_BLUE   "\033[34;1m"
+#define ANSI_RESET  "\033[0m"
 #else
-#    define ANSI_ITALIC
-#    define ANSI_RED
-#    define ANSI_YELLOW
-#    define ANSI_BLUE
-#    define ANSI_RESET
+#define ANSI_ITALIC
+#define ANSI_RED
+#define ANSI_YELLOW
+#define ANSI_BLUE
+#define ANSI_RESET
 #endif
 
 #include <stdio.h>
