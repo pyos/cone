@@ -1,9 +1,6 @@
 #include "mun.h"
 #undef mun_error
 #undef mun_error_up
-#ifndef MUN_ANSI_TERM
-#    define MUN_ANSI_TERM 1
-#endif
 #if MUN_ANSI_TERM
 #    define ANSI_ITALIC "\033[5m"
 #    define ANSI_RED    "\033[31;1m"

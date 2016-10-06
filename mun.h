@@ -1,4 +1,11 @@
 #pragma once
+#if !defined(MUN_U128_NATIVE) && defined(__GNUC__) && defined(__x86_64__)
+#    define MUN_U128_NATIVE 1
+#endif
+#ifndef MUN_ANSI_TERM
+#    define MUN_ANSI_TERM 1
+#endif
+
 #include <time.h>
 #include <errno.h>
 #include <string.h>
@@ -6,10 +13,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-
-#if !defined(MUN_U128_NATIVE) && defined(__GNUC__) && defined(__x86_64__)
-#    define MUN_U128_NATIVE 1
-#endif
 
 #if MUN_U128_NATIVE
     typedef __uint128_t mun_u128;
@@ -27,9 +30,8 @@
 #else
     typedef struct { uint64_t H, L; } mun_u128;
     #define mun_u128(x) ((mun_u128){0, x})
-    #define MUN_U128_MAX ((mun_u128){UINT64_MAX, UINT64_MAX})
-
     #define mun_u128_to_u64(x) ((x).L)
+    #define MUN_U128_MAX ((mun_u128){UINT64_MAX, UINT64_MAX})
 
     static inline double mun_u128_to_double(mun_u128 x) {
         return (double)x.H * (1ull << 63) * 2 + x.L;

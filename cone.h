@@ -1,4 +1,14 @@
 #pragma once
+#if !defined(CONE_EPOLL) && __linux__
+#    define CONE_EPOLL 1
+#endif
+#if !defined(CONE_XCHG_RSP) && __linux__ && __x86_64__
+#    define CONE_XCHG_RSP 1
+#endif
+#ifndef CONE_DEFAULT_STACK
+#    define CONE_DEFAULT_STACK 65536
+#endif
+
 #include "mun.h"
 
 struct cone_closure
