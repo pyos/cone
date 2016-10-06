@@ -39,24 +39,23 @@ static int test_rdwr() {
 }
 
 static int test_sleep(char *msg) {
-    mun_nsec a = mun_nsec_monotonic();
-    if (sleep(2))
+    mun_usec a = mun_usec_monotonic();
+    if (sleep(1))
         return mun_error(assert, "did not sleep");
-    mun_nsec b = mun_nsec_monotonic();
-    double sec = mun_u128_to_double(mun_u128_sub(b, a)) / 1000000000.0;
-    if (sec < 2)
+    mun_usec b = mun_usec_monotonic();
+    if (b - a < 1000000)
         return mun_error(assert, "slept for less than wanted");
-    sprintf(msg, "wanted 2s, got %fs", sec);
+    sprintf(msg, "wanted 1s, got %fs", (b - a) / 1000000.0);
     return mun_ok;
 }
 
 static int test_yield(char *msg) {
     const unsigned N = 1000000;
-    mun_nsec a = mun_nsec_monotonic();
+    mun_usec a = mun_usec_monotonic();
     for (unsigned i = 0; i < N; i++)
         sched_yield();
-    mun_nsec b = mun_nsec_monotonic();
-    sprintf(msg, "%f ns/yield", mun_u128_to_double(mun_u128_sub(b, a)) / N);
+    mun_usec b = mun_usec_monotonic();
+    sprintf(msg, "%f us/yield", (double)(b - a) / N);
     return mun_ok;
 }
 

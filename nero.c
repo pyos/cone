@@ -11,7 +11,7 @@
 struct nero_future
 {
     unsigned id;
-    struct cone_cond *ev;
+    struct cone_event *ev;
     struct romp_iovec *data;
 };
 
@@ -139,7 +139,7 @@ int nero_call(struct nero *n, const char *service, const char *fn, ...) {
     va_list args;
     va_start(args, fn);
 /*
-    struct cone_cond ev = {};
+    struct cone_event ev = {};
     struct romp_iovec data = {};
     struct nero_awaiting req = { .id = n->next_req++, .ev = &ev, .data = &data };
 
