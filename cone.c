@@ -284,14 +284,13 @@ static int cone_loop_dec(struct cone_loop *loop) {
 
 enum
 {
-    CONE_FLAG_RUNNING         = 0x01,
-    CONE_FLAG_FINISHED        = 0x02,
-    CONE_FLAG_FAILED          = 0x04,
-    CONE_FLAG_RETHROWN        = 0x08,
-    CONE_FLAG_SCHEDULED       = 0x10,
+    CONE_FLAG_FINISHED        = 0x01,
+    CONE_FLAG_FAILED          = 0x02,
+    CONE_FLAG_RETHROWN        = 0x04,
+    CONE_FLAG_SCHEDULED       = 0x08,
+    CONE_FLAG_RUNNING         = 0x10,
     CONE_FLAG_CANCELLED       = 0x20,
     CONE_FLAG_UNINTERRUPTIBLE = 0x40,
-    CONE_FLAG_CTX_A = !CONE_XCHG_RSP << 15,
 };
 
 struct cone
@@ -312,6 +311,7 @@ struct cone
 _Thread_local struct cone * volatile cone;
 
 static int cone_switch(struct cone *c) {
+    c->flags ^= CONE_FLAG_RUNNING;
 #if CONE_XCHG_RSP
     __asm__(" jmp  %=0f       \n"
         "%=1: push %%rbp      \n"
@@ -327,7 +327,7 @@ static int cone_switch(struct cone *c) {
         "xmm0",  "xmm1",  "xmm2",  "xmm3",  "xmm4",  "xmm5",  "xmm6",  "xmm7",
         "xmm8",  "xmm9",  "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
 #else
-    if ((c->flags ^= CONE_FLAG_CTX_A) & CONE_FLAG_CTX_A ? swapcontext(&c->ctxb, &c->ctxa) : swapcontext(&c->ctxa, &c->ctxb))
+    if (c->flags & CONE_FLAG_RUNNING ? swapcontext(&c->ctxb, &c->ctxa) : swapcontext(&c->ctxa, &c->ctxb))
         return mun_error_os();
 #endif
     return mun_ok;
@@ -335,11 +335,9 @@ static int cone_switch(struct cone *c) {
 
 static int cone_run(struct cone *c) {
     c->flags &= ~CONE_FLAG_SCHEDULED;
-    c->flags |= CONE_FLAG_RUNNING;
     struct cone* preempted = cone;
     int ret = cone_switch(cone = c);
     cone = preempted;
-    c->flags &= ~CONE_FLAG_RUNNING;
     return ret;
 }
 
@@ -421,11 +419,11 @@ int cone_join(struct cone *c) {
 }
 
 int cone_cancel(struct cone *c) {
-    if (c->flags & CONE_FLAG_FINISHED)
-        return mun_ok;
-    c->flags |= CONE_FLAG_CANCELLED;
     if (c->flags & CONE_FLAG_RUNNING)
         return mun_error(cancelled, "self-cancel");
+    if (c->flags & (CONE_FLAG_FINISHED | CONE_FLAG_CANCELLED))
+        return mun_ok;
+    c->flags |= CONE_FLAG_CANCELLED;
     return c->flags & CONE_FLAG_UNINTERRUPTIBLE ? mun_ok : cone_schedule(c);
 }
 
