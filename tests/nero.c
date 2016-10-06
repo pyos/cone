@@ -20,8 +20,14 @@ static int test_nero_server(int *fd) {
 }
 
 static int test_nero_client(int *fd) {
+    struct cone *bgrunner;
     struct nero conn = {.fd = *fd};
-    if (nero_init(&conn) || nero_run(&conn))
+    if (nero_init(&conn) || (bgrunner = cone(&nero_run, &conn)) == NULL)
+        return nero_fini(&conn), mun_error_up();
+    int32_t result = 0;
+    if (nero_call(&conn, "inc", "i4", 11, "i4", &result))
+        return cone_cancel(bgrunner), cone_decref(bgrunner), nero_fini(&conn), mun_error_up();
+    if (cone_cancel(bgrunner) || (cone_join(bgrunner) && mun_last_error()->code != mun_errno_cancelled))
         return nero_fini(&conn), mun_error_up();
     return nero_fini(&conn), mun_ok;
 }

@@ -34,6 +34,6 @@ int  nero_init (struct nero *);
 void nero_fini (struct nero *);
 int  nero_run  (struct nero *);
 int  nero_stop (struct nero *);
-int  nero_call (struct nero *, const char *service, const char *fn, ...);
+int  nero_call (struct nero *, const char *function, ...);
 
 #define nero_closure(name, f, data) ((struct nero_closure){name, (int(*)(void*,struct romp_iovec*,struct romp_iovec*))(f), data})

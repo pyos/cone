@@ -144,11 +144,9 @@ int nero_stop(struct nero *n) {
     return !n->http ? mun_ok : cno_connection_stop(n->http) ? nero_restore_cno_error() : mun_ok;
 }
 
-int nero_call(struct nero *n, const char *service, const char *fn, ...) {
-    if (!n->http)
-        return mun_error(assert, "nero is not yet ready");
+int nero_call(struct nero *n, const char *function, ...) {
     va_list args;
-    va_start(args, fn);
+    va_start(args, function);
 /*
     struct cone_event ev = {};
     struct romp_iovec data = {};
