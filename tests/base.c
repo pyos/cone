@@ -8,6 +8,7 @@ export { "pass", &pass }
 #include "../mun.h"
 #include "../cone.h"
 #include "../romp.h"
+#include "../nero.h"
 #include <stdio.h>
 #include <stdlib.h>
 
