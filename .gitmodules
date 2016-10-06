@@ -1,0 +1,3 @@
+[submodule "cno"]
+	path = cno
+	url = https://github.com/pyos/libcno
