@@ -360,7 +360,7 @@ int cone_wait(struct cone_cond *ev) {
         cone_cond_disconnect(ev, cone_bind(&cone_schedule, cone));
         cone->flags &= ~CONE_FLAG_CANCELLED;
         errno = ECANCELED;
-        return mun_error(cancelled, "-");
+        return mun_error(cancelled, "cone_cancel");
     }
     return mun_ok;
 }
@@ -372,7 +372,7 @@ int cone_iowait(int fd, int write) {
         cone_event_fd_disconnect(&cone->loop->io, fd, write, cone_bind(&cone_schedule, cone));
         cone->flags &= ~CONE_FLAG_CANCELLED;
         errno = ECANCELED;
-        return mun_error(cancelled, "-");
+        return mun_error(cancelled, "cone_cancel");
     }
     return mun_ok;
 }
@@ -386,7 +386,7 @@ int cone_sleep(mun_nsec delay) {
     if (cone->flags & CONE_FLAG_CANCELLED) {
         cone->flags &= ~CONE_FLAG_CANCELLED;
         errno = ECANCELED;
-        return mun_error(cancelled, "-");
+        return mun_error(cancelled, "cone_cancel");
     }
     return mun_ok;
 }

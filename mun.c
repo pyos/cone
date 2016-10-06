@@ -37,9 +37,7 @@ int mun_error(unsigned n, const char *name, const char *file, const char *func, 
     e = (struct mun_error){.code = n, .stacklen = 0, .name = name};
     va_list args;
     va_start(args, fmt);
-    if (n == mun_errno_os && strerror_r((e.code |= errno) & ~mun_errno_os, e.text, sizeof(e.text)))
-        snprintf(e.text, sizeof(e.text), "Unknown OS error");
-    else
+    if (n != mun_errno_os || strerror_r((e.code |= errno) & ~mun_errno_os, e.text, sizeof(e.text)))
         vsnprintf(e.text, sizeof(e.text), fmt, args);
     va_end(args);
     return mun_error_up(file, func, line);
