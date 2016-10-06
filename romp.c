@@ -119,7 +119,7 @@ static int romp_decode_vec(struct romp_iovec *in, const char **sign, struct mun_
             else
                 mun_vec_splice_s(s.stride, out, out->size, &(struct mun_vec){}, 1);
             if (*sign = signreset, romp_decode_vec(in, sign, (struct mun_vec *)&out->data[(out->size - 1) * s.stride]))
-                return mun_error_up();
+                return mun_vec_fini_s(s.stride, out), mun_error_up();
         }
     } else
         mun_vec_splice_s(s.stride, out, 0, in->data, size);
