@@ -114,6 +114,8 @@ enum
 struct mun_vec mun_vec(char);
 
 static inline void mun_vec_fini_s(size_t stride, struct mun_vec *vec) {
+    if (vec->flags & MUN_VEC_STATIC)
+        return;
     free(vec->data - vec->shift * stride);
     *vec = (struct mun_vec){};
 }
