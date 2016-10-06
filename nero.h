@@ -5,7 +5,7 @@
 
 enum
 {
-    mun_errno_nero_http2 = mun_errno_custom + 31,
+    mun_errno_nero_http2 = mun_errno_custom + 15000,
 };
 
 struct nero_closure

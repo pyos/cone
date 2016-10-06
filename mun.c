@@ -1,6 +1,4 @@
 #include "mun.h"
-#undef mun_error
-#undef mun_error_up
 #if MUN_ANSI_TERM
 #define ANSI_ITALIC "\033[5m"
 #define ANSI_RED    "\033[31;1m"
@@ -30,17 +28,17 @@ int mun_error_restore(const struct mun_error *err) {
     return -1;
 }
 
-int mun_error(unsigned n, const char *name, const char *file, const char *func, unsigned line, const char *fmt, ...) {
+int mun_error_at(unsigned n, const char *name, const char *file, const char *func, unsigned line, const char *fmt, ...) {
     e = (struct mun_error){.code = n, .stacklen = 0, .name = name};
     va_list args;
     va_start(args, fmt);
     if (n != mun_errno_os || strerror_r((e.code |= errno) & ~mun_errno_os, e.text, sizeof(e.text)))
         vsnprintf(e.text, sizeof(e.text), fmt, args);
     va_end(args);
-    return mun_error_up(file, func, line);
+    return mun_error_up_at(file, func, line);
 }
 
-int mun_error_up(const char *file, const char *func, unsigned line) {
+int mun_error_up_at(const char *file, const char *func, unsigned line) {
     if (e.stacklen >= sizeof(e.stack) / sizeof(struct mun_stacktrace))
         return -1;
     e.stack[e.stacklen++] = (struct mun_stacktrace){file, func, line};

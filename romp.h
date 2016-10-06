@@ -6,7 +6,7 @@ struct romp_iovec mun_vec(uint8_t);
 
 enum
 {
-    mun_errno_romp_protocol = mun_errno_custom,
+    mun_errno_romp_protocol = mun_errno_custom + 7000,
     mun_errno_romp_sign_syntax,
 };
 
