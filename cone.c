@@ -270,6 +270,8 @@ static int cone_loop_dec(struct cone_loop *loop) {
 enum
 {
     CONE_FLAG_FINISHED = 0x1,
+    CONE_FLAG_FAILED   = 0x2,
+    CONE_FLAG_RETHROWN = 0x4,
     CONE_FLAG_CTX_A = !CONE_XCHG_RSP << 15,
 };
 
@@ -279,6 +281,7 @@ struct cone
     struct cone_loop *loop;
     struct cone_closure body;
     struct cone_event_vec done;
+    struct mun_error error;
 #if CONE_XCHG_RSP
     void **rsp;
 #else
@@ -341,6 +344,8 @@ void cone_incref(struct cone *c) {
 
 int cone_decref(struct cone *c) {
     if (c && --c->refcount == 0) {
+        if (c->flags & CONE_FLAG_FAILED && !(c->flags & CONE_FLAG_RETHROWN))
+            mun_error_show("cone:uncaught");
         mun_vec_fini(&c->done);
         free(c);
     }
@@ -349,13 +354,19 @@ int cone_decref(struct cone *c) {
 
 int cone_join(struct cone *c) {
     int ret = c->flags & CONE_FLAG_FINISHED ? 0 : cone_wait(&c->done);
+    if (!ret && c->flags & CONE_FLAG_FAILED) {
+        ret = mun_error_restore(&c->error);
+        c->flags |= CONE_FLAG_RETHROWN;
+    }
     cone_decref(c);
     return ret;
 }
 
 static __attribute__((noreturn)) void cone_body(struct cone *c) {
-    if (cone_event_emit(&c->body))
-        mun_error_show("cone:uncaught");
+    if (cone_event_emit(&c->body)) {
+        c->error = *mun_last_error();
+        c->flags |= CONE_FLAG_FAILED;
+    }
     c->flags |= CONE_FLAG_FINISHED;
     for (size_t i = 0; i < c->done.size; i++)
         if (cone_event_schedule_connect(&c->loop->at, (mun_u128){}, c->done.data[i]))
@@ -400,11 +411,17 @@ struct cone *cone_spawn(size_t size, struct cone_closure body) {
 
 int cone_root(size_t stksz, struct cone_closure body) {
     struct cone_loop loop = {};
-    int err = cone_loop_init(&loop)
-           || cone_decref(cone_spawn_on(&loop, stksz, body))
-           || cone_loop_run(&loop);
+    if (cone_loop_init(&loop))
+        return mun_error_up();
+    struct cone *c = cone_spawn_on(&loop, stksz, body);
+    if (c == NULL)
+        return cone_loop_fini(&loop), mun_error_up();
+    if (cone_loop_run(&loop))
+        return cone_decref(c), cone_loop_fini(&loop), mun_error_up();
+    if (cone_join(c))
+        return cone_loop_fini(&loop), mun_error_up();
     cone_loop_fini(&loop);
-    return err ? mun_error_up() : mun_ok;
+    return mun_ok;
 }
 
 struct cone_main

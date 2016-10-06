@@ -88,6 +88,7 @@ struct mun_error
 };
 
 const struct mun_error *mun_last_error(void);
+int  mun_error_restore(const struct mun_error *);
 int  mun_error(unsigned, const char *name, const char *file, const char *func, unsigned line,
                 const char *fmt, ...) __attribute__((format(printf, 6, 7)));
 int  mun_error_up(const char *file, const char *func, unsigned line);

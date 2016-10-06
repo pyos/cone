@@ -11,6 +11,11 @@ const struct mun_error *mun_last_error(void) {
     return &e;
 }
 
+int mun_error_restore(const struct mun_error *err) {
+    e = *err;
+    return -1;
+}
+
 int mun_error(unsigned n, const char *name, const char *file, const char *func, unsigned line, const char *fmt, ...) {
     e = (struct mun_error){.code = n, .stacklen = 0, .name = name};
     va_list args;
