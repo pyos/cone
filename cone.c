@@ -402,7 +402,8 @@ void cone_incref(struct cone *c) {
 int cone_decref(struct cone *c) {
     if (c && --c->refcount == 0) {
         if (c->flags & CONE_FLAG_FAILED && !(c->flags & CONE_FLAG_RETHROWN))
-            mun_error_show("cone: uncaught", &c->error);
+            if (c->error.code != mun_errno_cancelled && c->error.code != (mun_errno_os | ECANCELED))
+                mun_error_show("cone destroyed with", &c->error);
         mun_vec_fini(&c->done);
         free(c);
     }
@@ -436,7 +437,7 @@ static __attribute__((noreturn)) void cone_body(struct cone *c) {
     c->flags |= CONE_FLAG_FINISHED;
     for (size_t i = 0; i < c->done.size; i++)
         if (cone_event_schedule_connect(&c->loop->at, (mun_u128){}, c->done.data[i]))
-            mun_error_show("cone: fatal", NULL), abort();
+            mun_error_show("cone fatal", NULL), abort();
     cone_switch(c);
     abort();
 }
