@@ -24,11 +24,11 @@ struct nero_closure
 struct nero
 {
     int fd;
-    unsigned next_req, skip;
+    unsigned last_id;
     struct cone *writer;
-    struct romp_iovec wrbuffer;
-    struct romp_iovec rdbuffer;
-    struct mun_vec(struct nero_future) queued;
+    struct romp_iovec wbuffer;
+    struct romp_iovec rbuffer;
+    struct mun_vec(struct nero_future*) queued;
     struct mun_vec(struct nero_closure) exported;
 };
 
@@ -36,8 +36,9 @@ static inline int nero_add(struct nero *n, const struct nero_closure *cbs, size_
     return mun_vec_extend(&n->exported, cbs, count);
 }
 
-void nero_fini (struct nero *);
-int  nero_run  (struct nero *);
-int  nero_call (struct nero *, const char *function, ...);
+void nero_fini     (struct nero *);
+int  nero_run      (struct nero *);
+int  nero_call_var (struct nero *, const char *function, va_list);
+int  nero_call     (struct nero *, const char *function, ... /* romp_sign_input, ..., romp_sign_return, ... */);
 
 #define nero_closure(name, f, data) ((struct nero_closure){name, (int(*)(void*,struct romp_iovec*,struct romp_iovec*))(f), data})
