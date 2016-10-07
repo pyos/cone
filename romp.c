@@ -81,7 +81,7 @@ static int romp_encode_double(struct romp_iovec *out, double in) {
 }
 
 static int romp_decode_double(struct romp_iovec *in, double *d) {
-    union { double f; uint64_t d; } u;
+    union { double f; uint64_t d; } u = {.d = 0};
     if (romp_decode_uint(in, &u.d, 8))
         return mun_error_up();
     *d = u.f;
