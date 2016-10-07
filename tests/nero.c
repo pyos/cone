@@ -1,3 +1,4 @@
+#include "../nero.h"
 #include <unistd.h>
 #include <sys/socket.h>
 

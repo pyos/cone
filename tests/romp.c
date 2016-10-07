@@ -1,3 +1,4 @@
+#include "../romp.h"
 #include <inttypes.h>
 
 static int test_romp_primitive() {
