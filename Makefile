@@ -12,7 +12,7 @@ obj/tests/%: tests/%.c tests/base.c obj/mun.o obj/cone.o obj/romp.o obj/nero.o o
 	@mkdir -p $(dir $@)
 	$(CCMD) -DSRC=$< obj/mun.o obj/cone.o obj/romp.o obj/nero.o obj/cold.o tests/base.c -o $@ -ldl
 
-obj/%.o: %.c cone.h mun.h romp.h nero.h cno/.git
+obj/%.o: %.c cone.h mun.h romp.h nero.h
 	@mkdir -p $(dir $@)
 	$(CCMD) -c $< -o $@
 
