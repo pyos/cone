@@ -14,7 +14,7 @@ static int test_nero_server(int *fd) {
     int32_t counter = 0;
     struct nero conn = {.fd = *fd};
     struct nero_closure inc = nero_closure("inc", &test_inc, &counter);
-    if (nero_add(&conn, &inc, 1) || nero_init(&conn) || nero_run(&conn))
+    if (nero_add(&conn, &inc, 1) || nero_run(&conn))
         return nero_fini(&conn), mun_error_up();
     return nero_fini(&conn), mun_ok;
 }
@@ -22,7 +22,7 @@ static int test_nero_server(int *fd) {
 static int test_nero_client(int *fd) {
     struct cone *bgrunner;
     struct nero conn = {.fd = *fd};
-    if (nero_init(&conn) || (bgrunner = cone(&nero_run, &conn)) == NULL)
+    if ((bgrunner = cone(&nero_run, &conn)) == NULL)
         return nero_fini(&conn), mun_error_up();
     int32_t result = 0;
     if (nero_call(&conn, "inc", "i4", 11, "i4", &result))
