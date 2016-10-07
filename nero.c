@@ -123,7 +123,7 @@ static int nero_on_frame(struct nero *n, enum nero_frame_type type, uint32_t rqi
             struct romp_iovec out = {};
             for (unsigned i = 0; i < n->exported.size; i++) {
                 if (strcmp(function, n->exported.data[i].name) == 0) {
-                    if (n->exported.data[i].code(n->exported.data[i].data, &in, &out))
+                    if (n->exported.data[i].code(n, n->exported.data[i].data, &in, &out))
                         return mun_vec_fini(&out), nero_write_response_error(n, rqid);
                     if (nero_write_response(n, rqid, &out))
                         return mun_vec_fini(&out), mun_error_up();

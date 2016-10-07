@@ -14,13 +14,6 @@ enum
     mun_errno_nero_not_exported,
 };
 
-struct nero_closure
-{
-    const char *name;
-    int (*code)(void *, struct romp_iovec *in, struct romp_iovec *out);
-    void *data;
-};
-
 struct nero
 {
     int fd;
@@ -32,8 +25,21 @@ struct nero
     struct mun_vec(struct nero_closure) exported;
 };
 
+struct nero_closure
+{
+    const char *name;
+    int (*code)(struct nero *, void *, struct romp_iovec *in, struct romp_iovec *out);
+    void *data;
+};
+
 static inline int nero_add(struct nero *n, const struct nero_closure *cbs, size_t count) {
     return mun_vec_extend(&n->exported, cbs, count);
+}
+
+static inline void nero_del(struct nero *n, const char *name) {
+    for (unsigned i = 0; i < n->exported.size; i++)
+        if (!strcmp(name, n->exported.data[i].name))
+            return (void) mun_vec_erase(&n->exported, i, 1);
 }
 
 void nero_fini     (struct nero *);
@@ -41,4 +47,4 @@ int  nero_run      (struct nero *);
 int  nero_call_var (struct nero *, const char *function, va_list);
 int  nero_call     (struct nero *, const char *function, ... /* romp_sign_input, ..., romp_sign_return, ... */);
 
-#define nero_closure(name, f, data) ((struct nero_closure){name, (int(*)(void*,struct romp_iovec*,struct romp_iovec*))(f), data})
+#define nero_closure(name, f, data) ((struct nero_closure){name, (int(*)(struct nero*,void*,struct romp_iovec*,struct romp_iovec*))(f), data})
