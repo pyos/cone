@@ -10,7 +10,7 @@ enum
     mun_errno_romp_sign_syntax,
 };
 
-int romp_vencode(struct romp_iovec *out, const char *sign, va_list args);
-int romp_vdecode(struct romp_iovec *in, const char *sign, va_list args);
+int romp_encode_var(struct romp_iovec *out, const char *sign, va_list args);
+int romp_decode_var(struct romp_iovec in, const char *sign, va_list args);
 int romp_encode(struct romp_iovec *out, const char *sign, ...);
-int romp_decode(struct romp_iovec *in, const char *sign, ...);
+int romp_decode(struct romp_iovec in, const char *sign, ...);
