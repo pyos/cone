@@ -49,18 +49,15 @@ static int deck_remote_release(struct nero *rpc, struct deck *lk, struct romp *i
     return mun_vec_erase(&lk->queue, i, 1), deck_maybe_wakeup(lk);
 }
 
-static void deck_kill(struct deck *lk, uint32_t i) {
-    nero_fini(lk->rpcs.data[i].rpc);  // TODO something more gentle
-}
-
-static void deck_release_first(struct deck *lk, uint32_t i) {
+static int deck_release_first(struct deck *lk, uint32_t i) {
     uint32_t time = lk->time;
     struct deck_request srq = {lk->pid, ++lk->time};
-    while (i--)
+    while (i--) {
         if (nero_call(lk->rpcs.data[i].rpc, lk->fname_release.data, "u4 u4", srq.pid, srq.time, "u4", &time))
-            deck_kill(lk, i);
-        else
-            srq.time = lk->time = (time > lk->time ? time : lk->time) + 1;
+            return mun_error_up();
+        srq.time = lk->time = (time > lk->time ? time : lk->time) + 1;
+    }
+    return mun_ok;
 }
 
 void deck_fini(struct deck *lk) {
@@ -79,10 +76,10 @@ void deck_fini(struct deck *lk) {
 #define ENSURE_NAME_CREATED(lk, N) do \
     if (!(lk)->fname_##N.data || !strncmp((lk)->name, (lk)->fname_##N.data, (lk)->fname_##N.size)) { \
         mun_vec_erase(&(lk)->fname_##N, 0, (lk)->fname_##N.size);                                    \
-        if (mun_vec_reserve(&(lk)->fname_##N, strlen((lk)->name) + sizeof(#N)))                      \
+        if (mun_vec_reserve(&(lk)->fname_##N, strlen((lk)->name) + sizeof(#N) + 1))                  \
             return mun_error_up();                                                                   \
         strcpy((lk)->fname_##N.data, (lk)->name);                                                    \
-        strcpy((lk)->fname_##N.data + strlen((lk)->name), #N);                                       \
+        strcpy((lk)->fname_##N.data + strlen((lk)->name), "/" #N);                                   \
     } while (0)
 
 int deck_add(struct deck *lk, struct nero *rpc) {
@@ -123,7 +120,6 @@ int deck_acquire(struct deck *lk) {
                 uint32_t time = lk->time;
                 if (nero_call(lk->rpcs.data[i].rpc, lk->fname_request.data, "u4 u4", srq.pid, srq.time, "u4", &time)) {
                     mun_vec_erase(&lk->queue, deck_bisect(lk, srq), 1);
-                    deck_kill(lk, i);
                     deck_release_first(lk, i);
                     lk->state &= ~DECK_REQUESTED;
                     return mun_error_up();
@@ -142,6 +138,5 @@ int deck_release(struct deck *lk) {
     if (!deck_is_acquired_by_this(lk))
         return mun_error(assert, "not holding this lock");
     mun_vec_erase(&lk->queue, 0, 1);
-    deck_release_first(lk, lk->rpcs.size);
-    return mun_ok;
+    return deck_release_first(lk, lk->rpcs.size);
 }
