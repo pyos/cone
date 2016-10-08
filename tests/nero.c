@@ -5,7 +5,7 @@
 static int test_counter_add(struct nero *rpc, uint32_t *n, struct romp *in, struct romp *out) {
     (void)rpc;
     int32_t incr = 0;
-    if (romp_decode(*in, "i4", &incr) || romp_encode(out, "i4", *n += incr))
+    if (romp_decode(in, "i4", &incr) || romp_encode(out, "i4", *n += incr))
         return mun_error_up();
     return mun_ok;
 }
