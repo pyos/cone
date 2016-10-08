@@ -61,10 +61,6 @@ cold_def(int, nanosleep, const struct timespec *req, struct timespec *rem) {
     return !cone ? libc_nanosleep(req, rem) : cone_sleep(mun_usec_from_timespec(*req));
 }
 
-cold_def(int, sched_yield, void) {
-    return !cone ? libc_sched_yield() : cone_yield();
-}
-
 static __attribute__((constructor)) void cold_init(void) {
 #ifndef RTLD_NEXT
 #define RTLD_NEXT (void*)(uintptr_t)-1
@@ -84,7 +80,4 @@ static __attribute__((constructor)) void cold_init(void) {
     libc_sendmsg     = dlsym(RTLD_NEXT, "sendmsg");
     libc_sleep       = dlsym(RTLD_NEXT, "sleep");
     libc_nanosleep   = dlsym(RTLD_NEXT, "nanosleep");
-#ifdef _POSIX_PRIORITY_SCHEDULING
-    libc_sched_yield = dlsym(RTLD_NEXT, "sched_yield");
-#endif
 }

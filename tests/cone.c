@@ -1,4 +1,3 @@
-#include <sched.h>
 #include <unistd.h>
 
 struct args { unsigned N; int fd; const char *data; size_t size; };
@@ -68,7 +67,7 @@ static int test_yield(char *msg) {
     const unsigned N = 1000000;
     mun_usec a = mun_usec_monotonic();
     for (unsigned i = 0; i < N; i++)
-        sched_yield();
+        cone_yield();
     mun_usec b = mun_usec_monotonic();
     sprintf(msg, "%f us/yield", (double)(b - a) / N);
     return mun_ok;
@@ -76,5 +75,5 @@ static int test_yield(char *msg) {
 
 export { "cone:sleep", &test_sleep }
      , { "cone:concurrent sleep", &test_concurrent_sleep }
-     , { "cone:sched_yield", &test_yield }
+     , { "cone:yield", &test_yield }
      , { "cone:reader + writer", &test_rdwr }
