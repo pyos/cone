@@ -52,12 +52,6 @@ struct node
     struct cone_event *fail;
 };
 
-int handle_connection_inner(struct node *n) {
-    if (nero_run(&n->rpc))
-        return deck_del(n->deck, &n->rpc), mun_error_up();
-    return deck_del(n->deck, &n->rpc), mun_ok;
-}
-
 int write_status(struct deck *lk, int fd) {
     if (!deck_is_acquired_by_this(lk))
         return mun_error(assert, "must be holding the lock to do this");
@@ -94,9 +88,8 @@ int interface_command(struct node *n, const char *cmd) {
         int fd = open(cmd + 6, O_CREAT | O_APPEND | O_WRONLY, 0644);
         if (fd < 0)
             return mun_error_os();
-        if (write_status(n->deck, fd))
-            return close(fd), mun_error_up();
-        return close(fd), mun_ok;
+        int ret = write_status(n->deck, fd);
+        return close(fd), ret;
     }
     return mun_error(input, "unknown command");
 }
@@ -105,50 +98,40 @@ int interface_inner(struct node *n) {
     while (!isatty(1))
         if (deck_acquire(n->deck) || write_status(n->deck, 1) || deck_release(n->deck))
             return mun_error_up();
-
     if (cone_unblock(0))
         return mun_error_up();
-    char stkbuf[1024];
     struct mun_vec(char) buffer = mun_vec_init_static(char, 1024);
-    int prompt = 1;
     while (1) {
-        if (prompt) {
-            prompt = 0;
-            printf(" T=%u \033[34;1m>\033[0m ", n->deck->time);
-            fflush(stdout);
-        }
-        ssize_t rd = read(0, stkbuf, sizeof(stkbuf));
-        if (rd < 0)
-            return mun_error_os();
-        if (mun_vec_extend(&buffer, stkbuf, rd))
-            return mun_error_up();
-        char *eol = memchr(buffer.data, '\n', buffer.size);
-        if (eol == NULL)
-            continue;
+        printf(" T=%u \033[34;1m>\033[0m ", n->deck->time);
+        fflush(stdout);
+        char *eol;
+        do {
+            if (buffer.size == 1024)
+                return mun_error(input, "command too long");
+            ssize_t rd = read(0, buffer.data + buffer.size, 1024 - buffer.size);
+            if (rd < 0)
+                return errno == ECANCELED ? mun_ok : mun_error_os();
+            buffer.size += rd;
+        } while ((eol = memchr(buffer.data, '\n', buffer.size)) == NULL);
         *eol++ = 0;
         if (interface_command(n, buffer.data)) {
             if (mun_last_error()->code == mun_errno_cancelled)
-                break;
+                return mun_ok;
             mun_error_show("command triggered", NULL);
         }
         mun_vec_erase(&buffer, 0, eol - buffer.data);
-        prompt = 1;
     }
-    return mun_ok;
-}
-
-int handle_connection(struct node *n) {
-    int ret = handle_connection_inner(n);
-    if (cone_event_emit(n->fail))
-        return mun_error_up();
-    return ret;
 }
 
 int interface(struct node *n) {
     int ret = interface_inner(n);
-    if (cone_event_emit(n->fail))
-        return mun_error_up();
-    return ret;
+    return cone_event_emit(n->fail) ? mun_error_up() : ret;
+}
+
+int handle_connection(struct node *n) {
+    int ret = nero_run(&n->rpc);
+    deck_del(n->deck, &n->rpc);
+    return cone_event_emit(n->fail) ? mun_error_up() : ret;
 }
 
 int comain(int argc, const char **argv) {
