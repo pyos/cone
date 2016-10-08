@@ -27,7 +27,7 @@ struct nero_future
     uint32_t id;
     enum nero_return_reason rr;
     struct cone_event wake;
-    struct romp_iovec data;
+    struct romp data;
     struct cone *c;
 };
 
@@ -70,7 +70,7 @@ static int nero_write_header(struct nero *n, enum nero_frame_type type, uint32_t
 }
 
 // data | type=NERO_FRAME_REQUEST ::= {name : i8}[] '\0' {args : u8}[]
-static int nero_write_request(struct nero *n, uint32_t rqid, const char *function, struct romp_iovec *args) {
+static int nero_write_request(struct nero *n, uint32_t rqid, const char *function, struct romp *args) {
     uint32_t nlen = strlen(function) + 1;
     if (nero_write_header(n, NERO_FRAME_REQUEST, rqid, nlen + args->size))
         return mun_error_up();
@@ -80,7 +80,7 @@ static int nero_write_request(struct nero *n, uint32_t rqid, const char *functio
 }
 
 // data | type=NERO_FRAME_RESPONSE ::= {args : u8}[]
-static int nero_write_response(struct nero *n, uint32_t rqid, struct romp_iovec *ret) {
+static int nero_write_response(struct nero *n, uint32_t rqid, struct romp *ret) {
     if (nero_write_header(n, NERO_FRAME_RESPONSE, rqid, ret->size))
         return mun_error_up();
     return nero_write(n, ret->data, ret->size);
@@ -119,8 +119,8 @@ static int nero_on_frame(struct nero *n, enum nero_frame_type type, uint32_t rqi
             if (sep == NULL)
                 return mun_error(nero_protocol, "malformed request");
             const char *function = (const char *)data;
-            struct romp_iovec in = mun_vec_init_borrow(sep + 1, size - (sep - data) - 1);
-            struct romp_iovec out = {};
+            struct romp in = mun_vec_init_borrow(sep + 1, size - (sep - data) - 1);
+            struct romp out = {};
             for (unsigned i = 0; i < n->exported.size; i++) {
                 if (strcmp(function, n->exported.data[i].name) == 0) {
                     if (n->exported.data[i].code(n, n->exported.data[i].data, &in, &out))
@@ -152,7 +152,7 @@ static int nero_on_frame(struct nero *n, enum nero_frame_type type, uint32_t rqi
 }
 
 static int nero_call_wait(struct nero *n, struct nero_future *fut, const char *function, va_list args) {
-    struct romp_iovec enc = {};
+    struct romp enc = {};
     if (romp_encode_var(&enc, va_arg(args, const char *), args))
         return mun_vec_fini(&enc), mun_error_up();
     if (nero_write_request(n, fut->id, function, &enc))

@@ -19,8 +19,8 @@ struct nero
     int fd;
     unsigned last_id;
     struct cone *writer;
-    struct romp_iovec wbuffer;
-    struct romp_iovec rbuffer;
+    struct romp wbuffer;
+    struct romp rbuffer;
     struct mun_vec(struct nero_future*) queued;
     struct mun_vec(struct nero_closure) exported;
 };
@@ -28,7 +28,7 @@ struct nero
 struct nero_closure
 {
     const char *name;
-    int (*code)(struct nero *, void *, struct romp_iovec *in, struct romp_iovec *out);
+    int (*code)(struct nero *, void *, struct romp *in, struct romp *out);
     void *data;
 };
 
@@ -47,4 +47,4 @@ int  nero_run      (struct nero *);
 int  nero_call_var (struct nero *, const char *function, va_list);
 int  nero_call     (struct nero *, const char *function, ... /* romp_sign_input, ..., romp_sign_return, ... */);
 
-#define nero_closure(name, f, data) ((struct nero_closure){name, (int(*)(struct nero*,void*,struct romp_iovec*,struct romp_iovec*))(f), data})
+#define nero_closure(name, f, data) ((struct nero_closure){name, (int(*)(struct nero*,void*,struct romp*,struct romp*))(f), data})

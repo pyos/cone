@@ -6,7 +6,7 @@ static int test_romp_primitive() {
     uint64_t u8 = 9876543210123456789ULL, u8dec = 0;
     double f = 5123456.2435463, fdec = 0;
 
-    struct romp_iovec out = mun_vec_init_static(char, 64);
+    struct romp out = mun_vec_init_static(char, 64);
     if (romp_encode(&out, "i2 u8 f", i2, u8, f))
         return mun_error_up();
     if (out.size != 18)
@@ -22,7 +22,7 @@ static int test_romp_vec() {
     struct mun_vec(char) original = mun_vec_init_str("text");
     struct mun_vec(char) decoded = mun_vec_init_static(char, 16);
 
-    struct romp_iovec out = mun_vec_init_static(char, 16);
+    struct romp out = mun_vec_init_static(char, 16);
     if (romp_encode(&out, "vi1", &original))
         return mun_error_up();
     if (romp_decode(out, "vi1", &decoded))
@@ -41,7 +41,7 @@ static int test_romp_vec_vec() {
     for (unsigned i = 0; i < decoded.size; i++)
         decoded.data[i] = (struct charvec)mun_vec_init_borrow(arena + 8 * i, 8);
 
-    struct romp_iovec out = mun_vec_init_static(char, 32);
+    struct romp out = mun_vec_init_static(char, 32);
     if (romp_encode(&out, "vvi1", &original))
         return mun_error_up();
     if (romp_decode(out, "vvi1", &decoded))

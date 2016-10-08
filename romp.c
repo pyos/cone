@@ -42,12 +42,12 @@ static struct romp_sign romp_sign(const char **sign) {
     }
 }
 
-static int romp_encode_uint(struct romp_iovec *out, uint64_t in, unsigned width) {
+static int romp_encode_uint(struct romp *out, uint64_t in, unsigned width) {
     uint8_t packed[] = { in >> 56, in >> 48, in >> 40, in >> 32, in >> 24, in >> 16, in >> 8, in };
     return mun_vec_extend(out, &packed[8 - width], width);
 }
 
-static int romp_decode_uint(struct romp_iovec *in, uint64_t *out, unsigned width) {
+static int romp_decode_uint(struct romp *in, uint64_t *out, unsigned width) {
     if (in->size < width)
         return mun_error(romp_protocol, "need %u octets, found %u", width, in->size);
 #define X(i) ((uint64_t)in->data[i])
@@ -63,11 +63,11 @@ static int romp_decode_uint(struct romp_iovec *in, uint64_t *out, unsigned width
     return mun_ok;
 }
 
-static int romp_encode_int(struct romp_iovec *out, int64_t in, int width) {
+static int romp_encode_int(struct romp *out, int64_t in, int width) {
     return romp_encode_uint(out, (uint64_t) in, width);
 }
 
-static int romp_decode_int(struct romp_iovec *in, int64_t *out, int width) {
+static int romp_decode_int(struct romp *in, int64_t *out, int width) {
     uint64_t u = 0;
     if (romp_decode_uint(in, &u, width))
         return mun_error_up();
@@ -75,12 +75,12 @@ static int romp_decode_int(struct romp_iovec *in, int64_t *out, int width) {
     return mun_ok;
 }
 
-static int romp_encode_double(struct romp_iovec *out, double in) {
+static int romp_encode_double(struct romp *out, double in) {
     union { double f; uint64_t d; } u = { .f = in };
     return romp_encode_uint(out, u.d, 8);
 }
 
-static int romp_decode_double(struct romp_iovec *in, double *d) {
+static int romp_decode_double(struct romp *in, double *d) {
     union { double f; uint64_t d; } u = {.d = 0};
     if (romp_decode_uint(in, &u.d, 8))
         return mun_error_up();
@@ -88,7 +88,7 @@ static int romp_decode_double(struct romp_iovec *in, double *d) {
     return mun_ok;
 }
 
-static int romp_encode_vec(struct romp_iovec *out, const char **sign, const struct mun_vec *in) {
+static int romp_encode_vec(struct romp *out, const char **sign, const struct mun_vec *in) {
     struct romp_sign s = romp_sign(sign);
     if (!s.sign || romp_encode_uint(out, in->size, 4))
         return mun_error_up();
@@ -103,7 +103,7 @@ static int romp_encode_vec(struct romp_iovec *out, const char **sign, const stru
     return mun_ok;
 }
 
-static int romp_decode_vec(struct romp_iovec *in, const char **sign, struct mun_vec *out) {
+static int romp_decode_vec(struct romp *in, const char **sign, struct mun_vec *out) {
     uint64_t size = 0;
     struct romp_sign s = romp_sign(sign);
     if (!s.sign || romp_decode_uint(in, &size, 4))
@@ -127,7 +127,7 @@ static int romp_decode_vec(struct romp_iovec *in, const char **sign, struct mun_
     return mun_ok;
 }
 
-int romp_encode_var(struct romp_iovec *out, const char *sign, va_list args) {
+int romp_encode_var(struct romp *out, const char *sign, va_list args) {
     int64_t ir = 0;
     uint64_t ur = 0;
     for (struct romp_sign s; *sign;) {
@@ -163,7 +163,7 @@ int romp_encode_var(struct romp_iovec *out, const char *sign, va_list args) {
     return 0;
 }
 
-int romp_decode_var(struct romp_iovec in, const char *sign, va_list args) {
+int romp_decode_var(struct romp in, const char *sign, va_list args) {
     int64_t ir = 0;
     uint64_t ur = 0;
     for (struct romp_sign s; *sign;) {
@@ -205,7 +205,7 @@ int romp_decode_var(struct romp_iovec in, const char *sign, va_list args) {
     return 0;
 }
 
-int romp_encode(struct romp_iovec *out, const char *sign, ...) {
+int romp_encode(struct romp *out, const char *sign, ...) {
     va_list args;
     va_start(args, sign);
     int ret = romp_encode_var(out, sign, args);
@@ -213,7 +213,7 @@ int romp_encode(struct romp_iovec *out, const char *sign, ...) {
     return ret;
 }
 
-int romp_decode(struct romp_iovec in, const char *sign, ...) {
+int romp_decode(struct romp in, const char *sign, ...) {
     va_list args;
     va_start(args, sign);
     int ret = romp_decode_var(in, sign, args);

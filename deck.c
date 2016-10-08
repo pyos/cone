@@ -36,7 +36,7 @@ static int deck_maybe_wakeup(struct deck *lk) {
     return mun_ok;
 }
 
-static int deck_decode_request(struct nero *rpc, struct deck *lk, struct romp_iovec in, struct deck_request *rq) {
+static int deck_decode_request(struct nero *rpc, struct deck *lk, struct romp in, struct deck_request *rq) {
     if (romp_decode(in, "u4 u4", &rq->pid, &rq->time))
         return mun_error_up();
     if (lk->time < rq->time)
@@ -51,7 +51,7 @@ static int deck_decode_request(struct nero *rpc, struct deck *lk, struct romp_io
     return mun_ok;
 }
 
-static int deck_remote_request(struct nero *rpc, struct deck *lk, struct romp_iovec *in, struct romp_iovec *out) {
+static int deck_remote_request(struct nero *rpc, struct deck *lk, struct romp *in, struct romp *out) {
     (void)out;
     struct deck_request rq = {};
     if (deck_decode_request(rpc, lk, *in, &rq))
@@ -59,7 +59,7 @@ static int deck_remote_request(struct nero *rpc, struct deck *lk, struct romp_io
     return mun_vec_insert(&lk->queue, deck_bisect(lk, rq), &rq);
 }
 
-static int deck_remote_release(struct nero *rpc, struct deck *lk, struct romp_iovec *in, struct romp_iovec *out) {
+static int deck_remote_release(struct nero *rpc, struct deck *lk, struct romp *in, struct romp *out) {
     (void)out;
     struct deck_request rq = {};
     if (deck_decode_request(rpc, lk, *in, &rq))
