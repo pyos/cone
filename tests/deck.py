@@ -7,6 +7,9 @@ def readlog(path):
     with open(path) as fd:
         for line in fd:
             m = re.match(r'^\[(\d+)\|(\d+)\] (\d+): (.*)$', line.rstrip('\n'))
+            if not m:
+                print('warning: runtime error in {}:'.format(path), line)
+                continue
             yield tuple(map(int, m.group(1, 2, 3))) + (m.group(4),)
 
 def readlogs(root):
@@ -56,3 +59,4 @@ if __name__ == '__main__':
                 print(t, rqpid, 'relinquished its request from', pid)
             else:
                 assert False, '{}?'.format(kind)
+    print('consistency check finished; if there is no other output, all is fine')

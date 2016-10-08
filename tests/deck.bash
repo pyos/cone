@@ -21,8 +21,8 @@ function finish_all() {
     exit $1
 }
 
-trap "finish_all -2" SIGINT
-trap "finish_all -15" SIGTERM
+trap "finish_all 0" SIGINT
+trap "finish_all 1" SIGTERM
 for ((i = 0; i < $1; i++)); do
     port="3200${#addrs[@]}"
     ./main "$1" ":$port" "${addrs[@]}" >>"$root/mutex" 2>"$root/port-$port.stderr" &
