@@ -1,10 +1,5 @@
 #include "deck.h"
 
-#define MAKE_NAME(lk, kind) \
-    char kind[strlen((lk)->name) + sizeof(#kind)];  \
-    strcpy(kind, (lk)->name);                       \
-    strcpy(kind + strlen((lk)->name), "/" #kind)
-
 enum deck_state
 {
     DECK_REQUESTED = 0x1,
@@ -80,32 +75,40 @@ static void deck_kill(struct deck *lk, uint32_t i) {
 }
 
 static void deck_release_first(struct deck *lk, uint32_t i) {
-    MAKE_NAME(lk, release);
     struct deck_request srq = {lk->pid, ++lk->time};
     while (i--)
-        if (nero_call(lk->rpcs.data[i].rpc, release, "u4 u4", srq.pid, srq.time, ""))
+        if (nero_call(lk->rpcs.data[i].rpc, lk->fname_release.data, "u4 u4", srq.pid, srq.time, ""))
             deck_kill(lk, i);
 }
 
 void deck_fini(struct deck *lk) {
-    MAKE_NAME(lk, request);
-    MAKE_NAME(lk, release);
     for (unsigned i = 0; i < lk->rpcs.size; i++) {
-        nero_del(lk->rpcs.data[i].rpc, request);
-        nero_del(lk->rpcs.data[i].rpc, release);
+        nero_del(lk->rpcs.data[i].rpc, lk->fname_request.data);
+        nero_del(lk->rpcs.data[i].rpc, lk->fname_release.data);
     }
+    mun_vec_fini(&lk->fname_request);
+    mun_vec_fini(&lk->fname_release);
     mun_vec_fini(&lk->rpcs);
     mun_vec_fini(&lk->queue);
     lk->state |= DECK_CANCELLED;
     cone_event_emit(&lk->wake);
 }
 
+#define ENSURE_NAME_CREATED(lk, N) do \
+    if (!(lk)->fname_##N.data || !strncmp((lk)->name, (lk)->fname_##N.data, (lk)->fname_##N.size)) { \
+        mun_vec_erase(&(lk)->fname_##N, 0, (lk)->fname_##N.size);                                    \
+        if (mun_vec_reserve(&(lk)->fname_##N, strlen((lk)->name) + sizeof(#N)))                      \
+            return mun_error_up();                                                                   \
+        strcpy((lk)->fname_##N.data, (lk)->name);                                                    \
+        strcpy((lk)->fname_##N.data + strlen((lk)->name), #N);                                       \
+    } while (0)
+
 int deck_add(struct deck *lk, struct nero *rpc) {
-    MAKE_NAME(lk, request);
-    MAKE_NAME(lk, release);
+    ENSURE_NAME_CREATED(lk, request);
+    ENSURE_NAME_CREATED(lk, release);
     struct nero_closure methods[] = {
-        nero_closure(request, &deck_remote_request, lk),
-        nero_closure(release, &deck_remote_release, lk),
+        nero_closure(lk->fname_request.data, &deck_remote_request, lk),
+        nero_closure(lk->fname_release.data, &deck_remote_release, lk),
     };
     struct deck_nero desc = {lk->pid, rpc};
     if (mun_vec_append(&lk->rpcs, &desc))
@@ -116,12 +119,10 @@ int deck_add(struct deck *lk, struct nero *rpc) {
 }
 
 void deck_del(struct deck *lk, struct nero *rpc) {
-    MAKE_NAME(lk, request);
-    MAKE_NAME(lk, release);
     for (unsigned i = 0; i < lk->rpcs.size; i++) {
         if (lk->rpcs.data[i].rpc == rpc) {
-            nero_del(rpc, request);
-            nero_del(rpc, release);
+            nero_del(rpc, lk->fname_request.data);
+            nero_del(rpc, lk->fname_release.data);
             mun_vec_erase(&lk->rpcs, i, 1);
             uint32_t pid = lk->rpcs.data[i].pid;
             if (pid == lk->pid)
@@ -143,9 +144,8 @@ int deck_acquire(struct deck *lk) {
         struct deck_request srq = {lk->pid, ++lk->time};
         if (mun_vec_append(&lk->queue, &srq))
             return mun_error_up();
-        MAKE_NAME(lk, request);
         for (uint32_t i = 0; i < lk->rpcs.size; i++) {
-            if (nero_call(lk->rpcs.data[i].rpc, request, "u4 u4", srq.pid, srq.time, "")) {
+            if (nero_call(lk->rpcs.data[i].rpc, lk->fname_request.data, "u4 u4", srq.pid, srq.time, "")) {
                 mun_vec_erase(&lk->queue, deck_bisect(lk, srq), 1);
                 deck_kill(lk, i);
                 deck_release_first(lk, i);
