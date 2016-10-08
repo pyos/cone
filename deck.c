@@ -1,5 +1,6 @@
 #include "deck.h"
 #include <stdio.h>
+#include <inttypes.h>
 
 enum deck_state
 {
@@ -38,7 +39,7 @@ static int deck_remote_request(struct nero *rpc, struct deck *lk, struct romp *i
     if (deck_clock_server(rpc, lk, in, out, &rq))
         return mun_error_up();
 #if DECK_DEBUG
-    fprintf(stderr, "[%u] %u: request\n", rq.time, rq.pid);
+    fprintf(stderr, "[%" PRIu64 "|%u] %u: request\n", mun_usec_now(), lk->time, rq.pid);
 #endif
     return mun_vec_insert(&lk->queue, deck_bisect(lk, rq), &rq);
 }
@@ -49,7 +50,7 @@ static int deck_remote_release(struct nero *rpc, struct deck *lk, struct romp *i
     if (deck_clock_server(rpc, lk, in, out, &rq) || romp_decode(in, "u1", &cancel))
         return mun_error_up();
 #if DECK_DEBUG
-    fprintf(stderr, "[%u] %u: %s\n", rq.time, rq.pid, cancel ? "cancel" : "release");
+    fprintf(stderr, "[%" PRIu64 "|%u] %u: %s\n", mun_usec_now(), lk->time, rq.pid, cancel ? "cancel" : "release");
 #endif
     unsigned i = mun_vec_find(&lk->queue, it, it->pid == rq.pid);
     if (i == lk->queue.size)
@@ -62,9 +63,9 @@ static int deck_release_first(struct deck *lk, uint32_t i) {
     uint8_t cancel = i != lk->rpcs.size;
     struct deck_request srq = {lk->pid, ++lk->time};
 #if DECK_DEBUG
-    fprintf(stderr, "[%u] %u: %s\n", srq.time, srq.pid, cancel ? "cancel" : "release");
+    fprintf(stderr, "[%" PRIu64 "|%u] %u: %s\n", mun_usec_now(), srq.time, srq.pid, cancel ? "cancel" : "release");
 #endif
-    while (i--) {
+    while (i--) {  // TODO execute queries concurrently (cone()+cone_join())
         if (nero_call(lk->rpcs.data[i].rpc, lk->fname_release.data, "u4 u4 u1", srq.pid, srq.time, cancel, "u4", &time))
             return mun_error_up();
         lk->time = (time > lk->time ? time : lk->time) + 1;
@@ -129,12 +130,12 @@ int deck_acquire(struct deck *lk) {
         if (!(lk->state & DECK_REQUESTED)) {
             struct deck_request srq = {lk->pid, ++lk->time};
         #if DECK_DEBUG
-            fprintf(stderr, "[%u] %u: request\n", srq.time, srq.pid);
+            fprintf(stderr, "[%" PRIu64 "|%u] %u: request\n", mun_usec_now(), srq.time, srq.pid);
         #endif
             if (mun_vec_append(&lk->queue, &srq))
                 return mun_error_up();
             lk->state |= DECK_REQUESTED;
-            for (uint32_t i = 0; i < lk->rpcs.size; i++) {
+            for (uint32_t i = 0; i < lk->rpcs.size; i++) {  // TODO execute queries concurrently (cone()+cone_join())
                 uint32_t time = lk->time;
                 if (nero_call(lk->rpcs.data[i].rpc, lk->fname_request.data, "u4 u4", srq.pid, srq.time, "u4", &time)) {
                     mun_vec_erase(&lk->queue, deck_bisect(lk, srq), 1);
@@ -149,8 +150,9 @@ int deck_acquire(struct deck *lk) {
         } else if (cone_wait(&lk->wake))
             return mun_error_up();
     }
+    ++lk->time;
 #if DECK_DEBUG
-    fprintf(stderr, "[%u] %u: acquire\n", lk->time, lk->pid);
+    fprintf(stderr, "[%" PRIu64 "|%u] %u: acquire\n", mun_usec_now(), lk->time, lk->pid);
 #endif
     return mun_ok;
 }
