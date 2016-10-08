@@ -70,11 +70,19 @@ int interface_command(struct node *n, const char *cmd) {
     if (!cmd[0])
         return mun_ok;
     if (!strcmp(cmd, "help"))
-        return printf("\033[33;1m # supported commands\033[0m:\n"
-               "    - \033[1mhelp\033[0m .... show this message;\n"
-               "    - \033[1mexit\033[0m .... teminate the process;\n"
-               "    - \033[1mlock\033[0m .... acquire the Lamport lock;\n"
-               "    - \033[1munlock\033[0m .. release the Lamport lock.\n"), mun_ok;
+        return printf("\033[33;1m # commands\033[0m:\n"
+               "    - \033[1mhelp\033[0m ...... show this message;\n"
+               "    - \033[1mexit\033[0m ...... teminate the process;\n"
+               "    - \033[1mlock\033[0m ...... acquire the Lamport lock;\n"
+               "    - \033[1mwrite <F>\033[0m . write current state to file named F;\n"
+               "    - \033[1munlock\033[0m .... release the Lamport lock.\n"
+               "\033[33;1m # notes\033[0m:\n"
+               "    - Ctrl+D doesn't work because this program uses async I/O, but\n"
+               "      not readline. Use \033[1m> exit\033[0m or \033[1m> quit\033[0m.\n"
+               "    - local time (T) is only displayed right after entering a command.\n"
+               "      If a message arrives while you decide what to do, the prompt\n"
+               "      will \033[5mnot\033[0m update.\n"
+               "    - Any operation that does not touch the lock is instantaneous.\n"), mun_ok;
     if (!strcmp(cmd, "exit") || !strcmp(cmd, "quit"))
         return cone_cancel(cone);
     if (!strcmp(cmd, "lock"))
@@ -90,14 +98,10 @@ int interface_inner(struct node *n) {
     char stkbuf[1024];
     struct mun_vec(char) buffer = mun_vec_init_static(char, 1024);
     int prompt = 1;
-    printf("\033[33;1m # NOTE\033[0m:\n"
-           "   Because this program uses async I/O and I couldn't be bothered to use\n"
-           "   readline (or even switch the TTY into raw mode), Ctrl+D does nothing.\n"
-           "   Type `exit` or `quit` instead.\n");
     while (1) {
         if (prompt) {
             prompt = 0;
-            printf("\033[34;1m local time = %u > \033[0m", n->deck->time);
+            printf(" T=%u \033[34;1m>\033[0m ", n->deck->time);
             fflush(stdout);
         }
         ssize_t rd = read(0, stkbuf, sizeof(stkbuf));
@@ -145,8 +149,11 @@ int comain(int argc, const char **argv) {
         fprintf(stderr, "          \033[8m%s\033[28m \\---- total number of expected nodes\n", argv[0]);
         return 2;
     }
+    char *end;
+    int n = strtol(argv[1], &end, 10) - 1;
+    if (!*argv[1] || *end)
+        return mun_error(input, "N must be an integer.");
     int known = argc - 3;
-    int n = atoi(argv[1]) - 1;  // - self
     if (n < known)
         return mun_error(input, "more arguments than nodes in total");
 
@@ -164,14 +171,13 @@ int comain(int argc, const char **argv) {
         if (listen(srv, 127) < 0)
             return mun_error_os();
         while (n > known) {
-            fprintf(stderr, "\033[34;1m # main\033[0m: awaiting %d more connections on %s\n", n - known, argv[2]);
+            fprintf(stderr, "\033[33;1m # main\033[0m: awaiting %d more connection(s) on %s\n", n - known, argv[2]);
             if ((nodes[known].socket = accept(srv, NULL, NULL)) < 0)
                 return mun_error_os();
             known++;
         }
     }
 
-    fprintf(stderr, "\033[34;1m # main\033[0m: node discovery complete\n");
     struct cone *children[known + 1];
     memset(children, 0, sizeof(struct cone *) * (known + 1));
     int ret = 0;
