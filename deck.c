@@ -1,4 +1,5 @@
 #include "deck.h"
+#include <stdio.h>
 
 enum deck_state
 {
@@ -36,26 +37,37 @@ static int deck_remote_request(struct nero *rpc, struct deck *lk, struct romp *i
     struct deck_request rq = {};
     if (deck_clock_server(rpc, lk, in, out, &rq))
         return mun_error_up();
+#if DECK_DEBUG
+    fprintf(stderr, "[%u] %u: request\n", rq.time, rq.pid);
+#endif
     return mun_vec_insert(&lk->queue, deck_bisect(lk, rq), &rq);
 }
 
 static int deck_remote_release(struct nero *rpc, struct deck *lk, struct romp *in, struct romp *out) {
+    uint8_t cancel = 0;
     struct deck_request rq = {};
-    if (deck_clock_server(rpc, lk, in, out, &rq))
+    if (deck_clock_server(rpc, lk, in, out, &rq) || romp_decode(in, "u1", &cancel))
         return mun_error_up();
+#if DECK_DEBUG
+    fprintf(stderr, "[%u] %u: %s\n", rq.time, rq.pid, cancel ? "cancel" : "release");
+#endif
     unsigned i = mun_vec_find(&lk->queue, it, it->pid == rq.pid);
     if (i == lk->queue.size)
-        return mun_error(nero_protocol, "pid %u did not request this lock", rq.pid);
+        return mun_error(nero_protocol, "%u: %u did not request this lock", lk->pid, rq.pid);
     return mun_vec_erase(&lk->queue, i, 1), deck_maybe_wakeup(lk);
 }
 
 static int deck_release_first(struct deck *lk, uint32_t i) {
     uint32_t time = lk->time;
+    uint8_t cancel = i != lk->rpcs.size;
     struct deck_request srq = {lk->pid, ++lk->time};
+#if DECK_DEBUG
+    fprintf(stderr, "[%u] %u: %s\n", srq.time, srq.pid, cancel ? "cancel" : "release");
+#endif
     while (i--) {
-        if (nero_call(lk->rpcs.data[i].rpc, lk->fname_release.data, "u4 u4", srq.pid, srq.time, "u4", &time))
+        if (nero_call(lk->rpcs.data[i].rpc, lk->fname_release.data, "u4 u4 u1", srq.pid, srq.time, cancel, "u4", &time))
             return mun_error_up();
-        srq.time = lk->time = (time > lk->time ? time : lk->time) + 1;
+        lk->time = (time > lk->time ? time : lk->time) + 1;
     }
     return mun_ok;
 }
@@ -111,11 +123,14 @@ void deck_del(struct deck *lk, struct nero *rpc) {
 }
 
 int deck_acquire(struct deck *lk) {
-    while (!deck_is_acquired_by_this(lk)) {
+    while (!deck_is_acquired_by_this(lk) || lk->state) {
         if (lk->state & DECK_CANCELLED)
             return cone_cancel(cone);
         if (!(lk->state & DECK_REQUESTED)) {
             struct deck_request srq = {lk->pid, ++lk->time};
+        #if DECK_DEBUG
+            fprintf(stderr, "[%u] %u: request\n", srq.time, srq.pid);
+        #endif
             if (mun_vec_append(&lk->queue, &srq))
                 return mun_error_up();
             lk->state |= DECK_REQUESTED;
@@ -127,13 +142,16 @@ int deck_acquire(struct deck *lk) {
                     lk->state &= ~DECK_REQUESTED;
                     return mun_error_up();
                 } else
-                    srq.time = lk->time = (time > lk->time ? time : lk->time) + 1;
+                    lk->time = (time > lk->time ? time : lk->time) + 1;
             }
             if (deck_maybe_wakeup(lk))
                 return mun_error_up();
         } else if (cone_wait(&lk->wake))
             return mun_error_up();
     }
+#if DECK_DEBUG
+    fprintf(stderr, "[%u] %u: acquire\n", lk->time, lk->pid);
+#endif
     return mun_ok;
 }
 
