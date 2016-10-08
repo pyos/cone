@@ -32,6 +32,7 @@ for ((i = 0; i < $1; i++)); do
     ports=("${ports[@]}" "$port")
     children=("${children[@]}" "$!")
 done
+echo "all nodes online, press Ctrl+C to stop"
 for ((i = 0; i < "${#children[@]}"; i++)); do
     wait -n "${children[@]}" || finish_all $?
 done
