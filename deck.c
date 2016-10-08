@@ -135,33 +135,28 @@ void deck_del(struct deck *lk, struct nero *rpc) {
 }
 
 int deck_acquire(struct deck *lk) {
-    if (deck_is_acquired_by_this(lk))
-        return mun_ok;
-    if (lk->state & DECK_CANCELLED)
-        return cone_cancel(cone);
-    if (!(lk->state & DECK_REQUESTED)) {
-        struct deck_request srq = {lk->pid, ++lk->time};
-        if (mun_vec_append(&lk->queue, &srq))
-            return mun_error_up();
-        lk->state |= DECK_REQUESTED;
-        for (uint32_t i = 0; i < lk->rpcs.size; i++) {
-            if (nero_call(lk->rpcs.data[i].rpc, lk->fname_request.data, "u4 u4", srq.pid, srq.time, "")) {
-                mun_vec_erase(&lk->queue, deck_bisect(lk, srq), 1);
-                deck_kill(lk, i);
-                deck_release_first(lk, i);
-                lk->state &= ~DECK_REQUESTED;
+    while (!deck_is_acquired_by_this(lk)) {
+        if (lk->state & DECK_CANCELLED)
+            return cone_cancel(cone);
+        if (!(lk->state & DECK_REQUESTED)) {
+            struct deck_request srq = {lk->pid, ++lk->time};
+            if (mun_vec_append(&lk->queue, &srq))
                 return mun_error_up();
+            lk->state |= DECK_REQUESTED;
+            for (uint32_t i = 0; i < lk->rpcs.size; i++) {
+                if (nero_call(lk->rpcs.data[i].rpc, lk->fname_request.data, "u4 u4", srq.pid, srq.time, "")) {
+                    mun_vec_erase(&lk->queue, deck_bisect(lk, srq), 1);
+                    deck_kill(lk, i);
+                    deck_release_first(lk, i);
+                    lk->state &= ~DECK_REQUESTED;
+                    return mun_error_up();
+                }
             }
-        }
-        if (deck_maybe_wakeup(lk))
+            if (deck_maybe_wakeup(lk))
+                return mun_error_up();
+        } else if (cone_wait(&lk->wake))
             return mun_error_up();
-        if (deck_is_acquired_by_this(lk))
-            return mun_ok;
     }
-    if (cone_wait(&lk->wake))
-        return mun_error_up();
-    if (lk->state & DECK_CANCELLED)
-        return cone_cancel(cone);
     return mun_ok;
 }
 
