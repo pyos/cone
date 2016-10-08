@@ -12,27 +12,13 @@ struct deck_nero
     struct nero *rpc;
 };
 
-static int deck_request_lt(struct deck_request a, struct deck_request b) {
-    return a.time < b.time || (a.time == b.time && a.pid < b.pid);
-}
-
 static size_t deck_bisect(struct deck *lk, struct deck_request rq) {
-    size_t left = 0, right = lk->queue.size;
-    while (left != right) {
-        size_t mid = (right + left) / 2;
-        if (deck_request_lt(rq, lk->queue.data[mid]))
-            right = mid;
-        else
-            left = mid + 1;
-    }
-    return left;
+    return mun_vec_bisect(&lk->queue, it, rq.time < it->time || (rq.time == it->time && rq.pid < it->pid));
 }
 
 static int deck_maybe_wakeup(struct deck *lk) {
-    if (lk->state & DECK_REQUESTED && lk->queue.data[0].pid == lk->pid) {
-        lk->state &= ~DECK_REQUESTED;
-        return cone_event_emit(&lk->wake);
-    }
+    if (lk->state & DECK_REQUESTED && lk->queue.data[0].pid == lk->pid)
+        return lk->state &= ~DECK_REQUESTED, cone_event_emit(&lk->wake);
     return mun_ok;
 }
 
@@ -42,12 +28,7 @@ static int deck_clock_server(struct nero *rpc, struct deck *lk, struct romp in, 
     if (lk->time < rq->time)
         lk->time = rq->time;
     lk->time++;
-    for (unsigned int i = 0; i < lk->rpcs.size; i++) {
-        if (lk->rpcs.data[i].rpc == rpc) {
-            lk->rpcs.data[i].pid = rq->pid;
-            break;
-        }
-    }
+    lk->rpcs.data[mun_vec_find(&lk->rpcs, it, it->rpc == rpc)].pid = rq->pid;
     return romp_encode(out, "u4", lk->time);
 }
 
@@ -62,10 +43,10 @@ static int deck_remote_release(struct nero *rpc, struct deck *lk, struct romp *i
     struct deck_request rq = {};
     if (deck_clock_server(rpc, lk, *in, out, &rq))
         return mun_error_up();
-    for (unsigned i = 0; i < lk->queue.size; i++)
-        if (lk->queue.data[i].pid == rq.pid)
-            return mun_vec_erase(&lk->queue, i, 1), deck_maybe_wakeup(lk);
-    return mun_error(nero_protocol, "pid %u did not request this lock", rq.pid);
+    unsigned i = mun_vec_find(&lk->queue, it, it->pid == rq.pid);
+    if (i == lk->queue.size)
+        return mun_error(nero_protocol, "pid %u did not request this lock", rq.pid);
+    return mun_vec_erase(&lk->queue, i, 1), deck_maybe_wakeup(lk);
 }
 
 static void deck_kill(struct deck *lk, uint32_t i) {
@@ -120,19 +101,13 @@ int deck_add(struct deck *lk, struct nero *rpc) {
 }
 
 void deck_del(struct deck *lk, struct nero *rpc) {
-    for (unsigned i = 0; i < lk->rpcs.size; i++) {
-        if (lk->rpcs.data[i].rpc == rpc) {
-            nero_del(rpc, lk->fname_request.data);
-            nero_del(rpc, lk->fname_release.data);
-            mun_vec_erase(&lk->rpcs, i, 1);
-            uint32_t pid = lk->rpcs.data[i].pid;
-            if (pid == lk->pid)
-                break;
-            for (unsigned j = 0; j < lk->queue.size; j++)
-                if (lk->queue.data[j].pid == pid)
-                    mun_vec_erase(&lk->queue, j, 1);
-        }
-    }
+    unsigned i = mun_vec_find(&lk->rpcs, it, it->rpc == rpc);
+    uint32_t pid = lk->rpcs.data[i].pid;
+    nero_del(rpc, lk->fname_request.data);
+    nero_del(rpc, lk->fname_release.data);
+    mun_vec_erase(&lk->rpcs, i, 1);
+    if (pid != lk->pid)
+        mun_vec_erase(&lk->queue, mun_vec_find(&lk->queue, it, it->pid == pid), 1);
 }
 
 int deck_acquire(struct deck *lk) {

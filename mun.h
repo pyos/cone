@@ -128,9 +128,7 @@ static inline int mun_vec_splice_s(size_t stride, struct mun_vec *vec, size_t i,
 }
 
 static inline void mun_vec_erase_s(size_t stride, struct mun_vec *vec, size_t i, size_t n) {
-    if (i + n == vec->size)
-        vec->size -= n;
-    else if (i)
+    if (i)
         mun_vec_shift_s(stride, vec, i + n, -(int)n);
     else {
         vec->data  += n * stride;
@@ -149,3 +147,20 @@ static inline void mun_vec_erase_s(size_t stride, struct mun_vec *vec, size_t i,
 #define mun_vec_insert(vec, i, elem)      mun_vec_splice(vec, i, elem, 1)
 #define mun_vec_append(vec, elem)         mun_vec_extend(vec, elem, 1)
 #define mun_vec_erase(vec, i, n)          mun_vec_erase_s(mun_vec_strided(vec), i, n)
+
+#define mun_vec_find(vec, var, eqexpr) ({                                     \
+    unsigned __i = 0;                                                         \
+    const __typeof__(*(vec)->data) *var;                                      \
+    while (__i != (vec)->size && (var = &(vec)->data[__i], !(eqexpr))) __i++; \
+    __i;                                                                      \
+})
+
+#define mun_vec_bisect(vec, var, ltexpr) ({        \
+    unsigned __L = 0, __R = (vec)->size, __M;      \
+    const __typeof__(*(vec)->data) *var;           \
+    while (__L != __R) {                           \
+        var = &(vec)->data[__M = (__L + __R) / 2]; \
+        if (ltexpr) __R = __M; else __L = __M + 1; \
+    }                                              \
+    __L;                                           \
+})

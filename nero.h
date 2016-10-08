@@ -37,9 +37,7 @@ static inline int nero_add(struct nero *n, const struct nero_closure *cbs, size_
 }
 
 static inline void nero_del(struct nero *n, const char *name) {
-    for (unsigned i = 0; i < n->exported.size; i++)
-        if (!strcmp(name, n->exported.data[i].name))
-            return (void) mun_vec_erase(&n->exported, i, 1);
+    mun_vec_erase(&n->exported, mun_vec_find(&n->exported, it, !strcmp(name, it->name)), 1);
 }
 
 void nero_fini     (struct nero *);

@@ -121,29 +121,24 @@ static int nero_on_frame(struct nero *n, enum nero_frame_type type, uint32_t rqi
             const char *function = (const char *)data;
             struct romp in = mun_vec_init_borrow(sep + 1, size - (sep - data) - 1);
             struct romp out = {};
-            for (unsigned i = 0; i < n->exported.size; i++) {
-                if (strcmp(function, n->exported.data[i].name) == 0) {
-                    if (n->exported.data[i].code(n, n->exported.data[i].data, &in, &out))
-                        return mun_vec_fini(&out), nero_write_response_error(n, rqid);
-                    if (nero_write_response(n, rqid, &out))
-                        return mun_vec_fini(&out), mun_error_up();
-                    return mun_vec_fini(&out), mun_ok;
-                }
-            }
-            mun_error(nero_not_exported, "%s", function);
-            return nero_write_response_error(n, rqid);
+            unsigned i = mun_vec_find(&n->exported, it, !strcmp(function, it->name));
+            if (i == n->exported.size)
+                return mun_error(nero_not_exported, "%s", function), nero_write_response_error(n, rqid);
+            if (n->exported.data[i].code(n, n->exported.data[i].data, &in, &out))
+                return mun_vec_fini(&out), nero_write_response_error(n, rqid);
+            if (nero_write_response(n, rqid, &out))
+                return mun_vec_fini(&out), mun_error_up();
+            return mun_vec_fini(&out), mun_ok;
         }
         case NERO_FRAME_RESPONSE:
         case NERO_FRAME_RESPONSE_ERROR: {
-            for (unsigned i = 0; i < n->queued.size; i++) {
-                if (n->queued.data[i]->id == rqid) {
-                    struct nero_future *fut = n->queued.data[i];
-                    mun_vec_erase(&n->queued, i, 1);
-                    fut->rr = type == NERO_FRAME_RESPONSE_ERROR ? NERO_RETURN_ERROR : NERO_RETURN_OK;
-                    if (mun_vec_extend(&fut->data, data, size) || cone_event_emit(&fut->wake))
-                        return mun_error_up();
-                    return mun_ok;
-                }
+            unsigned i = mun_vec_find(&n->queued, it, rqid == (*it)->id);
+            if (i != n->queued.size) {
+                struct nero_future *fut = n->queued.data[i];
+                mun_vec_erase(&n->queued, i, 1);
+                fut->rr = type == NERO_FRAME_RESPONSE_ERROR ? NERO_RETURN_ERROR : NERO_RETURN_OK;
+                if (mun_vec_extend(&fut->data, data, size) || cone_event_emit(&fut->wake))
+                    return mun_error_up();
             }
             return mun_ok;
         }

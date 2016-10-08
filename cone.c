@@ -21,43 +21,28 @@ int cone_event_add(struct cone_event *ev, struct cone_closure f) {
 }
 
 void cone_event_del(struct cone_event *ev, struct cone_closure f) {
-    for (unsigned i = 0; i < ev->size; i++)
-        if (ev->data[i].code == f.code && ev->data[i].data == f.data)
-            return (void)mun_vec_erase(ev, i, 1);
+    unsigned i = mun_vec_find(ev, it, it->code == f.code && it->data == f.data);
+    if (i != ev->size)
+        mun_vec_erase(ev, i, 1);
 }
 
 int cone_event_emit(struct cone_event *ev) {
-    while (ev->size)
+    for (; ev->size; mun_vec_erase(ev, 0, 1))
         if (ev->data[0].code(ev->data[0].data))
             return mun_error_up();
-        else
-            mun_vec_erase(ev, 0, 1);
     return mun_ok;
 }
 
 struct cone_event_timed { mun_usec time; struct cone_closure f; };
-
 struct cone_event_schedule mun_vec(struct cone_event_timed);
-
-static size_t cone_event_schedule_find(struct cone_event_schedule *ev, mun_usec t) {
-    size_t left = 0, right = ev->size;
-    while (left != right) {
-        size_t mid = (right + left) / 2;
-        if (t < ev->data[mid].time)
-            right = mid;
-        else
-            left = mid + 1;
-    }
-    return left;
-}
 
 static int cone_event_schedule_add(struct cone_event_schedule *ev, mun_usec at, struct cone_closure f) {
     struct cone_event_timed t = {at, f};
-    return mun_vec_insert(ev, cone_event_schedule_find(ev, at), &t);
+    return mun_vec_insert(ev, mun_vec_bisect(ev, it, at < it->time), &t);
 }
 
 static void cone_event_schedule_del(struct cone_event_schedule *ev, mun_usec at, struct cone_closure f) {
-    for (size_t i = cone_event_schedule_find(ev, at); i-- && ev->data[i].time == at; )
+    for (size_t i = mun_vec_bisect(ev, it, at < it->time); i-- && ev->data[i].time == at; )
         if (ev->data[i].f.code == f.code && ev->data[i].f.data == f.data)
             return (void)mun_vec_erase(ev, i, 1);
 }
