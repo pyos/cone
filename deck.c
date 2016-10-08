@@ -36,7 +36,7 @@ static int deck_maybe_wakeup(struct deck *lk) {
     return mun_ok;
 }
 
-static int deck_decode_request(struct nero *rpc, struct deck *lk, struct romp in, struct deck_request *rq) {
+static int deck_clock_server(struct nero *rpc, struct deck *lk, struct romp in, struct romp *out, struct deck_request *rq) {
     if (romp_decode(in, "u4 u4", &rq->pid, &rq->time))
         return mun_error_up();
     if (lk->time < rq->time)
@@ -48,21 +48,19 @@ static int deck_decode_request(struct nero *rpc, struct deck *lk, struct romp in
             break;
         }
     }
-    return mun_ok;
+    return romp_encode(out, "u4", lk->time);
 }
 
 static int deck_remote_request(struct nero *rpc, struct deck *lk, struct romp *in, struct romp *out) {
-    (void)out;
     struct deck_request rq = {};
-    if (deck_decode_request(rpc, lk, *in, &rq))
+    if (deck_clock_server(rpc, lk, *in, out, &rq))
         return mun_error_up();
     return mun_vec_insert(&lk->queue, deck_bisect(lk, rq), &rq);
 }
 
 static int deck_remote_release(struct nero *rpc, struct deck *lk, struct romp *in, struct romp *out) {
-    (void)out;
     struct deck_request rq = {};
-    if (deck_decode_request(rpc, lk, *in, &rq))
+    if (deck_clock_server(rpc, lk, *in, out, &rq))
         return mun_error_up();
     for (unsigned i = 0; i < lk->queue.size; i++)
         if (lk->queue.data[i].pid == rq.pid)
@@ -75,10 +73,13 @@ static void deck_kill(struct deck *lk, uint32_t i) {
 }
 
 static void deck_release_first(struct deck *lk, uint32_t i) {
+    uint32_t time = lk->time;
     struct deck_request srq = {lk->pid, ++lk->time};
     while (i--)
-        if (nero_call(lk->rpcs.data[i].rpc, lk->fname_release.data, "u4 u4", srq.pid, srq.time, ""))
+        if (nero_call(lk->rpcs.data[i].rpc, lk->fname_release.data, "u4 u4", srq.pid, srq.time, "u4", &time))
             deck_kill(lk, i);
+        else
+            srq.time = lk->time = (time > lk->time ? time : lk->time) + 1;
 }
 
 void deck_fini(struct deck *lk) {
@@ -144,13 +145,15 @@ int deck_acquire(struct deck *lk) {
                 return mun_error_up();
             lk->state |= DECK_REQUESTED;
             for (uint32_t i = 0; i < lk->rpcs.size; i++) {
-                if (nero_call(lk->rpcs.data[i].rpc, lk->fname_request.data, "u4 u4", srq.pid, srq.time, "")) {
+                uint32_t time = lk->time;
+                if (nero_call(lk->rpcs.data[i].rpc, lk->fname_request.data, "u4 u4", srq.pid, srq.time, "u4", &time)) {
                     mun_vec_erase(&lk->queue, deck_bisect(lk, srq), 1);
                     deck_kill(lk, i);
                     deck_release_first(lk, i);
                     lk->state &= ~DECK_REQUESTED;
                     return mun_error_up();
-                }
+                } else
+                    srq.time = lk->time = (time > lk->time ? time : lk->time) + 1;
             }
             if (deck_maybe_wakeup(lk))
                 return mun_error_up();
