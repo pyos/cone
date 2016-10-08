@@ -1,4 +1,4 @@
-.PHONY: clean tests tests/%
+.PHONY: clean tests tests/% tests/deck
 .PRECIOUS: obj/%.o obj/tests/%
 
 main: obj/main.o obj/mun.o obj/cone.o obj/cold.o obj/romp.o obj/nero.o obj/deck.o
@@ -8,6 +8,9 @@ tests: tests/cone tests/romp tests/nero
 
 tests/%: obj/tests/%
 	$<
+
+tests/deck: tests/deck.bash main
+	bash $< 10
 
 CCMD = $(CC) -std=c11 -I. -Wall -Wextra -fPIC $(CFLAGS) -D_POSIX_C_SOURCE=200809L
 
@@ -20,4 +23,4 @@ obj/%.o: %.c cone.h mun.h romp.h nero.h deck.h
 	$(CCMD) -c $< -o $@
 
 clean:
-	rm -rf obj
+	rm -rf obj main stress-test-data
