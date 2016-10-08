@@ -156,8 +156,10 @@ static int nero_call_wait(struct nero *n, struct nero_future *fut, const char *f
     if (cone_wait(&fut->wake))
         return mun_error_up();
     switch (fut->rr) {
-        case NERO_RETURN_OK:
-            return romp_decode_var(fut->data, va_arg(args, const char *), args);
+        case NERO_RETURN_OK: {
+            struct romp data = fut->data;
+            return romp_decode_var(&data, va_arg(args, const char *), args);
+        }
         case NERO_RETURN_ERROR:
             return nero_restore_error(fut->data.data, fut->data.size, function);
         case NERO_RETURN_CANCEL:

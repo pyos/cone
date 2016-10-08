@@ -163,7 +163,7 @@ int romp_encode_var(struct romp *out, const char *sign, va_list args) {
     return 0;
 }
 
-int romp_decode_var(struct romp in, const char *sign, va_list args) {
+int romp_decode_var(struct romp *in, const char *sign, va_list args) {
     int64_t ir = 0;
     uint64_t ur = 0;
     for (struct romp_sign s; *sign;) {
@@ -171,7 +171,7 @@ int romp_decode_var(struct romp in, const char *sign, va_list args) {
             case ROMP_SIGN_NONE:
                 return mun_error_up();
             case ROMP_SIGN_UINT:
-                if (romp_decode_uint(&in, &ur, s.stride))
+                if (romp_decode_uint(in, &ur, s.stride))
                     return mun_error_up();
                 switch (s.stride) {
                     case 1: *va_arg(args, uint8_t  *) = ur; break;
@@ -181,7 +181,7 @@ int romp_decode_var(struct romp in, const char *sign, va_list args) {
                 }
                 break;
             case ROMP_SIGN_INT:
-                if (romp_decode_int(&in, &ir, s.stride))
+                if (romp_decode_int(in, &ir, s.stride))
                     return mun_error_up();
                 switch (s.stride) {
                     case 1: *va_arg(args, int8_t  *) = ir; break;
@@ -191,11 +191,11 @@ int romp_decode_var(struct romp in, const char *sign, va_list args) {
                 }
                 break;
             case ROMP_SIGN_DOUBLE:
-                if (romp_decode_double(&in, va_arg(args, double *)))
+                if (romp_decode_double(in, va_arg(args, double *)))
                     return mun_error_up();
                 break;
             case ROMP_SIGN_VEC:
-                if (romp_decode_vec(&in, &sign, va_arg(args, struct mun_vec *)))
+                if (romp_decode_vec(in, &sign, va_arg(args, struct mun_vec *)))
                     return mun_error_up();
                 break;
             case ROMP_SIGN_STRUCT:
@@ -213,7 +213,7 @@ int romp_encode(struct romp *out, const char *sign, ...) {
     return ret;
 }
 
-int romp_decode(struct romp in, const char *sign, ...) {
+int romp_decode(struct romp *in, const char *sign, ...) {
     va_list args;
     va_start(args, sign);
     int ret = romp_decode_var(in, sign, args);

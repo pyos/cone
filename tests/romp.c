@@ -11,7 +11,8 @@ static int test_romp_primitive() {
         return mun_error_up();
     if (out.size != 18)
         return mun_error(assert, "2 + 8 + 8 = 18, not %u", out.size);
-    if (romp_decode(out, "i2 u8 f", &i2dec, &u8dec, &fdec))
+    struct romp in = out;
+    if (romp_decode(&in, "i2 u8 f", &i2dec, &u8dec, &fdec))
         return mun_error_up();
     if (i2dec != i2 || u8dec != u8 || fdec != f)
         return mun_error(assert, "primitives were corrupted during coding");
@@ -25,7 +26,8 @@ static int test_romp_vec() {
     struct romp out = mun_vec_init_static(char, 16);
     if (romp_encode(&out, "vi1", &original))
         return mun_error_up();
-    if (romp_decode(out, "vi1", &decoded))
+    struct romp in = out;
+    if (romp_decode(&in, "vi1", &decoded))
         return mun_error_up();
     if (!mun_vec_eq(&original, &decoded))
         return mun_error(assert, "vector was corrupted during coding");
@@ -44,7 +46,8 @@ static int test_romp_vec_vec() {
     struct romp out = mun_vec_init_static(char, 32);
     if (romp_encode(&out, "vvi1", &original))
         return mun_error_up();
-    if (romp_decode(out, "vvi1", &decoded))
+    struct romp in = out;
+    if (romp_decode(&in, "vvi1", &decoded))
         return mun_error_up();
     if (decoded.size != original.size)
         return mun_error(assert, "sizes of outer vectors differ");
