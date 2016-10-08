@@ -111,11 +111,12 @@ static inline int mun_vec_reserve_s(size_t stride, struct mun_vec *vec, size_t n
     }
     if (vec->flags & MUN_VEC_STATIC)
         return mun_error(memory, "static vector of %u cannot fit %zu", vec->cap, vec->size + n);
-    size_t ncap = vec->cap + (n > vec->cap ? n : vec->cap);
-    void *r = realloc(vec->data - vec->shift * stride, stride * ncap);
-    if (r == NULL)
-        return mun_error(memory, "%zu x %zu bytes", ncap, stride);
-    *vec = (struct mun_vec){.data = r, .size = vec->size, .cap = ncap};
+    struct mun_vec v2 = {.size = vec->size, .cap = vec->cap + (n > vec->cap ? n : vec->cap)};
+    if (!(v2.data = malloc(v2.cap * stride)))
+        return mun_error(memory, "%u x %zu bytes", v2.cap, stride);
+    memmove(v2.data, vec->data, vec->size * stride);
+    free(vec->data - vec->shift * stride);
+    *vec = v2;
     return mun_ok;
 }
 
