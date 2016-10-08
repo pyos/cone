@@ -103,8 +103,11 @@ void deck_del(struct deck *lk, struct nero *rpc) {
     nero_del(rpc, lk->fname_request.data);
     nero_del(rpc, lk->fname_release.data);
     mun_vec_erase(&lk->rpcs, i, 1);
-    if (pid != lk->pid)
-        mun_vec_erase(&lk->queue, mun_vec_find(&lk->queue, it, it->pid == pid), 1);
+    if (pid != lk->pid) {
+        unsigned j = mun_vec_find(&lk->queue, it, it->pid == pid);
+        if (j != lk->queue.size)
+            mun_vec_erase(&lk->queue, j, 1);
+    }
 }
 
 int deck_acquire(struct deck *lk) {
