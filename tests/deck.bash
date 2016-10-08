@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 root=obj/tests/deck
 addrs=()
+ports=()
 children=()
 
 if [ "$#" != "1" ]; then
@@ -14,17 +15,23 @@ touch "$root/mutex"
 
 function finish_all() {
     kill "${children[@]}" 2>/dev/null
+    for ((i = 0; i < "${#children[@]}"; i++)); do
+        mv "$root/port-${ports[i]}.stderr" "$root/${children[i]}.stderr"
+    done
     exit $1
 }
 
 trap "finish_all -2" SIGINT
 trap "finish_all -15" SIGTERM
-for ((i=1; i<=$1; i++)); do
+for ((i = 0; i < $1; i++)); do
     port="3200${#addrs[@]}"
-    ./main "$1" ":$port" "${addrs[@]}" >"$root/mutex" 2>"$root/$port.stderr" &
-    echo ":$port = $!"
+    ./main "$1" ":$port" "${addrs[@]}" >>"$root/mutex" 2>"$root/port-$port.stderr" &
+    echo "port $port = pid $!"
     sleep 0.1
     addrs=("${addrs[@]}" "127.0.0.1:$port")
+    ports=("${ports[@]}" "$port")
     children=("${children[@]}" "$!")
 done
-for ((i=1; i<="${#children[@]}"; i++)); do wait -n "${children[@]}" || finish_all $?; done
+for ((i = 0; i < "${#children[@]}"; i++)); do
+    wait -n "${children[@]}" || finish_all $?
+done
