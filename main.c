@@ -2,11 +2,13 @@
 #include "cone.h"
 #include "nero.h"
 #include "deck.h"
+#include <fcntl.h>
 #include <netdb.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 
@@ -45,18 +47,26 @@ static int parse_arg(const char *arg, int server) {
 
 struct node
 {
-    int socket;
+    struct nero rpc;
     struct deck *deck;
     struct cone_event *fail;
 };
 
 int handle_connection_inner(struct node *n) {
-    struct nero rpc = {.fd = n->socket};
-    if (deck_add(n->deck, &rpc))
-        return nero_fini(&rpc), mun_error_up();
-    if (nero_run(&rpc))
-        return deck_del(n->deck, &rpc), nero_fini(&rpc), mun_error_up();
-    return deck_del(n->deck, &rpc), nero_fini(&rpc), mun_ok;
+    if (nero_run(&n->rpc))
+        return deck_del(n->deck, &n->rpc), mun_error_up();
+    return deck_del(n->deck, &n->rpc), mun_ok;
+}
+
+int write_status(struct deck *lk, int fd) {
+    if (!deck_is_acquired_by_this(lk))
+        return mun_error(assert, "must be holding the lock to do this");
+    if (flock(fd, LOCK_EX | LOCK_NB))
+        return mun_error_os();
+    dprintf(fd, "%u - %u\n", lk->pid, lk->time);
+    if (flock(fd, LOCK_UN))
+        return mun_error_os();
+    return mun_ok;
 }
 
 int interface_command(struct node *n, const char *cmd) {
@@ -67,7 +77,7 @@ int interface_command(struct node *n, const char *cmd) {
                "    - \033[1mhelp\033[0m ...... show this message;\n"
                "    - \033[1mexit\033[0m ...... teminate the process;\n"
                "    - \033[1mlock\033[0m ...... acquire the Lamport lock;\n"
-               "    - \033[1mwrite <F>\033[0m . write current state to file named F;\n"
+               "    - \033[1mwrite <F>\033[0m . write current state to file named <F>;\n"
                "    - \033[1munlock\033[0m .... release the Lamport lock.\n"
                "\033[33;1m # notes\033[0m:\n"
                "    - Ctrl+D doesn't work because this program uses async I/O, but\n"
@@ -82,10 +92,25 @@ int interface_command(struct node *n, const char *cmd) {
         return deck_acquire(n->deck);
     if (!strcmp(cmd, "unlock"))
         return deck_release(n->deck);
+    if (!strncmp(cmd, "write ", 6)) {
+        int fd = open(cmd + 6, O_CREAT | O_APPEND | O_WRONLY, 0644);
+        if (fd < 0)
+            return mun_error_os();
+        if (write_status(n->deck, fd))
+            return close(fd), mun_error_up();
+        return close(fd), mun_ok;
+    }
     return mun_error(input, "unknown command");
 }
 
 int interface_inner(struct node *n) {
+    if (!isatty(1)) {
+        while (1) {
+            if (deck_acquire(n->deck) || write_status(n->deck, 1) || deck_release(n->deck))
+                return mun_error_up();
+        }
+    }
+
     if (cone_unblock(0))
         return mun_error_up();
     char stkbuf[1024];
@@ -152,9 +177,9 @@ int comain(int argc, const char **argv) {
 
     struct node nodes[n];
     for (int i = 0; i < n; i++)
-        nodes[i] = (struct node){-1, &d, &fail};
+        nodes[i] = (struct node){{}, &d, &fail};
     for (int i = 0; i < known; i++)
-        if ((nodes[i].socket = parse_arg(argv[i + 3], 0)) < 0)
+        if ((nodes[i].rpc.fd = parse_arg(argv[i + 3], 0)) < 0)
             return mun_error_up();
 
     if (n > known) {
@@ -165,11 +190,14 @@ int comain(int argc, const char **argv) {
             return mun_error_os();
         while (n > known) {
             fprintf(stderr, "\033[33;1m # main\033[0m: awaiting %d more connection(s)\n", n - known);
-            if ((nodes[known].socket = accept(srv, NULL, NULL)) < 0)
+            if ((nodes[known].rpc.fd = accept(srv, NULL, NULL)) < 0)
                 return mun_error_os();
             known++;
         }
     }
+    for (int i = 0; i < known; i++)
+        if (deck_add(&d, &nodes[i].rpc))
+            return mun_error_up();
 
     struct cone *children[known + 1];
     memset(children, 0, sizeof(struct cone *) * (known + 1));
@@ -180,13 +208,13 @@ int comain(int argc, const char **argv) {
             goto failall;
         }
     }
-    struct node fake = {0, &d, &fail};
+    struct node fake = {{}, &d, &fail};
     if ((children[known] = cone(&interface, &fake)) == NULL)
         mun_error_show("interface failed to start due to", NULL), ret = 1;
     else
         cone_wait(&fail);
 failall:
-    for (int i = 0; i < known + 1; i++) {
+    for (int i = known + 1; i--;) {
         if (children[i]) {
             cone_cancel(children[i]);
             if (cone_join(children[i]) && mun_last_error()->code != mun_errno_cancelled)
@@ -194,5 +222,7 @@ failall:
         }
     }
     deck_fini(&d);
+    for (int i = 0; i < known; i++)
+        nero_fini(&nodes[i].rpc);
     return ret;
 }
