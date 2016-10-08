@@ -1,10 +1,3 @@
-#ifdef export
-static int pass() { return mun_ok; }
-static int fail() { return mun_error(assert, "ok"); }
-export { "pass", &pass }
-     , { "fail", &fail }
-#else
-
 #include "../mun.h"
 #include "../cone.h"
 #include <stdio.h>
@@ -29,4 +22,3 @@ int comain()
     }
     return 0;
 }
-#endif
