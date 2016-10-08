@@ -15,7 +15,7 @@ enum
     mun_errno_input = mun_errno_os | EINVAL,
 };
 
-static int parse_arg(const char *arg, int (*connector)(int, const struct sockaddr *, socklen_t)) {
+static int parse_arg(const char *arg, int server) {
     char *port = strchr(arg, ':');
     if (port == NULL || !port[1])
         return mun_error(input, "`%s`: no port specified", arg);
@@ -24,30 +24,23 @@ static int parse_arg(const char *arg, int (*connector)(int, const struct sockadd
     int ret;
     struct addrinfo *addrs = NULL;
     struct addrinfo hints = {};
+    hints.ai_flags = server ? AI_PASSIVE : 0;
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
-    if ((ret = getaddrinfo(arg, port, &hints, &addrs)))
+    if ((ret = getaddrinfo(*arg ? arg : NULL, port, &hints, &addrs)))
         return mun_error(input, "`%s`: getaddrinfo: %s", arg, gai_strerror(ret));
 
     for (struct addrinfo *p = addrs; p; p = p->ai_next) {
         int sk = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
         if (sk < 0)
             continue;
-        if (setsockopt(sk, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int)) < 0
-         || connector(sk, p->ai_addr, p->ai_addrlen) < 0) {
-            close(sk);
-            continue;
-        }
-        if (cone_unblock(sk)) {
-            close(sk);
-            freeaddrinfo(addrs);
-            return mun_error_up();
-        }
-        freeaddrinfo(addrs);
-        return sk;
+        if (!setsockopt(sk, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int))
+         && !(server ? bind(sk, p->ai_addr, p->ai_addrlen) : connect(sk, p->ai_addr, p->ai_addrlen))
+         && !cone_unblock(sk))
+            return freeaddrinfo(addrs), sk;
+        close(sk);
     }
-    freeaddrinfo(addrs);
-    return mun_error(input, "`%s`: connection failed", arg);
+    return freeaddrinfo(addrs), mun_error(input, "`%s`: connection failed", arg);
 }
 
 struct node
@@ -143,11 +136,11 @@ int comain(int argc, const char **argv) {
     struct deck d = {.pid = getpid(), .name = "flock"};
 
     if (argc < 3) {
-        fprintf(stderr, "\033[33;1m # usage\033[0m: %s N :port [host:port [...]]\n", argv[0]);
-        fprintf(stderr, "          \033[8m%s\033[28m ^  ^     ^---- addresses of previously started nodes\n", argv[0]);
+        fprintf(stderr, "\033[33;1m # usage\033[0m: %s N [iface]:port [host:port [...]]\n", argv[0]);
+        fprintf(stderr, "          \033[8m%s\033[28m ^  ^            ^---- addresses of previously started nodes\n", argv[0]);
         fprintf(stderr, "          \033[8m%s\033[28m |  \\---- where to bind\n", argv[0]);
         fprintf(stderr, "          \033[8m%s\033[28m \\---- total number of expected nodes\n", argv[0]);
-        return 2;
+        return mun_error(input, "not enough arguments");
     }
     char *end;
     int n = strtol(argv[1], &end, 10) - 1;
@@ -161,17 +154,17 @@ int comain(int argc, const char **argv) {
     for (int i = 0; i < n; i++)
         nodes[i] = (struct node){-1, &d, &fail};
     for (int i = 0; i < known; i++)
-        if ((nodes[i].socket = parse_arg(argv[i + 3], &connect)) < 0)
+        if ((nodes[i].socket = parse_arg(argv[i + 3], 0)) < 0)
             return mun_error_up();
 
     if (n > known) {
-        int srv = parse_arg(argv[2], &bind);
+        int srv = parse_arg(argv[2], 1);
         if (srv < 0)
             return mun_error_up();
         if (listen(srv, 127) < 0)
             return mun_error_os();
         while (n > known) {
-            fprintf(stderr, "\033[33;1m # main\033[0m: awaiting %d more connection(s) on %s\n", n - known, argv[2]);
+            fprintf(stderr, "\033[33;1m # main\033[0m: awaiting %d more connection(s)\n", n - known);
             if ((nodes[known].socket = accept(srv, NULL, NULL)) < 0)
                 return mun_error_os();
             known++;
