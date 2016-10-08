@@ -64,9 +64,7 @@ int write_status(struct deck *lk, int fd) {
     if (flock(fd, LOCK_EX | LOCK_NB))
         return mun_error_os();
     dprintf(fd, "%u - %u\n", lk->pid, lk->time);
-    if (flock(fd, LOCK_UN))
-        return mun_error_os();
-    return mun_ok;
+    return flock(fd, LOCK_UN) ? mun_error_os() : mun_ok;
 }
 
 int interface_command(struct node *n, const char *cmd) {
@@ -104,12 +102,9 @@ int interface_command(struct node *n, const char *cmd) {
 }
 
 int interface_inner(struct node *n) {
-    if (!isatty(1)) {
-        while (1) {
-            if (deck_acquire(n->deck) || write_status(n->deck, 1) || deck_release(n->deck))
-                return mun_error_up();
-        }
-    }
+    while (!isatty(1))
+        if (deck_acquire(n->deck) || write_status(n->deck, 1) || deck_release(n->deck))
+            return mun_error_up();
 
     if (cone_unblock(0))
         return mun_error_up();
@@ -188,12 +183,11 @@ int comain(int argc, const char **argv) {
             return mun_error_up();
         if (listen(srv, 127) < 0)
             return mun_error_os();
-        while (n > known) {
+        if (isatty(2))
             fprintf(stderr, "\033[33;1m # main\033[0m: awaiting %d more connection(s)\n", n - known);
+        for (; n > known; known++)
             if ((nodes[known].rpc.fd = accept(srv, NULL, NULL)) < 0)
                 return mun_error_os();
-            known++;
-        }
     }
     for (int i = 0; i < known; i++)
         if (deck_add(&d, &nodes[i].rpc))
