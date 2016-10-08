@@ -1,4 +1,5 @@
 .PHONY: clean tests tests/% tests/deck
+.PRECIOUS: obj/%.o obj/tests/%
 
 main: obj/main.o obj/mun.o obj/cone.o obj/cold.o obj/romp.o obj/nero.o obj/deck.o
 	$(CCMD) $^ -o $@ -ldl
