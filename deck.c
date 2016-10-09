@@ -15,7 +15,7 @@ struct deck_nero
 };
 
 static size_t deck_bisect(struct deck *lk, struct deck_request rq) {
-    return mun_vec_bisect(&lk->queue, it, rq.time < it->time || (rq.time == it->time && rq.pid < it->pid));
+    return mun_vec_bisect(&lk->queue, rq.time < _->time || (rq.time == _->time && rq.pid < _->pid));
 }
 
 static int deck_maybe_wakeup(struct deck *lk) {
@@ -30,7 +30,7 @@ static int deck_clock_server(struct nero *rpc, struct deck *lk, struct romp *in,
     if (lk->time < rq->time)
         lk->time = rq->time;
     lk->time++;
-    lk->rpcs.data[mun_vec_find(&lk->rpcs, it, it->rpc == rpc)].pid = rq->pid;
+    lk->rpcs.data[mun_vec_find(&lk->rpcs, _->rpc == rpc)].pid = rq->pid;
     return romp_encode(out, "u4", lk->time);
 }
 
@@ -52,7 +52,7 @@ static int deck_remote_release(struct nero *rpc, struct deck *lk, struct romp *i
 #if DECK_DEBUG
     fprintf(stderr, "[%" PRIu64 "|%u] %u: %s\n", mun_usec_now(), lk->time, rq.pid, cancel ? "cancel" : "release");
 #endif
-    unsigned i = mun_vec_find(&lk->queue, it, it->pid == rq.pid);
+    unsigned i = mun_vec_find(&lk->queue, _->pid == rq.pid);
     if (i == lk->queue.size)
         return mun_error(nero_protocol, "%u: %u did not request this lock", lk->pid, rq.pid);
     return mun_vec_erase(&lk->queue, i, 1), deck_maybe_wakeup(lk);
@@ -111,13 +111,13 @@ int deck_add(struct deck *lk, struct nero *rpc) {
 }
 
 void deck_del(struct deck *lk, struct nero *rpc) {
-    unsigned i = mun_vec_find(&lk->rpcs, it, it->rpc == rpc);
+    unsigned i = mun_vec_find(&lk->rpcs, _->rpc == rpc);
     uint32_t pid = lk->rpcs.data[i].pid;
     nero_del(rpc, lk->fname_request.data);
     nero_del(rpc, lk->fname_release.data);
     mun_vec_erase(&lk->rpcs, i, 1);
     if (pid != lk->pid) {
-        unsigned j = mun_vec_find(&lk->queue, it, it->pid == pid);
+        unsigned j = mun_vec_find(&lk->queue, _->pid == pid);
         if (j != lk->queue.size)
             mun_vec_erase(&lk->queue, j, 1);
     }

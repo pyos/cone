@@ -121,7 +121,7 @@ static int nero_on_frame(struct nero *n, enum nero_frame_type type, uint32_t rqi
             const char *function = (const char *)data;
             struct romp in = mun_vec_init_borrow(sep + 1, size - (sep - data) - 1);
             struct romp out = {};
-            unsigned i = mun_vec_find(&n->exported, it, !strcmp(function, it->name));
+            unsigned i = mun_vec_find(&n->exported, !strcmp(function, _->name));
             if (i == n->exported.size)
                 return mun_error(nero_not_exported, "%s", function), nero_write_response_error(n, rqid);
             if (n->exported.data[i].code(n, n->exported.data[i].data, &in, &out))
@@ -132,7 +132,7 @@ static int nero_on_frame(struct nero *n, enum nero_frame_type type, uint32_t rqi
         }
         case NERO_FRAME_RESPONSE:
         case NERO_FRAME_RESPONSE_ERROR: {
-            unsigned i = mun_vec_find(&n->queued, it, rqid == (*it)->id);
+            unsigned i = mun_vec_find(&n->queued, rqid == (*_)->id);
             if (i != n->queued.size) {
                 struct nero_future *fut = n->queued.data[i];
                 mun_vec_erase(&n->queued, i, 1);
