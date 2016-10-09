@@ -18,8 +18,6 @@ struct cone_closure
 };
 
 struct cone_event mun_vec(struct cone_closure);
-int  cone_event_add(struct cone_event *, struct cone_closure);
-void cone_event_del(struct cone_event *, struct cone_closure);
 int  cone_event_emit(struct cone_event *);
 
 extern _Thread_local struct cone * volatile cone;
