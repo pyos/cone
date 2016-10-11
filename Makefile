@@ -10,7 +10,7 @@ tests/%: obj/tests/%
 	$<
 
 tests/deck: tests/deck.bash main
-	bash tests/deck.bash 10 && python tests/deck.py
+	bash tests/deck.bash 10 && echo && python tests/deck.py
 
 CCMD = $(CC) -std=c11 -I. -Wall -Wextra -fPIC $(CFLAGS) -D_POSIX_C_SOURCE=200809L
 
