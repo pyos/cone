@@ -2,9 +2,6 @@
 #if !defined(MUN_U128_NATIVE) && defined(__GNUC__) && defined(__x86_64__)
 #define MUN_U128_NATIVE 1
 #endif
-#ifndef MUN_ANSI_TERM
-#define MUN_ANSI_TERM 1
-#endif
 
 #include <time.h>
 #include <errno.h>

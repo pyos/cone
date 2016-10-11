@@ -1,21 +1,7 @@
 #include "mun.h"
-#if MUN_ANSI_TERM
-#define ANSI_ITALIC "\033[5m"
-#define ANSI_RED    "\033[31;1m"
-#define ANSI_YELLOW "\033[33;1m"
-#define ANSI_BLUE   "\033[34;1m"
-#define ANSI_RESET  "\033[0m"
-#else
-#define ANSI_ITALIC
-#define ANSI_RED
-#define ANSI_YELLOW
-#define ANSI_BLUE
-#define ANSI_RESET
-#endif
-
 #include <stdio.h>
 #include <stdarg.h>
-#include <string.h>
+#include <unistd.h>
 
 #if __APPLE__ && __MACH__
 static clock_serv_t mun_mach_clock;
@@ -65,12 +51,17 @@ int mun_error_up_at(const char *file, const char *func, unsigned line) {
     return -1;
 }
 
+static const char
+    *mun_error_fmt_head[2] = {" # mun: %s error %u (%s): %s\n",
+                              "\033[1;31m # mun:\033[0m %s error \033[1;31m%u\033[0m \033[5m(%s)\033[0m: %s\n"},
+    *mun_error_fmt_line[2] = {"   %3u. %s() (%s:%u)\n",
+                              "\033[1;33m   %3u.\033[0m %s() \033[5m(%s:%u)\033[0m\n"};
+
 void mun_error_show(const char *prefix, const struct mun_error *err) {
+    int ansi = isatty(fileno(stderr)) && !strncmp(getenv("TERM"), "xterm", 5);
     if (err == NULL)
         err = &e;
-    fprintf(stderr, ANSI_RED " # mun:" ANSI_RESET " %s error " ANSI_RED "%u" ANSI_RESET " "
-                    ANSI_ITALIC "(%s)" ANSI_RESET ": %s\n", prefix, err->code & ~mun_errno_os, err->name, err->text);
+    fprintf(stderr, mun_error_fmt_head[ansi], prefix, err->code & ~mun_errno_os, err->name, err->text);
     for (unsigned i = 0; i < err->stacklen; i++)
-        fprintf(stderr, "      " ANSI_YELLOW "@ " ANSI_RESET "%s() " ANSI_ITALIC "(%s:%u)" ANSI_RESET "\n",
-                        err->stack[i].func, err->stack[i].file, err->stack[i].line);
+        fprintf(stderr, mun_error_fmt_line[ansi], i + 1, err->stack[i].func, err->stack[i].file, err->stack[i].line);
 }
