@@ -32,6 +32,6 @@ for ((i = 0; i < $1; i++)); do
     ports=("${ports[@]}" "$port")
     children=("${children[@]}" "$!")
 done
-echo "all nodes online, press Ctrl+C to stop"
-while kill -0 "${children[@]}" 2>/dev/null; do sleep 1; done
-finish_all 1
+echo "all nodes online, press Ctrl+C to stop or wait 10 seconds"
+for i in {1..10}; do kill -0 "${children[@]}" 2>/dev/null && sleep 1; done
+finish_all 0
