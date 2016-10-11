@@ -5,62 +5,59 @@
 static int test_counter_add(struct nero *rpc, uint32_t *n, struct romp *in, struct romp *out) {
     (void)rpc;
     int32_t incr = 0;
-    if (romp_decode(in, "i4", &incr) || romp_encode(out, "i4", *n += incr))
-        return mun_error_up();
-    return mun_ok;
+    return romp_decode(in, "i4", &incr) || romp_encode(out, "i4", *n += incr) MUN_RETHROW;
 }
 
 static int test_nero_server(struct nero *conn) {
     int32_t counter = 0;
     struct nero_closure inc = nero_closure("add", &test_counter_add, &counter);
-    if (nero_add(conn, &inc, 1) || nero_run(conn))
-        return nero_fini(conn), mun_error_up();
-    return nero_fini(conn), mun_ok;
+    int ret = nero_add(conn, &inc, 1) || nero_run(conn) MUN_RETHROW;
+    return nero_fini(conn), ret;
 }
 
 static int test_nero_ok_call(struct nero *conn) {
     int32_t result = 0;
-    return nero_call(conn, "add", "i4", 1, "i4", &result);
+    return nero_call(conn, "add", "i4", 1, "i4", &result) MUN_RETHROW;
 }
 
 static int test_nero_bad_call(struct nero *conn) {
     int32_t result = 0;
-    if (!nero_call(conn, "add", "", "i4", &result))
+    if (!nero_call(conn, "add", "", "i4", &result) MUN_RETHROW)
         return mun_error(assert, "nero_call should have failed");
-    if (mun_last_error()->code == mun_errno_romp_protocol)
-        return mun_ok;
-    return mun_error_up();
+    if (mun_last_error()->code != mun_errno_romp_protocol)
+        return -1;
+    return 0;
 }
 
 static int test_nero_nonexistent_call(struct nero *conn) {
-    if (!nero_call(conn, "something", "", ""))
+    if (!nero_call(conn, "something", "", "") MUN_RETHROW)
         return mun_error(assert, "nero_call should have failed");
-    if (mun_last_error()->code == mun_errno_nero_not_exported)
-        return mun_ok;
-    return mun_error_up();
+    if (mun_last_error()->code != mun_errno_nero_not_exported)
+        return -1;
+    return 0;
 }
 
 static int test_nero_run(int (*af)(struct nero *), int (*bf)(struct nero *)) {
     int fds[2];
-    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds))
-        return mun_error_os();
-    if (cone_unblock(fds[0]) || cone_unblock(fds[1]))
-        return close(fds[0]), close(fds[1]), mun_error_up();
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) MUN_RETHROW_OS)
+        return -1;
+    if (cone_unblock(fds[0]) || cone_unblock(fds[1]) MUN_RETHROW)
+        return close(fds[0]), close(fds[1]), 0;
     struct nero an = {.fd = fds[0]};
     struct nero bn = {.fd = fds[1]};
     struct cone *a = cone(af, &an);
     struct cone *b = cone(bf, &bn);
-    if (cone_join(a))
-        return cone_decref(b), nero_fini(&an), nero_fini(&bn), mun_error_up();
-    if (cone_join(b))
-        return nero_fini(&an), nero_fini(&bn), mun_error_up();
-    return nero_fini(&an), nero_fini(&bn), mun_ok;
+    if (cone_join(a) MUN_RETHROW)
+        return cone_decref(b), nero_fini(&an), nero_fini(&bn), -1;
+    if (cone_join(b) MUN_RETHROW)
+        return nero_fini(&an), nero_fini(&bn), -1;
+    return nero_fini(&an), nero_fini(&bn), 0;
 }
 
 static int test_nero_client_impl(struct nero *n) {
     struct cone *u = cone(&test_nero_server, n);
-    if (test_nero_ok_call(n))
-        return cone_cancel(u), cone_decref(u), mun_error_up();
+    if (test_nero_ok_call(n) MUN_RETHROW)
+        return cone_cancel(u), cone_decref(u), -1;
     cone_yield();
     return cone_cancel(u), cone_join(u);
 }
@@ -91,8 +88,8 @@ static int test_nero_many_clients() {
 
 static int test_nero_invalid_client(struct nero *n) {
     struct cone *u = cone(&test_nero_server, n);
-    if (test_nero_bad_call(n))
-        return cone_cancel(u), cone_decref(u), mun_error_up();
+    if (test_nero_bad_call(n) MUN_RETHROW)
+        return cone_cancel(u), cone_decref(u), -1;
     return cone_cancel(u), cone_join(u);
 }
 
@@ -102,8 +99,8 @@ static int test_nero_invalid_args() {
 
 static int test_nero_confused_client(struct nero *n) {
     struct cone *u = cone(&test_nero_server, n);
-    if (test_nero_nonexistent_call(n))
-        return cone_cancel(u), cone_decref(u), mun_error_up();
+    if (test_nero_nonexistent_call(n) MUN_RETHROW)
+        return cone_cancel(u), cone_decref(u), -1;
     return cone_cancel(u), cone_join(u);
 }
 

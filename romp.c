@@ -44,7 +44,7 @@ static struct romp_sign romp_sign(const char **sign) {
 
 static int romp_encode_uint(struct romp *out, uint64_t in, unsigned width) {
     uint8_t packed[] = { in >> 56, in >> 48, in >> 40, in >> 32, in >> 24, in >> 16, in >> 8, in };
-    return mun_vec_extend(out, &packed[8 - width], width);
+    return mun_vec_extend(out, &packed[8 - width], width) MUN_RETHROW;
 }
 
 static int romp_decode_uint(struct romp *in, uint64_t *out, unsigned width) {
@@ -60,7 +60,7 @@ static int romp_decode_uint(struct romp *in, uint64_t *out, unsigned width) {
     }
 #undef X
     mun_vec_erase(in, 0, width);
-    return mun_ok;
+    return 0;
 }
 
 static int romp_encode_int(struct romp *out, int64_t in, int width) {
@@ -69,10 +69,10 @@ static int romp_encode_int(struct romp *out, int64_t in, int width) {
 
 static int romp_decode_int(struct romp *in, int64_t *out, int width) {
     uint64_t u = 0;
-    if (romp_decode_uint(in, &u, width))
-        return mun_error_up();
+    if (romp_decode_uint(in, &u, width) MUN_RETHROW)
+        return -1;
     *out = u >= 0x80000000000000ull ? -(int64_t)~u - 1 : (int64_t)u;
-    return mun_ok;
+    return 0;
 }
 
 static int romp_encode_double(struct romp *out, double in) {
@@ -82,49 +82,47 @@ static int romp_encode_double(struct romp *out, double in) {
 
 static int romp_decode_double(struct romp *in, double *d) {
     union { double f; uint64_t d; } u = {.d = 0};
-    if (romp_decode_uint(in, &u.d, 8))
-        return mun_error_up();
+    if (romp_decode_uint(in, &u.d, 8) MUN_RETHROW)
+        return -1;
     *d = u.f;
-    return mun_ok;
+    return 0;
 }
 
 static int romp_encode_vec(struct romp *out, const char **sign, const struct mun_vec *in) {
     struct romp_sign s = romp_sign(sign);
-    if (!s.sign || romp_encode_uint(out, in->size, 4))
-        return mun_error_up();
+    if (!s.sign || romp_encode_uint(out, in->size, 4) MUN_RETHROW)
+        return -1;
     if (s.sign == ROMP_SIGN_VEC) {
         const char *signreset = *sign;
         const struct romp_nested_vec *v = (const struct romp_nested_vec *) in;
         for (size_t i = 0; i < v->size; i++)
-            if (*sign = signreset, romp_encode_vec(out, sign, &v->data[i]))
-                return mun_error_up();
-    } else if (mun_vec_extend(out, in->data, in->size * s.stride))
-        return mun_error_up();
-    return mun_ok;
+            if (*sign = signreset, romp_encode_vec(out, sign, &v->data[i]) MUN_RETHROW)
+                return -1;
+        return 0;
+    }
+    return mun_vec_extend(out, in->data, in->size * s.stride) MUN_RETHROW;
 }
 
 static int romp_decode_vec(struct romp *in, const char **sign, struct mun_vec *out) {
     uint64_t size = 0;
     struct romp_sign s = romp_sign(sign);
-    if (!s.sign || romp_decode_uint(in, &size, 4))
-        return mun_error_up();
+    if (!s.sign || romp_decode_uint(in, &size, 4) MUN_RETHROW)
+        return -1;
     if (out->size)
         return mun_error(assert, "non-empty vector passed to romp_decode");
-    if (mun_vec_reserve_s(s.stride, out, size))
-        return mun_error_up();
+    if (mun_vec_reserve_s(s.stride, out, size) MUN_RETHROW)
+        return -1;
     if (s.sign == ROMP_SIGN_VEC) {
+        struct romp_nested_vec *v = (struct romp_nested_vec *) out;
         for (const char *signreset = *sign; size--; ) {
-            if (out->flags & MUN_VEC_STATIC)
-                out->size++;
-            else
-                mun_vec_splice_s(s.stride, out, out->size, &(struct mun_vec){}, 1);
-            if (*sign = signreset, romp_decode_vec(in, sign, (struct mun_vec *)&out->data[(out->size - 1) * s.stride]))
-                return mun_vec_fini_s(s.stride, out), mun_error_up();
+            mun_vec_append(v, &(struct mun_vec){});
+            if (*sign = signreset, romp_decode_vec(in, sign, &v->data[v->size - 1]) MUN_RETHROW)
+                return mun_vec_fini(v), -1;
         }
     } else
         mun_vec_splice_s(s.stride, out, 0, in->data, size);
     mun_vec_erase(in, 0, s.stride * size);
-    return mun_ok;
+    return 0;
 }
 
 int romp_encode_var(struct romp *out, const char *sign, va_list args) {
@@ -133,28 +131,28 @@ int romp_encode_var(struct romp *out, const char *sign, va_list args) {
     for (struct romp_sign s; *sign;) {
         switch ((s = romp_sign(&sign)).sign) {
             case ROMP_SIGN_NONE:
-                return mun_error_up();
+                return -1;
             case ROMP_SIGN_UINT:
                 ur = s.stride == 4 ? va_arg(args, uint32_t)
                    : s.stride == 8 ? va_arg(args, uint64_t)
                    : va_arg(args, unsigned);
-                if (romp_encode_uint(out, ur, s.stride))
-                    return mun_error_up();
+                if (romp_encode_uint(out, ur, s.stride) MUN_RETHROW)
+                    return -1;
                 break;
             case ROMP_SIGN_INT:
                 ir = s.stride == 4 ? va_arg(args, int32_t)
                    : s.stride == 8 ? va_arg(args, int64_t)
                    : va_arg(args, unsigned);
-                if (romp_encode_int(out, ir, s.stride))
-                    return mun_error_up();
+                if (romp_encode_int(out, ir, s.stride) MUN_RETHROW)
+                    return -1;
                 break;
             case ROMP_SIGN_DOUBLE:
-                if (romp_encode_double(out, va_arg(args, double)))
-                    return mun_error_up();
+                if (romp_encode_double(out, va_arg(args, double)) MUN_RETHROW)
+                    return -1;
                 break;
             case ROMP_SIGN_VEC:
-                if (romp_encode_vec(out, &sign, va_arg(args, const struct mun_vec *)))
-                    return mun_error_up();
+                if (romp_encode_vec(out, &sign, va_arg(args, const struct mun_vec *)) MUN_RETHROW)
+                    return -1;
                 break;
             case ROMP_SIGN_STRUCT:
                 return mun_error(not_implemented, "romp_encode_struct");
@@ -169,10 +167,10 @@ int romp_decode_var(struct romp *in, const char *sign, va_list args) {
     for (struct romp_sign s; *sign;) {
         switch ((s = romp_sign(&sign)).sign) {
             case ROMP_SIGN_NONE:
-                return mun_error_up();
+                return -1;
             case ROMP_SIGN_UINT:
-                if (romp_decode_uint(in, &ur, s.stride))
-                    return mun_error_up();
+                if (romp_decode_uint(in, &ur, s.stride) MUN_RETHROW)
+                    return -1;
                 switch (s.stride) {
                     case 1: *va_arg(args, uint8_t  *) = ur; break;
                     case 2: *va_arg(args, uint16_t *) = ur; break;
@@ -181,8 +179,8 @@ int romp_decode_var(struct romp *in, const char *sign, va_list args) {
                 }
                 break;
             case ROMP_SIGN_INT:
-                if (romp_decode_int(in, &ir, s.stride))
-                    return mun_error_up();
+                if (romp_decode_int(in, &ir, s.stride) MUN_RETHROW)
+                    return -1;
                 switch (s.stride) {
                     case 1: *va_arg(args, int8_t  *) = ir; break;
                     case 2: *va_arg(args, int16_t *) = ir; break;
@@ -191,12 +189,12 @@ int romp_decode_var(struct romp *in, const char *sign, va_list args) {
                 }
                 break;
             case ROMP_SIGN_DOUBLE:
-                if (romp_decode_double(in, va_arg(args, double *)))
-                    return mun_error_up();
+                if (romp_decode_double(in, va_arg(args, double *)) MUN_RETHROW)
+                    return -1;
                 break;
             case ROMP_SIGN_VEC:
-                if (romp_decode_vec(in, &sign, va_arg(args, struct mun_vec *)))
-                    return mun_error_up();
+                if (romp_decode_vec(in, &sign, va_arg(args, struct mun_vec *)) MUN_RETHROW)
+                    return -1;
                 break;
             case ROMP_SIGN_STRUCT:
                 return mun_error(not_implemented, "romp_decode_struct");
