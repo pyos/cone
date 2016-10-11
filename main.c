@@ -14,7 +14,7 @@
 
 enum
 {
-    mun_errno_input = mun_errno_os | EINVAL,
+    mun_errno_input = mun_errno_custom + 251,
 };
 
 static int parse_arg(const char *arg, int server) {
