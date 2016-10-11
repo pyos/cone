@@ -146,9 +146,10 @@ void deck_del(struct deck *lk, struct nero *rpc) {
     }
 }
 
-static int deck_release_impl(struct deck *lk, int cancelling) {
+static int deck_release_impl(struct deck *lk, const char *msg) {
     struct deck_request crq = {lk->pid, ++lk->time};
-    deck_debug_msg(lk->time, lk->pid, "%s", cancelling ? "cancel" : "release");
+    deck_debug_msg(lk->time, lk->pid, "%s", msg);
+    lk->state &= ~DECK_ACKED;
     mun_vec_erase(&lk->queue, mun_vec_find(&lk->queue, _->pid == lk->pid), 1);
     return deck_call_all(lk, &deck_remote_release, crq);
 }
@@ -164,7 +165,7 @@ int deck_acquire(struct deck *lk) {
             deck_debug_msg(lk->time, lk->pid, "request");
             lk->state |= DECK_REQUESTED;
             if (deck_call_all(lk, &deck_remote_request, arq))
-                return lk->state &= ~DECK_REQUESTED, deck_release_impl(lk, 1), -1;
+                return lk->state &= ~DECK_REQUESTED, deck_release_impl(lk, "cancel"), -1;
             lk->state |= DECK_ACKED;
             if (deck_wake(lk) MUN_RETHROW)
                 return -1;
@@ -178,5 +179,5 @@ int deck_acquire(struct deck *lk) {
 int deck_release(struct deck *lk) {
     if (!deck_acquired(lk))
         return mun_error(assert, "not holding this lock");
-    return --lk->state & DECK_RECURSION ? 0 : deck_release_impl(lk, 0);
+    return --lk->state & DECK_RECURSION ? 0 : deck_release_impl(lk, "release");
 }
