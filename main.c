@@ -57,7 +57,7 @@ struct node
 };
 
 int write_status(struct deck *lk, int fd) {
-    if (!deck_is_acquired_by_this(lk))
+    if (!deck_acquired(lk))
         return mun_error(assert, "must be holding the lock to do this");
     if (flock(fd, LOCK_EX | LOCK_NB) MUN_RETHROW_OS)
         return -1;

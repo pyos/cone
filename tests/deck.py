@@ -64,8 +64,8 @@ if __name__ == '__main__':
                 requested[rqpid].add(pid)
             elif kind == 'cancel':
                 ok = False
-                requested[rqpid].discard(pid)
-                print(t, rqpid, 'relinquished its request from', pid)
+                requested[rqpid].clear()
+                print(t, rqpid, 'relinquished its request')
             else:
                 assert False, '{}?'.format(kind)
     print('lock is consistent' if ok else 'lock is inconsistent')

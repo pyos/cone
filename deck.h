@@ -4,12 +4,6 @@
 #include "romp.h"
 #include "nero.h"
 
-struct deck_request
-{
-    uint32_t pid;
-    uint32_t time;
-};
-
 struct deck
 {
     uint32_t pid;
@@ -23,16 +17,9 @@ struct deck
     struct mun_vec(struct deck_request) queue;
 };
 
-static inline int deck_is_acquired(struct deck *d) {
-    return !!d->queue.size;
-}
-
-static inline int deck_is_acquired_by_this(struct deck *d) {
-    return deck_is_acquired(d) && d->queue.data[0].pid == d->pid;
-}
-
 void deck_fini    (struct deck *);
 int  deck_add     (struct deck *, struct nero *);
 void deck_del     (struct deck *, struct nero *);
 int  deck_acquire (struct deck *);
 int  deck_release (struct deck *);
+int  deck_acquired(struct deck *d);

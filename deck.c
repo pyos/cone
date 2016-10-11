@@ -14,6 +14,20 @@ struct deck_nero
     struct nero *rpc;
 };
 
+struct deck_request
+{
+    uint32_t pid;
+    uint32_t time;
+};
+
+struct deck_reqptr
+{
+    struct deck *lk;
+    struct nero *rpc;
+    const char *method;
+    struct deck_request rq;
+};
+
 static size_t deck_bisect(struct deck *lk, struct deck_request rq) {
     return mun_vec_bisect(&lk->queue, rq.time < _->time || (rq.time == _->time && rq.pid < _->pid));
 }
@@ -24,19 +38,16 @@ static int deck_maybe_wakeup(struct deck *lk) {
     return 0;
 }
 
-static int deck_clock_server(struct nero *rpc, struct deck *lk, struct romp *in, struct romp *out, struct deck_request *rq) {
+static int deck_remote_clock(struct nero *rpc, struct deck *lk, struct romp *in, struct romp *out, struct deck_request *rq) {
     if (romp_decode(in, "u4 u4", &rq->pid, &rq->time) MUN_RETHROW)
         return -1;
-    if (lk->time < rq->time)
-        lk->time = rq->time;
-    lk->time++;
     lk->rpcs.data[mun_vec_find(&lk->rpcs, _->rpc == rpc)].pid = rq->pid;
-    return romp_encode(out, "u4", lk->time);
+    return romp_encode(out, "u4", lk->time = (rq->time > lk->time ? rq->time : lk->time) + 1);
 }
 
 static int deck_remote_request(struct nero *rpc, struct deck *lk, struct romp *in, struct romp *out) {
     struct deck_request rq = {};
-    if (deck_clock_server(rpc, lk, in, out, &rq) MUN_RETHROW)
+    if (deck_remote_clock(rpc, lk, in, out, &rq) MUN_RETHROW)
         return -1;
 #if DECK_DEBUG
     fprintf(stderr, "[%" PRIu64 "|%u] %u: request\n", mun_usec_now(), lk->time, rq.pid);
@@ -45,12 +56,11 @@ static int deck_remote_request(struct nero *rpc, struct deck *lk, struct romp *i
 }
 
 static int deck_remote_release(struct nero *rpc, struct deck *lk, struct romp *in, struct romp *out) {
-    uint8_t cancel = 0;
     struct deck_request rq = {};
-    if (deck_clock_server(rpc, lk, in, out, &rq) || romp_decode(in, "u1", &cancel) MUN_RETHROW)
+    if (deck_remote_clock(rpc, lk, in, out, &rq) MUN_RETHROW)
         return -1;
 #if DECK_DEBUG
-    fprintf(stderr, "[%" PRIu64 "|%u] %u: %s\n", mun_usec_now(), lk->time, rq.pid, cancel ? "cancel" : "release");
+    fprintf(stderr, "[%" PRIu64 "|%u] %u: release\n", mun_usec_now(), lk->time, rq.pid);
 #endif
     unsigned i = mun_vec_find(&lk->queue, _->pid == rq.pid);
     if (i == lk->queue.size)
@@ -58,22 +68,32 @@ static int deck_remote_release(struct nero *rpc, struct deck *lk, struct romp *i
     return mun_vec_erase(&lk->queue, i, 1), deck_maybe_wakeup(lk);
 }
 
-static int deck_release_first(struct deck *lk, uint32_t i) {
-    uint32_t time = lk->time;
-    uint8_t cancel = i != lk->rpcs.size;
-    struct deck_request srq = {lk->pid, ++lk->time};
-#if DECK_DEBUG
-    fprintf(stderr, "[%" PRIu64 "|%u] %u: %s\n", mun_usec_now(), srq.time, srq.pid, cancel ? "cancel" : "release");
-#endif
-    while (i--) {  // TODO execute queries concurrently (cone()+cone_join())
-        if (nero_call(lk->rpcs.data[i].rpc, lk->fname_release.data, "u4 u4 u1", srq.pid, srq.time, cancel, "u4", &time) MUN_RETHROW)
-            return -1;
-        lk->time = (time > lk->time ? time : lk->time) + 1;
-    }
+static int deck_call_one(struct deck_reqptr *rp) {
+    uint32_t time = 0;
+    if (nero_call(rp->rpc, rp->method, "u4 u4", rp->rq.pid, rp->rq.time, "u4", &time) MUN_RETHROW)
+        return -1;
+    rp->lk->time = (time > rp->lk->time ? time : rp->lk->time) + 1;
     return 0;
 }
 
+static int deck_call_all(struct deck *lk, const char *method, struct deck_request rq) {
+    int fail = 0;
+    struct deck_reqptr reqs[lk->rpcs.size];
+    for (unsigned i = 0; i < lk->rpcs.size; i++)
+        reqs[i] = (struct deck_reqptr){lk, lk->rpcs.data[i].rpc, method, rq};
+    struct cone *tasks[lk->rpcs.size];
+    for (unsigned i = 0; i < lk->rpcs.size; i++)
+        tasks[i] = cone(deck_call_one, &reqs[i]);
+    for (unsigned i = 0; i < lk->rpcs.size; i++)
+        if (fail)
+            cone_decref(tasks[i]);
+        else
+            fail = cone_join(tasks[i]) MUN_RETHROW;
+    return fail;
+}
+
 void deck_fini(struct deck *lk) {
+    lk->state |= DECK_CANCELLED;
     for (unsigned i = 0; i < lk->rpcs.size; i++) {
         nero_del(lk->rpcs.data[i].rpc, lk->fname_request.data);
         nero_del(lk->rpcs.data[i].rpc, lk->fname_release.data);
@@ -82,7 +102,6 @@ void deck_fini(struct deck *lk) {
     mun_vec_fini(&lk->fname_release);
     mun_vec_fini(&lk->rpcs);
     mun_vec_fini(&lk->queue);
-    lk->state |= DECK_CANCELLED;
     cone_event_emit(&lk->wake);
 }
 
@@ -123,28 +142,33 @@ void deck_del(struct deck *lk, struct nero *rpc) {
     }
 }
 
+int deck_acquired(struct deck *d) {
+    return d->queue.size && d->queue.data[0].pid == d->pid;
+}
+
+static int deck_release_impl(struct deck *lk, int cancelling) {
+    struct deck_request crq = {lk->pid, ++lk->time};
+#if DECK_DEBUG
+    fprintf(stderr, "[%" PRIu64 "|%u] %u: %s\n", mun_usec_now(), lk->time, lk->pid, cancelling ? "cancel" : "release");
+#endif
+    mun_vec_erase(&lk->queue, mun_vec_find(&lk->queue, _->pid == lk->pid), 1);
+    return deck_call_all(lk, lk->fname_release.data, crq);
+}
+
 int deck_acquire(struct deck *lk) {
-    while (!deck_is_acquired_by_this(lk) || lk->state) {
+    while (!deck_acquired(lk) || lk->state) {
         if (lk->state & DECK_CANCELLED)
             return cone_cancel(cone);
         if (!(lk->state & DECK_REQUESTED)) {
-            struct deck_request srq = {lk->pid, ++lk->time};
-        #if DECK_DEBUG
-            fprintf(stderr, "[%" PRIu64 "|%u] %u: request\n", mun_usec_now(), srq.time, srq.pid);
-        #endif
-            if (mun_vec_append(&lk->queue, &srq) MUN_RETHROW)
+            struct deck_request arq = {lk->pid, ++lk->time};
+            if (mun_vec_append(&lk->queue, &arq) MUN_RETHROW)
                 return -1;
+        #if DECK_DEBUG
+            fprintf(stderr, "[%" PRIu64 "|%u] %u: request\n", mun_usec_now(), lk->time, lk->pid);
+        #endif
             lk->state |= DECK_REQUESTED;
-            for (uint32_t i = 0; i < lk->rpcs.size; i++) {  // TODO execute queries concurrently (cone()+cone_join())
-                uint32_t time = lk->time;
-                if (nero_call(lk->rpcs.data[i].rpc, lk->fname_request.data, "u4 u4", srq.pid, srq.time, "u4", &time) MUN_RETHROW) {
-                    mun_vec_erase(&lk->queue, deck_bisect(lk, srq), 1);
-                    deck_release_first(lk, i);
-                    lk->state &= ~DECK_REQUESTED;
-                    return -1;
-                }
-                lk->time = (time > lk->time ? time : lk->time) + 1;
-            }
+            if (deck_call_all(lk, lk->fname_request.data, arq))
+                return lk->state &= ~DECK_REQUESTED, deck_release_impl(lk, 1), -1;
             if (deck_maybe_wakeup(lk) MUN_RETHROW)
                 return -1;
         } else if (cone_wait(&lk->wake) MUN_RETHROW)
@@ -158,8 +182,7 @@ int deck_acquire(struct deck *lk) {
 }
 
 int deck_release(struct deck *lk) {
-    if (!deck_is_acquired_by_this(lk))
+    if (!deck_acquired(lk))
         return mun_error(assert, "not holding this lock");
-    mun_vec_erase(&lk->queue, 0, 1);
-    return deck_release_first(lk, lk->rpcs.size);
+    return deck_release_impl(lk, 0);
 }
