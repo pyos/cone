@@ -11,7 +11,8 @@ enum deck_state
 {
     DECK_RECURSION = 0x00FFFFFFul,
     DECK_REQUESTED = 0x01000000ul,
-    DECK_CANCELLED = 0x02000000ul,
+    DECK_ACKED     = 0x02000000ul,
+    DECK_CANCELLED = 0x04000000ul,
 };
 
 struct deck_nero
@@ -48,15 +49,16 @@ void deck_fini(struct deck *lk) {
 }
 
 int deck_acquired(struct deck *lk) {
-    return lk->queue.size && lk->queue.data[0].pid == lk->pid;
+    return lk->state & DECK_ACKED && lk->queue.data[0].pid == lk->pid;
 }
 
-static int deck_notify_acquire(struct deck *lk) {
+static int deck_wake(struct deck *lk) {
     if (!(lk->state & DECK_REQUESTED) || !deck_acquired(lk))
         return 0;
+    lk->state &= ~DECK_REQUESTED;
     lk->time++;
     deck_debug_msg(lk->time, lk->pid, "acquire");
-    return lk->state &= ~DECK_REQUESTED, cone_event_emit(&lk->wake);
+    return cone_event_emit(&lk->wake);
 }
 
 static unsigned deck_bisect(struct deck *lk, struct deck_request rq) {
@@ -86,7 +88,8 @@ static int deck_remote_release(struct nero *rpc, struct deck *lk, struct romp *i
     if (i == lk->queue.size)
         return mun_error(nero_protocol, "%u: %u did not request this lock", lk->pid, rq.pid);
     deck_debug_msg(lk->time, rq.pid, "release");
-    return mun_vec_erase(&lk->queue, i, 1), deck_notify_acquire(lk);
+    mun_vec_erase(&lk->queue, i, 1);
+    return i == 0 ? deck_wake(lk) : 0;
 }
 
 static int deck_call_one(struct deck_reqptr *rp) {
@@ -170,7 +173,8 @@ int deck_acquire(struct deck *lk) {
             lk->state |= DECK_REQUESTED;
             if (deck_call_all(lk, lk->fname_request.data, arq))
                 return lk->state &= ~DECK_REQUESTED, deck_release_impl(lk, 1), -1;
-            if (deck_notify_acquire(lk) MUN_RETHROW)
+            lk->state |= DECK_ACKED;
+            if (deck_wake(lk) MUN_RETHROW)
                 return -1;
         } else if (cone_wait(&lk->wake) MUN_RETHROW)
             return -1;

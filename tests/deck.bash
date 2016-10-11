@@ -18,6 +18,7 @@ function finish_all() {
     for ((i = 0; i < "${#children[@]}"; i++)); do
         mv "$root/port-${ports[i]}.stderr" "$root/${children[i]}.stderr"
     done
+    echo "all nodes offline"
     exit $1
 }
 

@@ -35,7 +35,7 @@ if __name__ == '__main__':
             c[pid] = rtc, rqpid, kind
     ok = True
     held_by = None
-    requested = {pid: set() for pid in logs}
+    requested = {pid: {} for pid in logs}
     for ltc in sorted(unified):
         for pid, (rtc, rqpid, kind) in unified[ltc].items():
             t = time.strftime("%H:%M:%S", time.gmtime(rtc / 1000000)) + '|' + str(ltc)
@@ -46,9 +46,10 @@ if __name__ == '__main__':
                 if held_by == rqpid:
                     print(t, rqpid, 'recursively acquired the lock')
                     continue
-                if requested[rqpid] != set(logs):
+                rqd = {k for k, v in requested[rqpid].items() if v < ltc}
+                if rqd != set(logs):
                     ok = False
-                    print(t, rqpid, 'took the lock without asking', ', '.join(map(str, set(logs) - requested[rqpid])))
+                    print(t, rqpid, 'took the lock without asking', ', '.join(map(str, set(logs) - rqd)))
                 if held_by is not None:
                     ok = False
                     print(t, rqpid, 'took the lock held by', held_by)
@@ -61,11 +62,9 @@ if __name__ == '__main__':
                         print(t, pid, 'released the lock held by', held_by)
                     held_by = None
             elif kind == 'request':
-                requested[rqpid].add(pid)
+                requested[rqpid][pid] = ltc
             elif kind == 'cancel':
                 ok = False
                 requested[rqpid].clear()
                 print(t, rqpid, 'relinquished its request')
-            else:
-                assert False, '{}?'.format(kind)
     print('lock is consistent' if ok else 'lock is inconsistent')
