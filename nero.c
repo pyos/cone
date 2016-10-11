@@ -90,7 +90,8 @@ static int nero_write_response_error(struct nero *n, uint32_t rqid) {
     uint32_t nlen = strlen(err->name) + 1;
     uint32_t tlen = strlen(err->text) + 1;
     uint8_t buf[nlen + tlen + 4];
-    memcpy(buf, PACK(I32(err->code)));
+    uint8_t enccode[] = {I32(err->code)};
+    memcpy(buf, enccode, 4);
     memcpy(buf + 4, err->name, nlen);
     memcpy(buf + 4 + nlen, err->text, tlen);
     if (nero_write_header(n, NERO_FRAME_RESPONSE_ERROR, rqid, nlen + tlen + 4) MUN_RETHROW)
