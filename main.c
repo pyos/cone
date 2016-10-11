@@ -55,15 +55,15 @@ struct node
 int write_status(struct deck *lk, int fd) {
     if (!deck_is_acquired_by_this(lk))
         return mun_error(assert, "must be holding the lock to do this");
-    if (flock(fd, LOCK_EX | LOCK_NB))
-        return mun_error_os();
+    if (flock(fd, LOCK_EX | LOCK_NB) MUN_RETHROW_OS)
+        return -1;
     dprintf(fd, "%u - %u\n", lk->pid, lk->time);
-    return flock(fd, LOCK_UN) ? mun_error_os() : mun_ok;
+    return flock(fd, LOCK_UN) MUN_RETHROW_OS;
 }
 
 int interface_command(struct node *n, const char *cmd) {
     if (!cmd[0])
-        return mun_ok;
+        return 0;
     if (!strcmp(cmd, "help"))
         return printf("\033[33;1m # commands\033[0m:\n"
                "    - \033[1mhelp\033[0m ...... show this message;\n"
@@ -77,7 +77,7 @@ int interface_command(struct node *n, const char *cmd) {
                "    - local time (T) is only displayed right after entering a command.\n"
                "      If a message arrives while you decide what to do, the prompt\n"
                "      will \033[5mnot\033[0m update.\n"
-               "    - Any operation that does not touch the lock is instantaneous.\n"), mun_ok;
+               "    - Any operation that does not touch the lock is instantaneous.\n"), 0;
     if (!strcmp(cmd, "exit") || !strcmp(cmd, "quit"))
         return cone_cancel(cone);
     if (!strcmp(cmd, "lock"))
@@ -86,9 +86,9 @@ int interface_command(struct node *n, const char *cmd) {
         return deck_release(n->deck);
     if (!strncmp(cmd, "write ", 6)) {
         int fd = open(cmd + 6, O_CREAT | O_APPEND | O_WRONLY, 0644);
-        if (fd < 0)
-            return mun_error_os();
-        int ret = write_status(n->deck, fd);
+        if (fd < 0 MUN_RETHROW_OS)
+            return -1;
+        int ret = write_status(n->deck, fd) MUN_RETHROW_OS;
         return close(fd), ret;
     }
     return mun_error(input, "unknown command");
@@ -96,10 +96,10 @@ int interface_command(struct node *n, const char *cmd) {
 
 int interface_inner(struct node *n) {
     while (!isatty(1))
-        if (deck_acquire(n->deck) || write_status(n->deck, 1) || deck_release(n->deck))
-            return mun_error_up();
-    if (cone_unblock(0))
-        return mun_error_up();
+        if (deck_acquire(n->deck) || write_status(n->deck, 1) || deck_release(n->deck) MUN_RETHROW)
+            return -1;
+    if (cone_unblock(0) MUN_RETHROW)
+        return -1;
     struct mun_vec(char) buffer = mun_vec_init_static(char, 1024);
     while (1) {
         printf(" T=%u \033[34;1m>\033[0m ", n->deck->time);
@@ -110,13 +110,13 @@ int interface_inner(struct node *n) {
                 return mun_error(input, "command too long");
             ssize_t rd = read(0, buffer.data + buffer.size, 1024 - buffer.size);
             if (rd < 0)
-                return errno == ECANCELED ? mun_ok : mun_error_os();
+                return errno != ECANCELED MUN_RETHROW_OS;
             buffer.size += rd;
         } while ((eol = memchr(buffer.data, '\n', buffer.size)) == NULL);
         *eol++ = 0;
         if (interface_command(n, buffer.data)) {
             if (mun_last_error()->code == mun_errno_cancelled)
-                return mun_ok;
+                return 0;
             mun_error_show("command triggered", NULL);
         }
         mun_vec_erase(&buffer, 0, eol - buffer.data);
@@ -124,14 +124,14 @@ int interface_inner(struct node *n) {
 }
 
 int interface(struct node *n) {
-    int ret = interface_inner(n);
-    return cone_event_emit(n->fail) ? mun_error_up() : ret;
+    int ret = interface_inner(n) MUN_RETHROW;
+    return (cone_event_emit(n->fail) MUN_RETHROW) ? -1 : ret;
 }
 
 int handle_connection(struct node *n) {
-    int ret = nero_run(&n->rpc);
+    int ret = nero_run(&n->rpc) MUN_RETHROW;
     deck_del(n->deck, &n->rpc);
-    return cone_event_emit(n->fail) ? mun_error_up() : ret;
+    return (cone_event_emit(n->fail) MUN_RETHROW) ? -1 : ret;
 }
 
 int comain(int argc, const char **argv) {
@@ -157,24 +157,24 @@ int comain(int argc, const char **argv) {
     for (int i = 0; i < n; i++)
         nodes[i] = (struct node){{}, &d, &fail};
     for (int i = 0; i < known; i++)
-        if ((nodes[i].rpc.fd = parse_arg(argv[i + 3], 0)) < 0)
-            return mun_error_up();
+        if ((nodes[i].rpc.fd = parse_arg(argv[i + 3], 0)) < 0 MUN_RETHROW)
+            return -1;
 
     if (n > known) {
         int srv = parse_arg(argv[2], 1);
-        if (srv < 0)
-            return mun_error_up();
-        if (listen(srv, 127) < 0)
-            return mun_error_os();
+        if (srv < 0 MUN_RETHROW)
+            return -1;
+        if (listen(srv, 127) < 0 MUN_RETHROW_OS)
+            return -1;
         if (isatty(2))
             fprintf(stderr, "\033[33;1m # main\033[0m: awaiting %d more connection(s)\n", n - known);
         for (; n > known; known++)
-            if ((nodes[known].rpc.fd = accept(srv, NULL, NULL)) < 0)
-                return mun_error_os();
+            if ((nodes[known].rpc.fd = accept(srv, NULL, NULL)) < 0 MUN_RETHROW_OS)
+                return -1;
     }
     for (int i = 0; i < known; i++)
-        if (deck_add(&d, &nodes[i].rpc))
-            return mun_error_up();
+        if (deck_add(&d, &nodes[i].rpc) MUN_RETHROW)
+            return -1;
 
     struct cone *children[known + 1];
     memset(children, 0, sizeof(struct cone *) * (known + 1));
