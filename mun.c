@@ -33,13 +33,11 @@ int mun_error_restore(const struct mun_error *err) {
 }
 
 int mun_error_at(int n, const char *name, const char *file, const char *func, unsigned line, const char *fmt, ...) {
-    e = (struct mun_error){.code = n, .stacklen = 0, .name = name};
+    e = (struct mun_error){.code = n < 0 ? -n : n, .stacklen = 0, .name = name};
     va_list args;
     va_start(args, fmt);
-    if (n > 0 || strerror_r(-e.code, e.text, sizeof(e.text)))
+    if (n >= 0 || strerror_r(-n, e.text, sizeof(e.text)))
         vsnprintf(e.text, sizeof(e.text), fmt, args);
-    if (n == -ECANCELED)
-        e.code = mun_errno_cancelled;
     va_end(args);
     return mun_error_up_at(file, func, line);
 }

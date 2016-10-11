@@ -43,12 +43,12 @@ static inline mun_usec mun_usec_monotonic() {
 
 enum
 {
-    mun_ok = 0,
-    mun_errno_assert,
-    mun_errno_memory,
-    mun_errno_not_implemented,
-    mun_errno_cancelled,
-    mun_errno_custom = 100000,
+    mun_ok                    = 0,
+    mun_errno_cancelled       = ECANCELED,
+    mun_errno_assert          = EINVAL,
+    mun_errno_memory          = ENOMEM,
+    mun_errno_not_implemented = ENOSYS,
+    mun_errno_custom          = 100000,
 };
 
 struct mun_stacktrace
