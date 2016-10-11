@@ -158,16 +158,16 @@ static inline void mun_vec_erase_s(size_t stride, struct mun_vec *vec, size_t i,
 
 #define mun_vec_find(vec, eqexpr) ({                   \
     unsigned __i = 0;                                  \
-    __auto_type _ = &(vec)->data[0];                   \
+    __typeof__((vec)->data[0]) *_ = &(vec)->data[0];   \
     while (__i < (vec)->size && !(eqexpr)) __i++, _++; \
     __i;                                               \
 })
 
-#define mun_vec_bisect(vec, ltexpr) ({                       \
-    unsigned __L = 0, __R = (vec)->size, __M;                \
-    while (__L != __R) {                                     \
-        __auto_type _ = &(vec)->data[__M = (__L + __R) / 2]; \
-        if (ltexpr) __R = __M; else __L = __M + 1;           \
-    }                                                        \
-    __L;                                                     \
+#define mun_vec_bisect(vec, ltexpr) ({                                       \
+    unsigned __L = 0, __R = (vec)->size, __M;                                \
+    while (__L != __R) {                                                     \
+        __typeof__((vec)->data[0]) *_ = &(vec)->data[__M = (__L + __R) / 2]; \
+        if (ltexpr) __R = __M; else __L = __M + 1;                           \
+    }                                                                        \
+    __L;                                                                     \
 })
