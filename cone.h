@@ -2,7 +2,7 @@
 #if !defined(CONE_EPOLL) && __linux__
 #define CONE_EPOLL 1
 #endif
-#if !defined(CONE_XCHG_RSP) && __linux__ && __x86_64__
+#if !defined(CONE_XCHG_RSP) && (__linux__ || __APPLE__) && __x86_64__
 #define CONE_XCHG_RSP 1
 #endif
 #ifndef CONE_DEFAULT_STACK
