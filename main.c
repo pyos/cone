@@ -1,3 +1,7 @@
+#if __APPLE__
+#define _DARWIN_C_SOURCE 1
+#endif
+
 #include "mun.h"
 #include "cone.h"
 #include "nero.h"
