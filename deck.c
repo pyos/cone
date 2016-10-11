@@ -4,7 +4,7 @@
 #include <inttypes.h>
 #define deck_debug_msg(t, pid, fmt, ...) fprintf(stderr, "[%" PRIu64 "|%u] %u: " fmt "\n", mun_usec_now(), t, pid, ##__VA_ARGS__)
 #else
-#define deck_debug_msg(t, pid, fmt, ...)
+void deck_debug_msg() {}
 #endif
 
 enum deck_state
@@ -56,8 +56,7 @@ static int deck_wake(struct deck *lk) {
     if (!(lk->state & DECK_REQUESTED) || !deck_acquired(lk))
         return 0;
     lk->state &= ~DECK_REQUESTED;
-    lk->time++;
-    deck_debug_msg(lk->time, lk->pid, "acquire");
+    deck_debug_msg(++lk->time, lk->pid, "acquire");
     return cone_event_emit(&lk->wake);
 }
 
