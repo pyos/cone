@@ -43,9 +43,8 @@ int mun_error_at(int n, const char *name, const char *file, const char *func, un
 }
 
 int mun_error_up_at(const char *file, const char *func, unsigned line) {
-    if (e.stacklen >= sizeof(e.stack) / sizeof(struct mun_stacktrace))
-        return -1;
-    e.stack[e.stacklen++] = (struct mun_stacktrace){file, func, line};
+    if (e.stacklen < sizeof(e.stack) / sizeof(e.stack[0]))
+        e.stack[e.stacklen++] = (struct mun_stacktrace){file, func, line};
     return -1;
 }
 

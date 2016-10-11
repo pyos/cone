@@ -43,7 +43,6 @@ static inline mun_usec mun_usec_monotonic() {
 
 enum
 {
-    mun_ok                    = 0,
     mun_errno_cancelled       = ECANCELED,
     mun_errno_assert          = EINVAL,
     mun_errno_memory          = ENOMEM,
@@ -75,8 +74,8 @@ int  mun_error_up_at(const char *file, const char *func, unsigned line);
 void mun_error_show(const char *prefix, const struct mun_error *err);
 
 #define mun_error(id, ...) mun_error_at(mun_errno_##id, #id, __FILE__, __FUNCTION__, __LINE__, __VA_ARGS__)
-#define mun_error_os()     mun_error_at(-errno, "errno", __FILE__, __FUNCTION__, __LINE__, "Unknown OS error")
-#define mun_error_up()     mun_error_up_at(__FILE__, __FUNCTION__, __LINE__)
+#define MUN_RETHROW        ? mun_error_up_at(__FILE__, __FUNCTION__, __LINE__) : 0
+#define MUN_RETHROW_OS     ? mun_error_at(-errno, "errno", __FILE__, __FUNCTION__, __LINE__, "OS error") : 0
 
 enum
 {
@@ -110,12 +109,12 @@ static inline void mun_vec_shift_s(size_t stride, struct mun_vec *vec, size_t st
 
 static inline int mun_vec_reserve_s(size_t stride, struct mun_vec *vec, size_t n) {
     if (vec->size + n <= vec->cap - vec->shift)
-        return mun_ok;
+        return 0;
     if (vec->size + n <= vec->cap) {
         memmove(vec->data - vec->shift * stride, vec->data, stride * vec->size);
         vec->data -= vec->shift * stride;
         vec->shift = 0;
-        return mun_ok;
+        return 0;
     }
     if (vec->flags & MUN_VEC_STATIC)
         return mun_error(memory, "static vector of %u cannot fit %zu", vec->cap, vec->size + n);
@@ -125,15 +124,15 @@ static inline int mun_vec_reserve_s(size_t stride, struct mun_vec *vec, size_t n
     memmove(v2.data, vec->data, vec->size * stride);
     free(vec->data - vec->shift * stride);
     *vec = v2;
-    return mun_ok;
+    return 0;
 }
 
 static inline int mun_vec_splice_s(size_t stride, struct mun_vec *vec, size_t i, const void *elems, size_t n) {
     if (mun_vec_reserve_s(stride, vec, n))
-        return mun_error_up();
+        return -1;
     mun_vec_shift_s(stride, vec, i, n);
     memcpy(vec->data + i * stride, elems, n * stride);
-    return mun_ok;
+    return 0;
 }
 
 static inline void mun_vec_erase_s(size_t stride, struct mun_vec *vec, size_t i, size_t n) {
