@@ -17,6 +17,24 @@
 #include <stdarg.h>
 #include <string.h>
 
+#if __APPLE__ && __MACH__
+static clock_serv_t mun_mach_clock;
+
+static void __attribute__((constructor)) mun_mach_clock_init(void) {
+    host_get_clock_service(mach_host_self(), SYSTEM_CLOCK, &mun_mach_clock);
+}
+
+static void __attribute__((destructor)) mun_mach_clock_fini(void) {
+    mach_port_deallocate(mach_task_self(), mun_mach_clock);
+}
+
+mun_usec mun_usec_now() {
+    mach_timespec_t val;
+    clock_get_time(mun_mach_clock, &val);
+    return (uint64_t)val.tv_sec * 1000000ull + val.tv_nsec / 1000;
+}
+#endif
+
 static _Thread_local struct mun_error e;
 
 const struct mun_error *mun_last_error(void) {

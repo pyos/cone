@@ -13,6 +13,10 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#if __APPLE__ && __MACH__
+#include <mach/clock.h>
+#include <mach/mach.h>
+#endif
 
 typedef uint64_t mun_usec;
 
@@ -22,6 +26,13 @@ static inline mun_usec mun_usec_from_timespec(struct timespec val) {
     return (uint64_t)val.tv_sec * 1000000ull + val.tv_nsec / 1000;
 }
 
+#if __APPLE__ && __MACH__
+mun_usec mun_usec_now();
+
+static inline mun_usec mun_usec_monotonic() {
+    return mun_usec_now();
+}
+#else
 static inline mun_usec mun_usec_now() {
     struct timespec val;
     return clock_gettime(CLOCK_REALTIME, &val) ? MUN_USEC_MAX : mun_usec_from_timespec(val);
@@ -31,6 +42,7 @@ static inline mun_usec mun_usec_monotonic() {
     struct timespec val;
     return clock_gettime(CLOCK_MONOTONIC, &val) ? MUN_USEC_MAX : mun_usec_from_timespec(val);
 }
+#endif
 
 enum
 {
