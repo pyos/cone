@@ -140,7 +140,7 @@ int handle_connection(struct node *n) {
 
 int comain(int argc, const char **argv) {
     struct cone_event fail = {};
-    struct deck d = {.pid = getpid(), .name = "flock"};
+    struct deck d = {.pid = getpid()};
 
     if (argc < 3) {
         fprintf(stderr, "\033[33;1m # usage\033[0m: %s N [iface]:port [host:port [...]]\n", argv[0]);
@@ -177,7 +177,7 @@ int comain(int argc, const char **argv) {
                 return -1;
     }
     for (int i = 0; i < known; i++)
-        if (deck_add(&d, &nodes[i].rpc) MUN_RETHROW)
+        if (deck_add(&d, &nodes[i].rpc, "flock/request", "flock/release") MUN_RETHROW)
             return -1;
 
     struct cone *children[known + 1];
