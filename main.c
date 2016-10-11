@@ -92,7 +92,7 @@ int interface_command(struct node *n, const char *cmd) {
         int fd = open(cmd + 6, O_CREAT | O_APPEND | O_WRONLY, 0644);
         if (fd < 0 MUN_RETHROW_OS)
             return -1;
-        int ret = write_status(n->deck, fd) MUN_RETHROW_OS;
+        int ret = write_status(n->deck, fd) MUN_RETHROW;
         return close(fd), ret;
     }
     return mun_error(input, "unknown command");
