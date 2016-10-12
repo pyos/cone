@@ -1,8 +1,4 @@
 #pragma once
-#if !defined(MUN_U128_NATIVE) && defined(__GNUC__) && defined(__x86_64__)
-#define MUN_U128_NATIVE 1
-#endif
-
 #include <time.h>
 #include <errno.h>
 #include <string.h>
