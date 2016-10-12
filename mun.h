@@ -6,30 +6,23 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 
 typedef uint64_t mun_usec;
 
 #define MUN_USEC_MAX UINT64_MAX
 
-static inline mun_usec mun_usec_from_timespec(struct timespec val) {
-    return (uint64_t)val.tv_sec * 1000000ull + val.tv_nsec / 1000;
+static inline mun_usec mun_usec_now() {
+    struct timeval val;
+    return gettimeofday(&val, NULL) ? MUN_USEC_MAX : (uint64_t)val.tv_sec * 1000000ull + val.tv_usec;
 }
 
 #if __APPLE__ && __MACH__
-mun_usec mun_usec_now();
-
-static inline mun_usec mun_usec_monotonic() {
-    return mun_usec_now();
-}
+mun_usec mun_usec_monotonic();
 #else
-static inline mun_usec mun_usec_now() {
-    struct timespec val;
-    return clock_gettime(CLOCK_REALTIME, &val) ? MUN_USEC_MAX : mun_usec_from_timespec(val);
-}
-
 static inline mun_usec mun_usec_monotonic() {
-    struct timespec val;
-    return clock_gettime(CLOCK_MONOTONIC, &val) ? MUN_USEC_MAX : mun_usec_from_timespec(val);
+    struct timespec t;
+    return clock_gettime(CLOCK_MONOTONIC, &t) ? MUN_USEC_MAX : (uint64_t)t.tv_sec*1000000ull + t.tv_nsec/1000;
 }
 #endif
 
