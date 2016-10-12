@@ -335,8 +335,9 @@ int cone_decref(struct cone *c) {
 int cone_join(struct cone *c) {
     int ret = !(c->flags & CONE_FLAG_FINISHED) && cone_wait(&c->done) MUN_RETHROW;
     if (!ret && c->flags & CONE_FLAG_FAILED) {
-        ret = mun_error_restore(&c->error);
+        *mun_last_error() = c->error;
         c->flags |= CONE_FLAG_RETHROWN;
+        ret = -1;
     }
     cone_decref(c);
     return ret;

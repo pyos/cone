@@ -25,28 +25,23 @@ mun_usec mun_usec_monotonic() {
 
 static _Thread_local struct mun_error e;
 
-const struct mun_error *mun_last_error(void) {
+struct mun_error *mun_last_error(void) {
     return &e;
 }
 
-int mun_error_restore(const struct mun_error *err) {
-    e = *err;
-    return -1;
-}
-
-int mun_error_at(int n, const char *name, const char *file, const char *func, unsigned line, const char *fmt, ...) {
+int mun_error_at(int n, const char *name, struct mun_stackframe frame, const char *fmt, ...) {
     e = (struct mun_error){.code = n < 0 ? -n : n, .stacklen = 0, .name = name};
     va_list args;
     va_start(args, fmt);
     if (n >= 0 || strerror_r(-n, e.text, sizeof(e.text)))
         vsnprintf(e.text, sizeof(e.text), fmt, args);
     va_end(args);
-    return mun_error_up_at(file, func, line);
+    return mun_error_up_at(frame);
 }
 
-int mun_error_up_at(const char *file, const char *func, unsigned line) {
-    if (e.stacklen < sizeof(e.stack) / sizeof(e.stack[0]))
-        e.stack[e.stacklen++] = (struct mun_stacktrace){file, func, line};
+int mun_error_up_at(struct mun_stackframe frame) {
+    if (e.stacklen < sizeof(e.stack) / sizeof(frame))
+        e.stack[e.stacklen++] = frame;
     return -1;
 }
 

@@ -107,7 +107,7 @@ static int nero_restore_error(const uint8_t *data, size_t size, const char *func
     const char *text = memchr(name, 0, size - 4) + 1;
     if (text == &name[size - 4])
         return mun_error(nero_protocol, "error response only has one string");
-    return mun_error_at(code, "nero_remote", "<remote>", function, 0, "%s: %s", name, text) MUN_RETHROW;
+    return mun_error_at(code, "nero_remote", MUN_CURRENT_FRAME, "%s / %s: %s", function, name, text) MUN_RETHROW;
 }
 
 static int nero_on_frame(struct nero *n, enum nero_frame_type type, uint32_t rqid, const uint8_t *data, size_t size) {

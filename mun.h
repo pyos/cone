@@ -1,7 +1,7 @@
 #pragma once
 #include <time.h>
 #include <errno.h>
-#include <string.h>
+#include <stdio.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -35,7 +35,7 @@ enum
     mun_errno_custom          = 100000,
 };
 
-struct mun_stacktrace
+struct mun_stackframe
 {
     const char *file;
     const char *func;
@@ -48,19 +48,18 @@ struct mun_error
     unsigned stacklen;
     const char *name;
     char text[128];
-    struct mun_stacktrace stack[16];
+    struct mun_stackframe stack[16];
 };
 
-const struct mun_error *mun_last_error(void);
-int  mun_error_restore(const struct mun_error *);
-int  mun_error_at(int, const char *name, const char *file, const char *func, unsigned line,
-                  const char *fmt, ...) __attribute__((format(printf, 6, 7)));
-int  mun_error_up_at(const char *file, const char *func, unsigned line);
+struct mun_error *mun_last_error(void);
+int  mun_error_at(int, const char *name, struct mun_stackframe, const char *fmt, ...) __attribute__((format(printf, 4, 5)));
+int  mun_error_up_at(struct mun_stackframe);
 void mun_error_show(const char *prefix, const struct mun_error *err);
 
-#define mun_error(id, ...) mun_error_at(mun_errno_##id, #id, __FILE__, __FUNCTION__, __LINE__, __VA_ARGS__)
-#define MUN_RETHROW        ? mun_error_up_at(__FILE__, __FUNCTION__, __LINE__) : 0
-#define MUN_RETHROW_OS     ? mun_error_at(-errno, "errno", __FILE__, __FUNCTION__, __LINE__, "OS error") : 0
+#define MUN_CURRENT_FRAME ((struct mun_stackframe){__FILE__, __FUNCTION__, __LINE__})
+#define mun_error(id, ...) mun_error_at(mun_errno_##id, #id, MUN_CURRENT_FRAME, __VA_ARGS__)
+#define MUN_RETHROW        ? mun_error_up_at(MUN_CURRENT_FRAME) : 0
+#define MUN_RETHROW_OS     ? mun_error_at(-errno, "errno", MUN_CURRENT_FRAME, "OS error") : 0
 
 enum
 {
@@ -68,7 +67,7 @@ enum
 };
 
 #define mun_vec(T) { T* data; unsigned size, cap, shift, flags; }
-#define mun_vec_init_static(T, n) {.data = (void*)(char[n * sizeof(T)]){}, .cap = n, .flags = MUN_VEC_STATIC}
+#define mun_vec_init_static(T, n) {.data = (void*)(T[n]){}, .cap = n, .flags = MUN_VEC_STATIC}
 #define mun_vec_init_borrow(ptr, n) {.data = (void*)ptr, .size = n, .cap = n, .flags = MUN_VEC_STATIC}
 #define mun_vec_init_array(array) mun_vec_init_borrow(array, sizeof(array) / sizeof((array)[0]))
 #define mun_vec_init_str(string) mun_vec_init_borrow(string, strlen(string))
