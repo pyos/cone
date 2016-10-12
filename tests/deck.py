@@ -35,6 +35,7 @@ if __name__ == '__main__':
             c[pid] = rtc, rqpid, kind
     ok = True
     held_by = None
+    counts = {pid: 0 for pid in logs}
     requested = {pid: {} for pid in logs}
     for ltc in sorted(unified):
         for pid, (rtc, rqpid, kind) in unified[ltc].items():
@@ -54,6 +55,7 @@ if __name__ == '__main__':
                     ok = False
                     print(t, rqpid, 'took the lock held by', held_by)
                 requested[rqpid].clear()
+                counts[rqpid] += 1
                 held_by = rqpid
             elif kind == 'release':
                 if pid == rqpid:
@@ -68,3 +70,4 @@ if __name__ == '__main__':
                 requested[rqpid].clear()
                 print(t, rqpid, 'relinquished its request')
     print('lock is consistent' if ok else 'lock is inconsistent')
+    print('lock was acquired', '+'.join(str(counts[k]) for k in sorted(logs)), 'times')
