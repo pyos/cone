@@ -360,6 +360,7 @@ static __attribute__((noreturn)) void cone_body(struct cone *c) {
     for (size_t i = 0; i < c->done.size; i++)
         if (cone_event_schedule_add(&c->loop->at, mun_usec_monotonic(), c->done.data[i]))
             mun_error_show("cone fatal", NULL), abort();
+    cone_loop_dec(c->loop);
     cone_switch(c);
     abort();
 }
@@ -384,9 +385,7 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
     c->ctx->uc_stack.ss_size = size - sizeof(struct cone);
     makecontext(c->ctx, (void(*)(void))&cone_body, 1, c);
 #endif
-    if (cone_event_add(&c->done, cone_bind(&cone_loop_dec, loop))
-     || cone_event_add(&c->done, cone_bind(&cone_decref, c))
-     || cone_schedule(c) MUN_RETHROW)
+    if (cone_event_add(&c->done, cone_bind(&cone_decref, c)) || cone_schedule(c) MUN_RETHROW)
         return cone_decref(c), NULL;
     return cone_loop_inc(loop), cone_incref(c), c;
 }
@@ -401,6 +400,7 @@ int cone_root(size_t stksz, struct cone_closure body) {
         return -1;
     struct cone *c = cone_spawn_on(&loop, stksz, body);
     if (c == NULL || cone_loop_run(&loop) MUN_RETHROW)
+        // TODO somehow convey the fact that we're absolutely screwed if cone_loop_run fails
         return cone_decref(c), cone_loop_fini(&loop), -1;
     return cone_loop_fini(&loop), cone_join(c) MUN_RETHROW;
 }
@@ -422,6 +422,6 @@ static int cone_main(struct cone_main *c) {
 extern int main(int argc, const char **argv) {
     struct cone_main c = {1, argc, argv};
     if (cone_root(0, cone_bind(&cone_main, &c)) || c.retcode == -1)
-        mun_error_show("comain exited with", NULL);
-    return c.retcode == -1 ? 1 : c.retcode;
+        return mun_error_show("comain exited with", NULL), 1;
+    return c.retcode;
 }
