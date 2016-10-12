@@ -4,7 +4,7 @@
 #include <inttypes.h>
 #define deck_debug_msg(t, pid, fmt, ...) fprintf(stderr, "[%" PRIu64 "|%u] %u: " fmt "\n", mun_usec_now(), t, pid, ##__VA_ARGS__)
 #else
-void deck_debug_msg() {}
+static inline void deck_debug_msg() {}
 #endif
 
 enum deck_state
