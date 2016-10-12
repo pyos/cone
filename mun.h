@@ -6,10 +6,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#if __APPLE__ && __MACH__
-#include <mach/clock.h>
-#include <mach/mach.h>
-#endif
 
 typedef uint64_t mun_usec;
 

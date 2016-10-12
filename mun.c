@@ -2,8 +2,10 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <unistd.h>
-
 #if __APPLE__ && __MACH__
+#include <mach/clock.h>
+#include <mach/mach.h>
+
 static clock_serv_t mun_mach_clock;
 
 static void __attribute__((constructor)) mun_mach_clock_init(void) {
