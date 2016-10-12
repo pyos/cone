@@ -422,6 +422,6 @@ static int cone_main(struct cone_main *c) {
 extern int main(int argc, const char **argv) {
     struct cone_main c = {1, argc, argv};
     if (cone_root(0, cone_bind(&cone_main, &c)) || c.retcode == -1)
-        mun_error_show("comain exited with", NULL);
-    return c.retcode == -1 ? 1 : c.retcode;
+        return mun_error_show("comain exited with", NULL), 1;
+    return c.retcode;
 }
