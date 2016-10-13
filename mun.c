@@ -60,3 +60,10 @@ void mun_error_show(const char *prefix, const struct mun_error *err) {
     for (unsigned i = 0; i < err->stacklen; i++)
         fprintf(stderr, mun_error_fmt_line[ansi], i + 1, err->stack[i].func, err->stack[i].file, err->stack[i].line);
 }
+
+size_t mun_hash(const void *data, size_t size) {
+    size_t hash = 0;
+    for (const char *c = (const char *)data; size--; c++)
+        hash = hash * 33 + *c;
+    return hash;
+}
