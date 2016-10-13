@@ -240,19 +240,20 @@ static inline int mun_set_erase_s(size_t ks, size_t vs, struct mun_set *set, con
     return 0;
 }
 
-#define mun_set_strided(s)   sizeof(*(s)->values.data), sizeof(*(s)->values.data), (struct mun_set*)(s)
-#define mun_set_fini(s)      mun_set_fini_s(mun_set_strided(s))
-#define mun_set_insert(s, v) mun_set_insert_s(mun_set_strided(s), v)
-#define mun_set_find(s, k)   mun_set_find_s(mun_set_strided(s), k)
-#define mun_set_erase(s, k)  mun_set_erase_s(mun_set_strided(s), k)
+#define mun_set_strided(s)         sizeof(*(s)->values.data), sizeof(*(s)->values.data), (struct mun_set*)(s)
+#define mun_set_fini(s)            mun_set_fini_s(mun_set_strided(s))
+#define mun_set_insert(s, v)       mun_set_insert_s(mun_set_strided(s), v)
+#define mun_set_find(s, k)         mun_set_find_s(mun_set_strided(s), k)
+#define mun_set_erase(s, k)        mun_set_erase_s(mun_set_strided(s), k)
 #define mun_set_was_inserted(s, v) ((v) - (s)->values.data == (s)->values.size - 1)
 
 #define mun_pair(A, B) { A a; B b; }
-#define mun_map(K, V)        mun_set(struct mun_pair(K, V))
-#define mun_map_type(m)      __typeof__(*(m)->values.data)
-#define mun_map_strided(m)   sizeof((m)->values.data->a), sizeof(*(m)->values.data), (struct mun_set*)(m)
-#define mun_map_fini(m)      mun_set_fini_s(mun_map_strided(m))
-#define mun_map_insert(m, p) mun_set_insert_s(mun_map_strided(m), p)
-#define mun_map_find(m, k)   mun_set_find_s(mun_map_strided(m), k)
-#define mun_map_erase(m, k)  mun_set_erase_s(mun_map_strided(m), k)
+#define mun_map(K, V)              mun_set(struct mun_pair(K, V))
+#define mun_map_type(m)            __typeof__(*(m)->values.data)
+#define mun_map_strided(m)         sizeof((m)->values.data->a), sizeof(*(m)->values.data), (struct mun_set*)(m)
+#define mun_map_fini(m)            mun_set_fini_s(mun_map_strided(m))
+#define mun_map_insert(m, p)       mun_set_insert_s(mun_map_strided(m), p)
+#define mun_map_insert3(m, k, v)   mun_map_insert(m, &((mun_map_type(m)){k, v}))
+#define mun_map_find(m, k)         mun_set_find_s(mun_map_strided(m), k)
+#define mun_map_erase(m, k)        mun_set_erase_s(mun_map_strided(m), k)
 #define mun_map_was_inserted(m, v) mun_set_was_inserted(m, v)
