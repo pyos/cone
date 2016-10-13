@@ -1,5 +1,6 @@
 #include "cone.h"
 #include <fcntl.h>
+#include <signal.h>
 #include <unistd.h>
 #include <stdatomic.h>
 #if CONE_EPOLL
@@ -8,7 +9,10 @@
 #include <sys/select.h>
 #endif
 #if !CONE_XCHG_RSP
-#include <ucontext.h>
+#include <setjmp.h>
+#ifndef SA_ONSTACK
+#define SA_ONSTACK 0x8000000
+#endif
 #endif
 
 static int cone_event_add(struct cone_event *ev, struct cone_closure f) {
@@ -243,7 +247,7 @@ struct cone
 #if CONE_XCHG_RSP
     void **rsp;
 #else
-    ucontext_t ctx[2];
+    jmp_buf ctx[2];
 #endif
     char stack[];
 };
@@ -266,11 +270,11 @@ static int cone_switch(struct cone *c) {
       : "rbx", "rdx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc",
         "xmm0",  "xmm1",  "xmm2",  "xmm3",  "xmm4",  "xmm5",  "xmm6",  "xmm7",
         "xmm8",  "xmm9",  "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
-    return 0;
 #else
-    return (c->flags & CONE_FLAG_RUNNING ? swapcontext(c->ctx + 1, c->ctx) : swapcontext(c->ctx, c->ctx + 1))
-        MUN_RETHROW_OS;
+    if (!setjmp(c->ctx[!!(c->flags & CONE_FLAG_RUNNING)]))
+        longjmp(c->ctx[!(c->flags & CONE_FLAG_RUNNING)], 1);
 #endif
+    return 0;
 }
 
 static int cone_run(struct cone *c) {
@@ -366,9 +370,18 @@ static __attribute__((noreturn)) void cone_body(struct cone *c) {
     abort();
 }
 
+#if !CONE_XCHG_RSP
+static _Thread_local struct cone *volatile cone_sigctx;
+static void cone_sigstackswitch() {
+    struct cone *c = cone_sigctx;
+    if (setjmp(c->ctx[0]))
+        cone_body(c);
+}
+#endif
+
 static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct cone_closure body) {
     size &= ~(size_t)15;
-    if (size < sizeof(struct cone))
+    if (size < sizeof(struct cone) + MINSIGSTKSZ)
         size = CONE_DEFAULT_STACK;
     struct cone *c = (struct cone *)malloc(size);
     if (c == NULL)
@@ -381,10 +394,17 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
     c->rsp[2] = (void*)&cone_body;  // %rip
     c->rsp[3] = NULL;               // return address
 #else
-    getcontext(c->ctx);
-    c->ctx->uc_stack.ss_sp = c->stack;
-    c->ctx->uc_stack.ss_size = size - sizeof(struct cone);
-    makecontext(c->ctx, (void(*)(void))&cone_body, 1, c);
+    stack_t old_stk, new_stk = {.ss_sp = c->stack, .ss_size = size - sizeof(struct cone)};
+    struct sigaction old_act, new_act;
+    new_act.sa_handler = &cone_sigstackswitch;
+    new_act.sa_flags = SA_ONSTACK;
+    sigemptyset(&new_act.sa_mask);
+    sigaltstack(&new_stk, &old_stk);
+    sigaction(SIGUSR1, &new_act, &old_act);
+    cone_sigctx = c;
+    raise(SIGUSR1);
+    sigaction(SIGUSR1, &old_act, NULL);
+    sigaltstack(&old_stk, NULL);
 #endif
     if (cone_event_add(&c->done, cone_bind(&cone_decref, c)) || cone_schedule(c) MUN_RETHROW)
         return cone_decref(c), NULL;
