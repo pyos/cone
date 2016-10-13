@@ -52,7 +52,8 @@ static const char
                               "\033[1;33m   %3u.\033[0m %s() \033[5m(%s:%u)\033[0m\n"};
 
 void mun_error_show(const char *prefix, const struct mun_error *err) {
-    int ansi = isatty(fileno(stderr)) && !strncmp(getenv("TERM"), "xterm", 5);
+    const char *term = getenv("TERM");
+    int ansi = term && isatty(fileno(stderr)) && !strncmp(term, "xterm", 5);
     if (err == NULL)
         err = &e;
     fprintf(stderr, mun_error_fmt_head[ansi], prefix, err->code, err->name, err->text);
