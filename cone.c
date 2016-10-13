@@ -55,19 +55,19 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev) {
     return MUN_USEC_MAX;
 }
 
+struct cone_event_fd
+{
+    struct cone_closure cbs[2];
+};
+
 struct cone_event_io
 {
     int epoll;
-    struct cone_event_fd
-    {
-        int fd;
-        struct cone_closure fs[2];
-        struct cone_event_fd *link;
-    } *fds[127];
+    struct mun_map(int, struct cone_event_fd) fds;
 };
 
 static int cone_event_io_init(struct cone_event_io *set) {
-    set->epoll = -1;
+    *set = (struct cone_event_io){.epoll = -1};
 #if CONE_EPOLL
     if ((set->epoll = epoll_create1(0)) < 0 MUN_RETHROW) return -1;
 #endif
@@ -75,47 +75,37 @@ static int cone_event_io_init(struct cone_event_io *set) {
 }
 
 static void cone_event_io_fini(struct cone_event_io *set) {
-    for (size_t i = 0; i < sizeof(set->fds) / sizeof(set->fds[0]); i++)
-        for (struct cone_event_fd *c; (c = set->fds[i]) != NULL; free(c))
-            set->fds[i] = c->link;
+    mun_map_fini(&set->fds);
     if (set->epoll >= 0)
         close(set->epoll);
 }
 
-static struct cone_event_fd **cone_event_io_bucket(struct cone_event_io *set, int fd) {
-    struct cone_event_fd **b = &set->fds[fd % (sizeof(set->fds) / sizeof(set->fds[0]))];
-    while (*b && (*b)->fd != fd) b = &(*b)->link;
-    return b;
-}
-
 static int cone_event_io_add(struct cone_event_io *set, int fd, int write, struct cone_closure f) {
-    struct cone_event_fd **b = cone_event_io_bucket(set, fd);
-    if (*b == NULL) {
-        if ((*b = malloc(sizeof(struct cone_event_fd))) == NULL)
-            return mun_error(memory, "-");
-        **b = (struct cone_event_fd){.fd = fd};
+    mun_map_type(&set->fds) *e = mun_map_insert(&set->fds, &((mun_map_type(&set->fds)){.a = fd}));
+    if (e == NULL MUN_RETHROW)
+        return -1;
+    if (mun_map_was_inserted(&set->fds, e)) {
     #if CONE_EPOLL
-        struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|EPOLLET|EPOLLIN|EPOLLOUT, {.ptr = *b}};
+        struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|EPOLLET|EPOLLIN|EPOLLOUT, {.fd = fd}};
         if (epoll_ctl(set->epoll, EPOLL_CTL_ADD, fd, &params) MUN_RETHROW_OS)
-            return free(*b), *b = NULL, -1;
+            return mun_map_erase(&set->fds, &fd), -1;
     #endif
-    } else if ((*b)->fs[write].code)
+    } else if (e->b.cbs[write].code)
         return mun_error(assert, "two readers/writers on one file descriptor");
-    (*b)->fs[write] = f;
+    e->b.cbs[write] = f;
     return 0;
 }
 
 static void cone_event_io_del(struct cone_event_io *set, int fd, int write, struct cone_closure f) {
-    struct cone_event_fd **b = cone_event_io_bucket(set, fd);
-    if (*b == NULL || (*b)->fs[write].code != f.code || (*b)->fs[write].data != f.data)
+    mun_map_type(&set->fds) *e = mun_map_find(&set->fds, &fd);
+    if (e == NULL || e->b.cbs[write].code != f.code || e->b.cbs[write].data != f.data)
         return;
-    (*b)->fs[write] = (struct cone_closure){};
-    if ((*b)->fs[!write].code == NULL) {
+    e->b.cbs[write] = (struct cone_closure){};
+    if (e->b.cbs[!write].code == NULL) {
     #if CONE_EPOLL
-        epoll_ctl(set->epoll, EPOLL_CTL_DEL, (*b)->fd, NULL);
+        epoll_ctl(set->epoll, EPOLL_CTL_DEL, e->a, NULL);
     #endif
-        *b = (*b)->link;
-        free(*b);
+        mun_map_erase(&set->fds, &fd);
     }
 }
 
@@ -130,34 +120,34 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
     if (got < 0)
         return errno != EINTR MUN_RETHROW_OS;
     for (int i = 0; i < got; i++) {
-        struct cone_event_fd *c = (struct cone_event_fd*)evs[i].data.ptr;
+        mun_map_type(&set->fds) *e = mun_map_find(&set->fds, &evs[i].data.fd);
         if (evs[i].events & (EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLHUP))
-            if (c->fs[0].code && c->fs[0].code(c->fs[0].data) MUN_RETHROW)
+            if (e->b.cbs[0].code && e->b.cbs[0].code(e->b.cbs[0].data) MUN_RETHROW)
                 return -1;
         if (evs[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP))
-            if (c->fs[1].code && c->fs[1].code(c->fs[1].data) MUN_RETHROW)
+            if (e->b.cbs[1].code && e->b.cbs[1].code(e->b.cbs[1].data) MUN_RETHROW)
                 return -1;
     }
 #else
     fd_set fds[2] = {};
     int max_fd = 0;
-    for (size_t i = 0; i < sizeof(set->fds) / sizeof(set->fds[0]); i++) {
-        for (struct cone_event_fd *c = set->fds[i]; c; c = c->link) {
-            if (max_fd <= c->fd)
-                max_fd = c->fd + 1;
-            for (int i = 0; i < 2; i++)
-                if (c->fs[i].code)
-                    FD_SET(c->fd, &fds[i]);
-        }
+    for (unsigned i = 0; i < set->fds.values.size; i++) {
+        mun_map_type(&set->fds) *e = &set->fds.values.data[i];
+        if (max_fd <= e->a)
+            max_fd = e->a + 1;
+        for (int i = 0; i < 2; i++)
+            if (e->b.cbs[i].code)
+                FD_SET(e->a, &fds[i]);
     }
     struct timeval us = {timeout / 1000000ull, timeout % 1000000ull};
     if (select(max_fd, &fds[0], &fds[1], NULL, &us) < 0)
         return errno != EINTR MUN_RETHROW_OS;
-    for (size_t i = 0; i < sizeof(set->fds) / sizeof(set->fds[0]); i++)
-        for (struct cone_event_fd *c = set->fds[i]; c; c = c->link)
-            for (int i = 0; i < 2; i++)
-                if (FD_ISSET(c->fd, &fds[i]) && c->fs[i].code && c->fs[i].code(c->fs[i].data) MUN_RETHROW)
-                    return -1;
+    for (unsigned i = 0; i < set->fds.values.size; i++) {
+        mun_map_type(&set->fds) *e = &set->fds.values.data[i];
+        for (int i = 0; i < 2; i++)
+            if (FD_ISSET(e->a, &fds[i]) && e->b.cbs[i].code && e->b.cbs[i].code(e->b.cbs[i].data) MUN_RETHROW)
+                return -1;
+    }
 #endif
     return 0;
 }
