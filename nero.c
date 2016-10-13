@@ -24,14 +24,10 @@ struct nero_future
     struct cone *c;
 };
 
-static inline uint8_t  read1(const uint8_t *p) { return p[0]; }
-static inline uint32_t read4(const uint8_t *p) { return p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
-static inline uint32_t read3(const uint8_t *p) { return read4(p - 1) & 0xFFFFFFL; }
-
 #define PACK(...) (uint8_t[]){__VA_ARGS__}, sizeof((uint8_t[]){__VA_ARGS__})
-#define I8(x)  (x)
 #define I24(x) (x) >> 16, (x) >> 8,  (x)
 #define I32(x) (x) >> 24, (x) >> 16, (x) >> 8, (x)
+static inline uint32_t read4(const uint8_t *p) { return p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
 
 static int nero_writer(struct nero *n) {
     char local[2048];
@@ -39,7 +35,7 @@ static int nero_writer(struct nero *n) {
         ssize_t size = n->wbuffer.size > sizeof(local) ? sizeof(local) : n->wbuffer.size;
         const char *data = memcpy(local, n->wbuffer.data, size);
         if ((size = write(n->fd, data, size)) < 0 MUN_RETHROW_OS)
-            return -1;
+            break;
         mun_vec_erase(&n->wbuffer, 0, size);
     }
     cone_decref(n->writer);
@@ -57,7 +53,7 @@ static int nero_write(struct nero *n, const uint8_t *data, size_t size) {
 static int nero_write_header(struct nero *n, enum nero_frame_type type, uint32_t rqid, size_t size) {
     if (size > NERO_MAX_FRAME_SIZE)
         return mun_error(nero_overflow, "frame too big");
-    return nero_write(n, PACK(I8(type), I24(size), I32(rqid)));
+    return nero_write(n, PACK(type, I24(size), I32(rqid)));
 }
 
 // data | type=NERO_FRAME_REQUEST ::= {name : i8}[] '\0' {args : u8}[]
@@ -83,8 +79,7 @@ static int nero_write_response_error(struct nero *n, uint32_t rqid) {
     uint32_t nlen = strlen(err->name) + 1;
     uint32_t tlen = strlen(err->text) + 1;
     uint8_t buf[nlen + tlen + 4];
-    uint8_t enccode[] = {I32(err->code)};
-    memcpy(buf, enccode, 4);
+    memcpy(buf, (uint8_t[]){I32(err->code)}, 4);
     memcpy(buf + 4, err->name, nlen);
     memcpy(buf + 4 + nlen, err->text, tlen);
     if (nero_write_header(n, NERO_FRAME_RESPONSE_ERROR, rqid, nlen + tlen + 4) MUN_RETHROW)
@@ -182,12 +177,12 @@ int nero_run(struct nero *n) {
         if (mun_vec_extend(&n->rbuffer, data, size) MUN_RETHROW)
             return -1;
         while (n->rbuffer.size >= 8) {
-            uint32_t size = read3(n->rbuffer.data + 1);
+            uint32_t size = read4(n->rbuffer.data) & 0xFFFFFFl;
             if (size > NERO_MAX_FRAME_SIZE)
                 return mun_error(nero_protocol, "received frame too big");
             if (n->rbuffer.size < size + 8)
                 break;
-            if (nero_on_frame(n, read1(n->rbuffer.data), read4(n->rbuffer.data + 4), n->rbuffer.data + 8, size) MUN_RETHROW)
+            if (nero_on_frame(n, n->rbuffer.data[0], read4(n->rbuffer.data + 4), n->rbuffer.data + 8, size) MUN_RETHROW)
                 return -1;
             mun_vec_erase(&n->rbuffer, 0, size + 8);
         }
