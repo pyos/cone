@@ -26,7 +26,7 @@ static int test_mun_vec(char *msg) {
 
 static int test_mun_set() {
     struct mun_set(int) s = {};
-    for (int i = 1; i < 512; i++)
+    for (int i = 0; i < 512; i++)
         if (mun_set_insert(&s, &i) == NULL MUN_RETHROW)
             return -1;
     for (int i = 24; i < 48; i++)
@@ -35,11 +35,32 @@ static int test_mun_set() {
     for (int i = 128; i < 1024; i++)
         if (mun_set_insert(&s, &i) == NULL MUN_RETHROW)
             return -1;
-    for (int i = 1; i < 1024; i++) {
+    for (int i = 0; i < 1024; i++) {
         const int *v = mun_set_find(&s, &i);
         if (24 <= i && i < 48 ? v != NULL : (v == NULL || *v != i))
             return mun_error(assert, "invalid result of find(%d): %p (%d)", i, v, v ? *v : -1);
     }
+    mun_set_fini(&s);
+    return 0;
+}
+
+static int test_mun_map() {
+    struct mun_map(int, int) m = {};
+    for (int i = 0; i < 512; i++)
+        if (mun_map_insert(&m, &((struct mun_pair(int, int)){i, i|4096})) == NULL MUN_RETHROW)
+            return -1;
+    for (int i = 24; i < 48; i++)
+        if (mun_map_erase(&m, &i))
+            return mun_error(assert, "erase %d failed", i);
+    for (int i = 128; i < 1024; i++)
+        if (mun_map_insert(&m, &((struct mun_pair(int, int)){i, i|8192})) == NULL MUN_RETHROW)
+            return -1;
+    for (int i = 0; i < 1024; i++) {
+        const struct mun_pair(int, int) *v = mun_map_find(&m, &i);
+        if (24 <= i && i < 48 ? v != NULL : (v == NULL || v->a != i || v->b != (i < 512 ? i|4096 : i|8192)))
+            return mun_error(assert, "invalid result of find(%d): %p (%d->%d)", i, v, v ? v->a : -1, v ? v->b : -1);
+    }
+    mun_map_fini(&m);
     return 0;
 }
 
@@ -47,3 +68,4 @@ export {"mun:usec",  &test_mun_usec}
      , {"mun:error", &test_mun_error}
      , {"mun:vec",   &test_mun_vec}
      , {"mun:set",   &test_mun_set}
+     , {"mun:map",   &test_mun_map}
