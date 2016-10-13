@@ -19,7 +19,7 @@ static void __attribute__((destructor)) mun_mach_clock_fini(void) {
 mun_usec mun_usec_monotonic() {
     mach_timespec_t val;
     clock_get_time(mun_mach_clock, &val);
-    return (uint64_t)val.tv_sec * 1000000ull + val.tv_nsec / 1000;
+    return (mun_usec)val.tv_sec * 1000000ull + val.tv_nsec / 1000;
 }
 #endif
 

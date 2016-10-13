@@ -118,8 +118,8 @@ static void cone_event_io_del(struct cone_event_io *set, int fd, int write, stru
 static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
     if (timeout == 0 MUN_RETHROW)
         return -1;
-    if (timeout > 60000000000ull)
-        timeout = 60000000000ull;
+    if (timeout > 60000000ll)
+        timeout = 60000000ll;
 #if CONE_EPOLL
     struct epoll_event evs[32];
     int got = epoll_wait(set->epoll, evs, 32, timeout / 1000ul);
