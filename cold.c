@@ -1,4 +1,5 @@
 #include "cone.h"
+#include <time.h>
 #include <dlfcn.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -58,7 +59,7 @@ cold_def(unsigned, sleep, unsigned sec) {
 }
 
 cold_def(int, nanosleep, const struct timespec *req, struct timespec *rem) {
-    return !cone ? libc_nanosleep(req, rem) : cone_sleep(mun_usec_from_timespec(*req));
+    return !cone ? libc_nanosleep(req, rem) : cone_sleep((mun_usec)req->tv_sec*1000000ull + req->tv_nsec/1000);
 }
 
 static __attribute__((constructor)) void cold_init(void) {

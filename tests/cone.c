@@ -73,7 +73,21 @@ static int test_yield(char *msg) {
     return 0;
 }
 
+static int test_nop() { return 0; }
+static int test_spawn(char *msg) {
+    const unsigned N = 1000000;
+    mun_usec a = mun_usec_monotonic();
+    struct cone *c;
+    for (unsigned i = 0; i < N; i++)
+        if ((c = cone(&test_nop, NULL)) == NULL || cone_join(c) MUN_RETHROW)
+            return -1;
+    mun_usec b = mun_usec_monotonic();
+    sprintf(msg, "%f us/cone", (double)(b - a) / N);
+    return 0;
+}
+
 export { "cone:sleep", &test_sleep }
      , { "cone:concurrent sleep", &test_concurrent_sleep }
      , { "cone:yield", &test_yield }
+     , { "cone:spawn", &test_spawn }
      , { "cone:reader + writer", &test_rdwr }
