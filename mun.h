@@ -147,7 +147,7 @@ static inline void mun_vec_erase_s(size_t s, struct mun_vec *v, size_t i, size_t
 #define mun_map_strided(m)         sizeof(mun_map_type_key(m)), sizeof(mun_map_type(m)), (struct mun_set*)(m)
 #define mun_map_fini(m)            mun_set_fini_s((struct mun_set*)(m))
 #define mun_map_insert(m, p)       mun_set_insert_s(mun_map_strided(m), p)
-#define mun_map_insert3(m, k, v)   mun_map_insert(m, &((mun_map_type(m)){k, v}))
+#define mun_map_insert3(m, k, v)   mun_map_insert(m, &((mun_map_type(m)){(k), (v)}))
 #define mun_map_find(m, k)         mun_set_find_s(mun_map_strided(m), k)
 #define mun_map_erase(m, k)        mun_set_erase_s(mun_map_strided(m), k)
 #define mun_map_was_inserted(m, v) mun_set_was_inserted(m, v)

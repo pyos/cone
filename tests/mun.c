@@ -46,12 +46,12 @@ static int test_mun_set() {
 static int test_mun_map() {
     struct mun_map(int, int) m = {};
     for (int i = 0; i < 512; i++)
-        if (mun_map_insert(&m, &((struct mun_pair(int, int)){i, i|4096})) == NULL MUN_RETHROW)
+        if (mun_map_insert3(&m, i, i|4096) == NULL MUN_RETHROW)
             return -1;
     for (int i = 24; i < 48; i++)
         mun_map_erase(&m, &i);
     for (int i = 128; i < 1024; i++)
-        if (mun_map_insert(&m, &((struct mun_pair(int, int)){i, i|8192})) == NULL MUN_RETHROW)
+        if (mun_map_insert3(&m, i, i|8192) == NULL MUN_RETHROW)
             return -1;
     for (int i = 0; i < 1024; i++) {
         const struct mun_pair(int, int) *v = mun_map_find(&m, &i);

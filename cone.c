@@ -81,7 +81,7 @@ static void cone_event_io_fini(struct cone_event_io *set) {
 }
 
 static int cone_event_io_add(struct cone_event_io *set, int fd, int write, struct cone_closure f) {
-    mun_map_type(&set->fds) *e = mun_map_insert3(&set->fds, fd, {});
+    mun_map_type(&set->fds) *e = mun_map_insert3(&set->fds, fd, (struct cone_event_fd){});
     if (e == NULL MUN_RETHROW)
         return -1;
 #if CONE_EPOLL
