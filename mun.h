@@ -179,9 +179,9 @@ static inline void mun_set_fini_s(size_t ks, size_t vs, struct mun_set *set) {
 }
 
 static inline unsigned mun_set_index_s(size_t ks, size_t vs, struct mun_set *set, const void *k) {
-    unsigned i = set->m.hash(k, ks) % set->indices.size;
+    unsigned i = set->m.hash(k, ks) & (set->indices.size - 1);
     while (set->indices.data[i] && (set->indices.data[i] == (unsigned)-1 || set->m.cmp(k, &set->values.data[(set->indices.data[i] - 1) * vs], ks)))
-        i = (i + 1) % set->indices.size;
+        i = (i + 1) & (set->indices.size - 1);
     return i;
 }
 
@@ -195,30 +195,27 @@ static inline void *mun_set_insert_nr(size_t ks, size_t vs, struct mun_set *set,
     return &set->values.data[(set->indices.data[i] - 1) * vs];
 }
 
-static inline int mun_set_rehash_s(size_t ks, size_t vs, struct mun_set *set, size_t size) {
-    struct mun_vec(unsigned) is, ic = {};
-    struct mun_vec os, oc = {};
-    if (mun_vec_reserve(&ic, size) || mun_vec_reserve_s(vs, &oc, set->values.size))
-        return mun_vec_fini(&ic), -1;
-    memset(ic.data, 0, (ic.size = size) * sizeof(unsigned));
-    memcpy(&is, &set->indices, sizeof(is));
-    memcpy(&os, &set->values, sizeof(os));
-    memcpy(&set->indices, &ic, sizeof(ic));
-    memcpy(&set->values, &oc, sizeof(oc));
-    for (unsigned i = 0; i < is.size; i++)
-        if (is.data[i] != 0 && is.data[i] != (unsigned)-1)
-            mun_set_insert_nr(ks, vs, set, &os.data[(is.data[i] - 1) * vs]);
-    mun_vec_fini(&is);
-    mun_vec_fini_s(vs, &os);
-    return 0;
-}
-
 static inline void *mun_set_insert_s(size_t ks, size_t vs, struct mun_set *set, const void *v) {
     if (set->values.size * 4 >= set->indices.size * 3) {
         if (set->m.cmp == NULL)
             set->m = (struct mun_set_methods){&memcmp, &mun_hash};
-        if (mun_set_rehash_s(ks, vs, set, set->indices.size ? set->indices.size * 2 : 8))
-            return NULL;
+        size_t size = set->indices.size, marked = 0;
+        for (unsigned i = 0; i < set->indices.size; i++)
+            marked += set->indices.data[i] == (unsigned)-1;
+        if (marked * 4 < size)
+            size *= 2;
+        if (size == 0)
+            size = 8;
+        struct mun_set q = {.m = set->m};
+        if (mun_vec_reserve(&q.indices, size) || mun_vec_reserve_s(vs, (struct mun_vec *)&q.values, set->values.size - marked))
+            return mun_set_fini_s(ks, vs, &q), NULL;
+        q.indices.size = size;
+        memset(q.indices.data, 0, q.indices.size * sizeof(unsigned));
+        for (unsigned i = 0; i < set->indices.size; i++)
+            if (set->indices.data[i] != 0 && set->indices.data[i] != (unsigned)-1)
+                mun_set_insert_nr(ks, vs, &q, &set->values.data[(set->indices.data[i] - 1) * vs]);
+        mun_set_fini_s(ks, vs, set);
+        *set = q;
     }
     return mun_set_insert_nr(ks, vs, set, v);
 }
