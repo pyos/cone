@@ -101,7 +101,7 @@ static int nero_restore_error(const uint8_t *data, size_t size, const char *func
 static int nero_on_frame(struct nero *n, enum nero_frame_type type, uint32_t rqid, const uint8_t *data, size_t size) {
     switch (type) {
         case NERO_FRAME_REQUEST: {
-            const uint8_t *sep = memchr(data, 0, size);
+            uint8_t *sep = memchr(data, 0, size);
             if (sep == NULL)
                 return mun_error(nero_protocol, "malformed request");
             const char *function = (const char *)data;
