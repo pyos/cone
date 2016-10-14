@@ -197,9 +197,9 @@ int nero_call_var(struct nero *n, const char *function, va_list args) {
         return -1;
     if (nero_call_wait(n, &fut, function, args) MUN_RETHROW) {
         mun_vec_fini(&fut.data);
-        for (unsigned i = 0; i < n->queued.size; i++)
-            if (n->queued.data[i] == &fut)
-                return mun_vec_erase(&n->queued, i, 1), -1;
+        unsigned i = mun_vec_find(&n->queued, *_ == &fut);
+        if (i != n->queued.size)
+            mun_vec_erase(&n->queued, i, 1);
         return -1;
     }
     mun_vec_fini(&fut.data);

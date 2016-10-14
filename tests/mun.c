@@ -30,8 +30,7 @@ static int test_mun_set() {
         if (mun_set_insert(&s, &i) == NULL MUN_RETHROW)
             return -1;
     for (int i = 24; i < 48; i++)
-        if (mun_set_erase(&s, &i))
-            return mun_error(assert, "erase %d failed", i);
+        mun_set_erase(&s, &i);
     for (int i = 128; i < 1024; i++)
         if (mun_set_insert(&s, &i) == NULL MUN_RETHROW)
             return -1;
@@ -50,8 +49,7 @@ static int test_mun_map() {
         if (mun_map_insert(&m, &((struct mun_pair(int, int)){i, i|4096})) == NULL MUN_RETHROW)
             return -1;
     for (int i = 24; i < 48; i++)
-        if (mun_map_erase(&m, &i))
-            return mun_error(assert, "erase %d failed", i);
+        mun_map_erase(&m, &i);
     for (int i = 128; i < 1024; i++)
         if (mun_map_insert(&m, &((struct mun_pair(int, int)){i, i|8192})) == NULL MUN_RETHROW)
             return -1;

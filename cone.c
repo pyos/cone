@@ -84,13 +84,14 @@ static int cone_event_io_add(struct cone_event_io *set, int fd, int write, struc
     mun_map_type(&set->fds) *e = mun_map_insert3(&set->fds, fd, {});
     if (e == NULL MUN_RETHROW)
         return -1;
+#if CONE_EPOLL
     if (mun_map_was_inserted(&set->fds, e)) {
-    #if CONE_EPOLL
         struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|EPOLLET|EPOLLIN|EPOLLOUT, {.fd = fd}};
         if (epoll_ctl(set->epoll, EPOLL_CTL_ADD, fd, &params) MUN_RETHROW_OS)
             return mun_map_erase(&set->fds, &fd), -1;
-    #endif
-    } else if (e->b.cbs[write].code)
+    }
+#endif
+    if (e->b.cbs[write].code)
         return mun_error(assert, "two readers/writers on one file descriptor");
     e->b.cbs[write] = f;
     return 0;
@@ -131,8 +132,7 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
 #else
     fd_set fds[2] = {};
     int max_fd = 0;
-    for (unsigned i = 0; i < set->fds.values.size; i++) {
-        mun_map_type(&set->fds) *e = &set->fds.values.data[i];
+    for mun_vec_iter(&set->fds.values, e) {
         if (max_fd <= e->a)
             max_fd = e->a + 1;
         for (int i = 0; i < 2; i++)
@@ -142,12 +142,10 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
     struct timeval us = {timeout / 1000000ull, timeout % 1000000ull};
     if (select(max_fd, &fds[0], &fds[1], NULL, &us) < 0)
         return errno != EINTR MUN_RETHROW_OS;
-    for (unsigned i = 0; i < set->fds.values.size; i++) {
-        mun_map_type(&set->fds) *e = &set->fds.values.data[i];
+    for mun_vec_iter(&set->fds.values, e)
         for (int i = 0; i < 2; i++)
             if (FD_ISSET(e->a, &fds[i]) && e->b.cbs[i].code && e->b.cbs[i].code(e->b.cbs[i].data) MUN_RETHROW)
                 return -1;
-    }
 #endif
     return 0;
 }
@@ -352,8 +350,8 @@ static __attribute__((noreturn)) void cone_body(struct cone *c) {
         c->flags |= CONE_FLAG_FAILED;
     }
     c->flags |= CONE_FLAG_FINISHED;
-    for (size_t i = 0; i < c->done.size; i++)
-        if (cone_event_schedule_add(&c->loop->at, mun_usec_monotonic(), c->done.data[i]))
+    for mun_vec_iter(&c->done, cb)
+        if (cone_event_schedule_add(&c->loop->at, mun_usec_monotonic(), *cb))
             mun_error_show("cone fatal", NULL), abort();
     cone_loop_dec(c->loop);
     cone_switch(c);

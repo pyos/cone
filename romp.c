@@ -95,8 +95,8 @@ static int romp_encode_vec(struct romp *out, const char **sign, const struct mun
     if (s.sign == ROMP_SIGN_VEC) {
         const char *signreset = *sign;
         const struct romp_nested_vec *v = (const struct romp_nested_vec *) in;
-        for (size_t i = 0; i < v->size; i++)
-            if (*sign = signreset, romp_encode_vec(out, sign, &v->data[i]) MUN_RETHROW)
+        for mun_vec_iter(v, nv)
+            if (*sign = signreset, romp_encode_vec(out, sign, nv) MUN_RETHROW)
                 return -1;
         return 0;
     }

@@ -47,197 +47,175 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 #define MUN_RETHROW        ? mun_error_up_at(MUN_CURRENT_FRAME) : 0
 #define MUN_RETHROW_OS     ? mun_error_at(-errno, "errno", MUN_CURRENT_FRAME, "OS error") : 0
 
-enum
-{
-    MUN_VEC_STATIC = 0x1,
-};
-
-#define mun_vec(T) { T* data; unsigned size, cap, shift, flags; }
-#define mun_vec_init_static(T, n) {.data = (void*)(T[n]){}, .cap = n, .flags = MUN_VEC_STATIC}
-#define mun_vec_init_borrow(ptr, n) {.data = (void*)ptr, .size = n, .cap = n, .flags = MUN_VEC_STATIC}
-#define mun_vec_init_array(array) mun_vec_init_borrow(array, sizeof(array) / sizeof((array)[0]))
-#define mun_vec_init_str(string) mun_vec_init_borrow(string, strlen(string))
+#define mun_vec(T) { T* data; unsigned size, cap; char is_static; }
+#define mun_vec_type(v)                 __typeof__((v)->data[0])
+#define mun_vec_iter(v, it)             (mun_vec_type(v) *it = (v)->data, *__end = &it[(v)->size]; it != __end; it++)
+#define mun_vec_strided(v)              sizeof(mun_vec_type(v)), (struct mun_vec*)(v)
+#define mun_vec_init_static(T, n)       {(T[n]){}, 0, n, 1}
+#define mun_vec_init_borrow(p, n)       {p,        n, n, 1}
+#define mun_vec_init_array(array)       mun_vec_init_borrow(array, sizeof(array) / sizeof((array)[0]))
+#define mun_vec_init_str(str)           mun_vec_init_borrow(str, strlen(str))
+#define mun_vec_eq(a, b)                mun_vec_eq_s(mun_vec_strided(a), mun_vec_strided(b))
+#define mun_vec_fini(v)                 mun_vec_fini_s((struct mun_vec *)(v))
+#define mun_vec_shift(v, start, offset) mun_vec_shift_s(mun_vec_strided(v), start, offset)
+#define mun_vec_reserve(v, elems)       mun_vec_reserve_s(mun_vec_strided(v), elems)
+#define mun_vec_splice(v, i, elems, n)  mun_vec_splice_s(mun_vec_strided(v), i, elems, n)
+#define mun_vec_extend(v, elems, n)     mun_vec_splice(v, (v)->size, elems, n)
+#define mun_vec_insert(v, i, elem)      mun_vec_splice(v, i, elem, 1)
+#define mun_vec_append(v, elem)         mun_vec_extend(v, elem, 1)
+#define mun_vec_erase(v, i, n)          mun_vec_erase_s(mun_vec_strided(v), i, n)
 
 struct mun_vec mun_vec(char);
 
-static inline void mun_vec_fini_s(size_t stride, struct mun_vec *vec) {
-    if (vec->flags & MUN_VEC_STATIC)
-        return;
-    free(vec->data - vec->shift * stride);
-    *vec = (struct mun_vec){};
+static inline void mun_vec_fini_s(struct mun_vec *v) {
+    if (!v->is_static)
+        free(v->data), *v = (struct mun_vec){};
 }
 
-static inline int mun_vec_eq_s(size_t stride1, const struct mun_vec *a, size_t stride2, const struct mun_vec *b) {
-    return stride1 == stride2 && a->size == b->size && !memcmp(a->data, b->data, a->size * stride1);
+static inline int mun_vec_eq_s(size_t sa, const struct mun_vec *a, size_t sb, const struct mun_vec *b) {
+    return sa == sb && a->size == b->size && !memcmp(a->data, b->data, a->size * sa);
 }
 
-static inline void mun_vec_shift_s(size_t stride, struct mun_vec *vec, size_t start, int offset) {
-    if (start < vec->size)
-        memmove(vec->data + (start + offset) * stride, vec->data + start * stride, (vec->size - start) * stride);
-    vec->size += offset;
+static inline void mun_vec_shift_s(size_t s, struct mun_vec *v, size_t start, int offset) {
+    if (start < v->size)
+        memmove(v->data + (start + offset) * s, v->data + start * s, (v->size - start) * s);
+    v->size += offset;
 }
 
-static inline int mun_vec_reserve_s(size_t stride, struct mun_vec *vec, size_t n) {
-    if (vec->size + n <= vec->cap - vec->shift)
+static inline int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) {
+    if (v->size + n <= v->cap)
         return 0;
-    if (vec->size + n <= vec->cap) {
-        memmove(vec->data - vec->shift * stride, vec->data, stride * vec->size);
-        vec->data -= vec->shift * stride;
-        vec->shift = 0;
-        return 0;
-    }
-    if (vec->flags & MUN_VEC_STATIC)
-        return mun_error(memory, "static vector of %u cannot fit %zu", vec->cap, vec->size + n);
-    struct mun_vec v2 = {.size = vec->size, .cap = vec->cap + (n > vec->cap ? n : vec->cap)};
-    if (!(v2.data = malloc(v2.cap * stride)))
-        return mun_error(memory, "%u x %zu bytes", v2.cap, stride);
-    memmove(v2.data, vec->data, vec->size * stride);
-    free(vec->data - vec->shift * stride);
-    *vec = v2;
+    if (v->is_static)
+        return mun_error(memory, "static vector of %u cannot fit %zu", v->cap, v->size + n);
+    unsigned ncap = v->cap + (n > v->cap ? n : v->cap);
+    void *r = realloc(v->data, ncap * s);
+    if (r == NULL)
+        return mun_error(memory, "%u * %zu bytes", ncap, s);
+    v->data = r;
+    v->cap = ncap;
     return 0;
 }
 
-static inline int mun_vec_splice_s(size_t stride, struct mun_vec *vec, size_t i, const void *elems, size_t n) {
-    if (mun_vec_reserve_s(stride, vec, n))
+static inline int mun_vec_splice_s(size_t s, struct mun_vec *v, size_t i, const void *e, size_t n) {
+    if (mun_vec_reserve_s(s, v, n))
         return -1;
-    mun_vec_shift_s(stride, vec, i, n);
-    memcpy(vec->data + i * stride, elems, n * stride);
+    mun_vec_shift_s(s, v, i, n);
+    memcpy(v->data + i * s, e, n * s);
     return 0;
 }
 
-static inline void mun_vec_erase_s(size_t stride, struct mun_vec *vec, size_t i, size_t n) {
-    if (i)
-        mun_vec_shift_s(stride, vec, i + n, -(int)n);
-    else {
-        vec->data  += n * stride;
-        vec->size  -= n;
-        vec->shift += n;
-    }
+static inline void mun_vec_erase_s(size_t s, struct mun_vec *v, size_t i, size_t n) {
+    mun_vec_shift_s(s, v, i + n, -(int)n);
 }
 
-#define mun_vec_strided(vec)              sizeof(*(vec)->data), (struct mun_vec*)(vec)
-#define mun_vec_eq(a, b)                  mun_vec_eq_s(mun_vec_strided(a), mun_vec_strided(b))
-#define mun_vec_fini(vec)                 mun_vec_fini_s(mun_vec_strided(vec))
-#define mun_vec_shift(vec, start, offset) mun_vec_shift_s(mun_vec_strided(vec), start, offset)
-#define mun_vec_reserve(vec, elems)       mun_vec_reserve_s(mun_vec_strided(vec), elems)
-#define mun_vec_splice(vec, i, elems, n)  mun_vec_splice_s(mun_vec_strided(vec), i, elems, n)
-#define mun_vec_extend(vec, elems, n)     mun_vec_splice(vec, (vec)->size, elems, n)
-#define mun_vec_insert(vec, i, elem)      mun_vec_splice(vec, i, elem, 1)
-#define mun_vec_append(vec, elem)         mun_vec_extend(vec, elem, 1)
-#define mun_vec_erase(vec, i, n)          mun_vec_erase_s(mun_vec_strided(vec), i, n)
-
-#define mun_vec_find(vec, eqexpr) ({                   \
-    unsigned __i = 0;                                  \
-    __typeof__(*(vec)->data) *_ = &(vec)->data[0];     \
-    while (__i < (vec)->size && !(eqexpr)) __i++, _++; \
-    __i;                                               \
+#define mun_vec_find(vec, eqexpr) ({                        \
+    unsigned __i = 0;                                       \
+    for mun_vec_iter(vec, _) if (eqexpr) break; else __i++; \
+    __i;                                                    \
 })
 
-#define mun_vec_bisect(vec, ltexpr) ({                                     \
-    unsigned __L = 0, __R = (vec)->size, __M;                              \
-    while (__L != __R) {                                                   \
-        __typeof__(*(vec)->data) *_ = &(vec)->data[__M = (__L + __R) / 2]; \
-        if (ltexpr) __R = __M; else __L = __M + 1;                         \
-    }                                                                      \
-    __L;                                                                   \
+#define mun_vec_bisect(vec, ltexpr) ({                              \
+    unsigned __L = 0, __R = (vec)->size, __M;                       \
+    while (__L != __R) {                                            \
+        mun_vec_type(vec) *_ = &(vec)->data[__M = (__L + __R) / 2]; \
+        if (ltexpr) __R = __M; else __L = __M + 1;                  \
+    }                                                               \
+    __L;                                                            \
 })
-
-struct mun_set_methods
-{
-    int (*cmp)(const void *, const void *, size_t);
-    size_t (*hash)(const void *, size_t);
-};
 
 #define mun_set(T)                    \
 {                                     \
-    struct mun_set_methods m;         \
     struct mun_vec(unsigned) indices; \
     struct mun_vec(T) values;         \
 }
 
-struct mun_set mun_set(char);
+struct mun_set
+{
+    struct mun_vec(unsigned) indices;
+    struct mun_vec values;
+};
 
-size_t mun_hash(const void *, size_t);
-
-static inline void mun_set_fini_s(size_t ks, size_t vs, struct mun_set *set) {
-    (void)ks;
-    mun_vec_fini(&set->indices);
-    mun_vec_fini_s(vs, (struct mun_vec *)&set->values);
-}
-
-static inline unsigned mun_set_index_s(size_t ks, size_t vs, struct mun_set *set, const void *k) {
-    unsigned i = set->m.hash(k, ks) & (set->indices.size - 1);
-    while (set->indices.data[i] && (set->indices.data[i] == (unsigned)-1 || set->m.cmp(k, &set->values.data[(set->indices.data[i] - 1) * vs], ks)))
-        i = (i + 1) & (set->indices.size - 1);
-    return i;
-}
-
-static inline void *mun_set_insert_nr(size_t ks, size_t vs, struct mun_set *set, const void *v) {
-    unsigned i = mun_set_index_s(ks, vs, set, v);
-    if (set->indices.data[i] == 0) {
-        if (mun_vec_splice_s(vs, (struct mun_vec *)&set->values, set->values.size, v, 1) MUN_RETHROW)
-            return NULL;
-        set->indices.data[i] = set->values.size;
-    }
-    return &set->values.data[(set->indices.data[i] - 1) * vs];
-}
-
-static inline void *mun_set_insert_s(size_t ks, size_t vs, struct mun_set *set, const void *v) {
-    if (set->values.size * 4 >= set->indices.size * 3) {
-        if (set->m.cmp == NULL)
-            set->m = (struct mun_set_methods){&memcmp, &mun_hash};
-        size_t size = set->indices.size, marked = 0;
-        for (unsigned i = 0; i < set->indices.size; i++)
-            marked += set->indices.data[i] == (unsigned)-1;
-        if (marked * 4 < size)
-            size *= 2;
-        if (size == 0)
-            size = 8;
-        struct mun_set q = {.m = set->m};
-        if (mun_vec_reserve(&q.indices, size) || mun_vec_reserve_s(vs, (struct mun_vec *)&q.values, set->values.size - marked))
-            return mun_set_fini_s(ks, vs, &q), NULL;
-        q.indices.size = size;
-        memset(q.indices.data, 0, q.indices.size * sizeof(unsigned));
-        for (unsigned i = 0; i < set->indices.size; i++)
-            if (set->indices.data[i] != 0 && set->indices.data[i] != (unsigned)-1)
-                mun_set_insert_nr(ks, vs, &q, &set->values.data[(set->indices.data[i] - 1) * vs]);
-        mun_set_fini_s(ks, vs, set);
-        *set = q;
-    }
-    return mun_set_insert_nr(ks, vs, set, v);
-}
-
-static inline void *mun_set_find_s(size_t ks, size_t vs, struct mun_set *set, const void *k) {
-    if (!set->indices.size)
-        return NULL;
-    unsigned i = mun_set_index_s(ks, vs, set, k);
-    return set->indices.data[i] ? &set->values.data[(set->indices.data[i] - 1) * vs] : NULL;
-}
-
-static inline int mun_set_erase_s(size_t ks, size_t vs, struct mun_set *set, const void *k) {
-    if (!set->indices.size)
-        return -1;
-    unsigned i = mun_set_index_s(ks, vs, set, k);
-    if (!set->indices.data[i])
-        return -1;
-    set->indices.data[i] = (unsigned)-1;
-    return 0;
-}
-
-#define mun_set_strided(s)         sizeof(*(s)->values.data), sizeof(*(s)->values.data), (struct mun_set*)(s)
-#define mun_set_fini(s)            mun_set_fini_s(mun_set_strided(s))
+#define mun_set_type(s)            mun_vec_type(&(s)->values)
+#define mun_set_strided(s)         sizeof(mun_set_type(s)), sizeof(mun_set_type(s)), (struct mun_set*)(s)
+#define mun_set_fini(s)            mun_set_fini_s((struct mun_set*)(s))
 #define mun_set_insert(s, v)       mun_set_insert_s(mun_set_strided(s), v)
 #define mun_set_find(s, k)         mun_set_find_s(mun_set_strided(s), k)
 #define mun_set_erase(s, k)        mun_set_erase_s(mun_set_strided(s), k)
 #define mun_set_was_inserted(s, v) ((v) - (s)->values.data == (s)->values.size - 1)
 
 #define mun_pair(A, B) { A a; B b; }
+#define mun_pair_type_a(p)         __typeof__((p)->a)
+#define mun_pair_type_b(p)         __typeof__((p)->b)
 #define mun_map(K, V)              mun_set(struct mun_pair(K, V))
-#define mun_map_type(m)            __typeof__(*(m)->values.data)
-#define mun_map_strided(m)         sizeof((m)->values.data->a), sizeof(*(m)->values.data), (struct mun_set*)(m)
-#define mun_map_fini(m)            mun_set_fini_s(mun_map_strided(m))
+#define mun_map_type(m)            mun_set_type(m)
+#define mun_map_type_key(m)        mun_pair_type_a((m)->values.data)
+#define mun_map_strided(m)         sizeof(mun_map_type_key(m)), sizeof(mun_map_type(m)), (struct mun_set*)(m)
+#define mun_map_fini(m)            mun_set_fini_s((struct mun_set*)(m))
 #define mun_map_insert(m, p)       mun_set_insert_s(mun_map_strided(m), p)
 #define mun_map_insert3(m, k, v)   mun_map_insert(m, &((mun_map_type(m)){k, v}))
 #define mun_map_find(m, k)         mun_set_find_s(mun_map_strided(m), k)
 #define mun_map_erase(m, k)        mun_set_erase_s(mun_map_strided(m), k)
 #define mun_map_was_inserted(m, v) mun_set_was_inserted(m, v)
+
+size_t mun_hash(const void *, size_t);
+
+static inline void mun_set_fini_s(struct mun_set *s) {
+    mun_vec_fini(&s->indices);
+    mun_vec_fini(&s->values);
+}
+
+static inline unsigned mun_set_index_s(size_t ks, size_t vs, struct mun_set *s, const void *k) {
+    unsigned i = mun_hash(k, ks) & (s->indices.size - 1);
+    while (s->indices.data[i] && (s->indices.data[i] == (unsigned)-1 || memcmp(k, &s->values.data[s->indices.data[i] * vs - vs], ks)))
+        i = (i + 1) & (s->indices.size - 1);
+    return i;
+}
+
+static inline void *mun_set_insert_nr(size_t ks, size_t vs, struct mun_set *s, const void *v) {
+    unsigned i = mun_set_index_s(ks, vs, s, v);
+    if (s->indices.data[i] == 0) {
+        if (mun_vec_splice_s(vs, &s->values, s->values.size, v, 1) MUN_RETHROW)
+            return NULL;
+        s->indices.data[i] = s->values.size;
+    }
+    return &s->values.data[s->indices.data[i] * vs - vs];
+}
+
+static inline void *mun_set_insert_s(size_t ks, size_t vs, struct mun_set *s, const void *v) {
+    if (s->values.size * 4 >= s->indices.size * 3) {
+        size_t size = s->indices.size, marked = 0;
+        for mun_vec_iter(&s->indices, i)
+            marked += *i == (unsigned)-1;
+        if (size == 0)
+            size = 8;
+        else if (marked * 4 < size)
+            size *= 2;
+        struct mun_set q = {};
+        if (mun_vec_reserve(&q.indices, size) || mun_vec_reserve_s(vs, &q.values, s->values.size - marked))
+            return mun_set_fini(&q), NULL;
+        memset(q.indices.data, 0, (q.indices.size = size) * sizeof(unsigned));
+        for mun_vec_iter(&s->indices, i)
+            if (*i != 0 && *i != (unsigned)-1)
+                mun_set_insert_nr(ks, vs, &q, &s->values.data[*i * vs - vs]);
+        mun_set_fini(s);
+        *s = q;
+    }
+    return mun_set_insert_nr(ks, vs, s, v);
+}
+
+static inline void *mun_set_find_s(size_t ks, size_t vs, struct mun_set *s, const void *k) {
+    if (s->indices.size) {
+        unsigned i = mun_set_index_s(ks, vs, s, k);
+        if (s->indices.data[i])
+            return &s->values.data[s->indices.data[i] * vs - vs];
+    }
+    return NULL;
+}
+
+static inline void mun_set_erase_s(size_t ks, size_t vs, struct mun_set *s, const void *k) {
+    if (s->indices.size) {
+        unsigned i = mun_set_index_s(ks, vs, s, k);
+        if (s->indices.data[i])
+            s->indices.data[i] = (unsigned)-1;
+    }
+}
