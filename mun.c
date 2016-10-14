@@ -48,10 +48,10 @@ int mun_error_at(int n, const char *name, struct mun_stackframe frame, const cha
     if (n >= 0 || strerror_r(-n, e.text, sizeof(e.text)))
         vsnprintf(e.text, sizeof(e.text), fmt, args);
     va_end(args);
-    return mun_error_up_at(frame);
+    return mun_error_up(frame);
 }
 
-int mun_error_up_at(struct mun_stackframe frame) {
+int mun_error_up(struct mun_stackframe frame) {
     if (e.stacklen < sizeof(e.stack) / sizeof(frame))
         e.stack[e.stacklen++] = frame;
     return -1;

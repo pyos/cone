@@ -39,12 +39,12 @@ struct mun_error
 
 struct mun_error *mun_last_error(void);
 int  mun_error_at(int, const char *name, struct mun_stackframe, const char *fmt, ...) __attribute__((format(printf, 4, 5)));
-int  mun_error_up_at(struct mun_stackframe);
+int  mun_error_up(struct mun_stackframe);
 void mun_error_show(const char *prefix, const struct mun_error *err);
 
 #define MUN_CURRENT_FRAME ((struct mun_stackframe){__FILE__, __FUNCTION__, __LINE__})
 #define mun_error(id, ...) mun_error_at(mun_errno_##id, #id, MUN_CURRENT_FRAME, __VA_ARGS__)
-#define MUN_RETHROW        ? mun_error_up_at(MUN_CURRENT_FRAME) : 0
+#define MUN_RETHROW        ? mun_error_up(MUN_CURRENT_FRAME) : 0
 #define MUN_RETHROW_OS     ? mun_error_at(-errno, "errno", MUN_CURRENT_FRAME, "OS error") : 0
 
 #define mun_vec(T) { T* data; unsigned size, cap; char is_static; }
