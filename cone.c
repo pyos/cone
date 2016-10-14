@@ -374,7 +374,11 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
     struct cone *c = (struct cone *)malloc(size);
     if (c == NULL)
         return mun_error(memory, "no space for stack"), NULL;
-    *c = (struct cone){.refcount = 1, .loop = loop, .body = body};
+    c->refcount = 1;
+    c->flags = 0;
+    c->loop = loop;
+    c->body = body;
+    c->done = (struct cone_event){};
 #if CONE_XCHG_RSP
     c->rsp = (void **)(c->stack + size - sizeof(struct cone)) - 4;
     c->rsp[0] = c;                  // %rdi
