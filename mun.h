@@ -1,29 +1,16 @@
 #pragma once
-#include <time.h>
 #include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/time.h>
 
 typedef int64_t mun_usec;
 
 #define MUN_USEC_MAX INT64_MAX
 
-static inline mun_usec mun_usec_now() {
-    struct timeval val;
-    return gettimeofday(&val, NULL) ? MUN_USEC_MAX : (mun_usec)val.tv_sec * 1000000ull + val.tv_usec;
-}
-
-#if __APPLE__ && __MACH__
-mun_usec mun_usec_monotonic();
-#else
-static inline mun_usec mun_usec_monotonic() {
-    struct timespec t;
-    return clock_gettime(CLOCK_MONOTONIC, &t) ? MUN_USEC_MAX : (mun_usec)t.tv_sec*1000000ull + t.tv_nsec/1000;
-}
-#endif
+mun_usec mun_usec_now(void);
+mun_usec mun_usec_monotonic(void);
 
 enum
 {
