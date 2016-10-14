@@ -125,15 +125,10 @@ static inline void mun_vec_erase_s(size_t s, struct mun_vec *v, size_t i, size_t
 
 #define mun_set(T)                    \
 {                                     \
+    unsigned pending_dels;            \
     struct mun_vec(unsigned) indices; \
     struct mun_vec(T) values;         \
 }
-
-struct mun_set
-{
-    struct mun_vec(unsigned) indices;
-    struct mun_vec values;
-};
 
 #define mun_set_type(s)            mun_vec_type(&(s)->values)
 #define mun_set_strided(s)         sizeof(mun_set_type(s)), sizeof(mun_set_type(s)), (struct mun_set*)(s)
@@ -159,6 +154,8 @@ struct mun_set
 
 size_t mun_hash(const void *, size_t);
 
+struct mun_set mun_set(char);
+
 static inline void mun_set_fini_s(struct mun_set *s) {
     mun_vec_fini(&s->indices);
     mun_vec_fini(&s->values);
@@ -174,7 +171,7 @@ static inline unsigned mun_set_index_s(size_t ks, size_t vs, struct mun_set *s, 
 static inline void *mun_set_insert_nr(size_t ks, size_t vs, struct mun_set *s, const void *v) {
     unsigned i = mun_set_index_s(ks, vs, s, v);
     if (s->indices.data[i] == 0) {
-        if (mun_vec_splice_s(vs, &s->values, s->values.size, v, 1) MUN_RETHROW)
+        if (mun_vec_splice_s(vs, (struct mun_vec *)&s->values, s->values.size, v, 1) MUN_RETHROW)
             return NULL;
         s->indices.data[i] = s->values.size;
     }
@@ -182,16 +179,16 @@ static inline void *mun_set_insert_nr(size_t ks, size_t vs, struct mun_set *s, c
 }
 
 static inline void *mun_set_insert_s(size_t ks, size_t vs, struct mun_set *s, const void *v) {
-    if (s->values.size * 4 >= s->indices.size * 3) {
-        size_t size = s->indices.size, marked = 0;
-        for mun_vec_iter(&s->indices, i)
-            marked += *i == (unsigned)-1;
-        if (size == 0)
-            size = 8;
-        else if (marked * 4 < size)
-            size *= 2;
+    unsigned load = s->values.size - s->pending_dels, size = s->indices.size;
+    if (size == 0)
+        size = 8;
+    else if (load * 4 >= size * 3)
+        size *= 2;
+    else if (load * 4 <= size)
+        size /= 2;
+    if (size != s->indices.size || s->pending_dels * 4 > size) {
         struct mun_set q = {};
-        if (mun_vec_reserve(&q.indices, size) || mun_vec_reserve_s(vs, &q.values, s->values.size - marked))
+        if (mun_vec_reserve(&q.indices, size) || mun_vec_reserve_s(vs, (struct mun_vec *)&q.values, s->values.size - s->pending_dels))
             return mun_set_fini(&q), NULL;
         memset(q.indices.data, 0, (q.indices.size = size) * sizeof(unsigned));
         for mun_vec_iter(&s->indices, i)
@@ -216,6 +213,6 @@ static inline void mun_set_erase_s(size_t ks, size_t vs, struct mun_set *s, cons
     if (s->indices.size) {
         unsigned i = mun_set_index_s(ks, vs, s, k);
         if (s->indices.data[i])
-            s->indices.data[i] = (unsigned)-1;
+            s->indices.data[i] = (unsigned)-1, s->pending_dels++;
     }
 }
