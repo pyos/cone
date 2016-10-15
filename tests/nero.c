@@ -24,7 +24,7 @@ static int test_nero_bad_call(struct nero *conn) {
     int32_t result = 0;
     if (!nero_call(conn, "add", "", "i4", &result) MUN_RETHROW)
         return mun_error(assert, "nero_call should have failed");
-    if (mun_last_error()->code != mun_errno_romp_protocol)
+    if (mun_last_error()->code != mun_errno_romp)
         return -1;
     return 0;
 }
