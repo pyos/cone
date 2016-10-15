@@ -1,8 +1,3 @@
-//
-// deck // distributed lock
-//
-// See deck.h for API.
-//
 #include "deck.h"
 
 #if DECK_DEBUG
@@ -161,17 +156,19 @@ int deck_add(struct deck *lk, struct nero *rpc, const char *request, const char 
 
 void deck_del(struct deck *lk, struct nero *rpc) {
     unsigned i = mun_vec_find(&lk->rpcs, _->rpc == rpc);
+    if (i == lk->rpcs.size)
+        return;
     uint32_t pid = lk->rpcs.data[i].pid;
     nero_del(rpc, lk->rpcs.data[i].request);
     nero_del(rpc, lk->rpcs.data[i].release);
     mun_vec_erase(&lk->rpcs, i, 1);
-    if (pid != lk->pid) {
-        unsigned j = mun_vec_find(&lk->queue, _->pid == pid);
-        if (j != lk->queue.size)
-            mun_vec_erase(&lk->queue, j, 1);
-        if (j == 0)
-            deck_wake(lk);
-    }
+    if (pid == lk->pid)
+        return;
+    unsigned j = mun_vec_find(&lk->queue, _->pid == pid);
+    if (j != lk->queue.size)
+        mun_vec_erase(&lk->queue, j, 1);
+    if (j == 0)
+        deck_wake(lk);
 }
 
 static int deck_release_impl(struct deck *lk, const char *msg) {
