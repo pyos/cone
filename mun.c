@@ -1,3 +1,8 @@
+//
+// mun // should've been in the standard library
+//
+// Seriously. See `mun.h` for API.
+//
 #include "mun.h"
 #include <time.h>
 #include <stdio.h>
@@ -8,6 +13,7 @@
 #include <mach/clock.h>
 #include <mach/mach.h>
 
+// Doesn't even have `clock_gettime`. "Certified UNIX" my ass.
 static clock_serv_t mun_mach_clock;
 
 static void __attribute__((constructor)) mun_mach_clock_init(void) {
@@ -45,6 +51,7 @@ int mun_error_at(int n, const char *name, struct mun_stackframe frame, const cha
     e = (struct mun_error){.code = n < 0 ? -n : n, .stacklen = 0, .name = name};
     va_list args;
     va_start(args, fmt);
+    // NOTE this requires an XSI, not GNU, version of strerror_r(3). No _GNU_SOURCE allowed!
     if (n >= 0 || strerror_r(-n, e.text, sizeof(e.text)))
         vsnprintf(e.text, sizeof(e.text), fmt, args);
     va_end(args);
@@ -74,6 +81,7 @@ void mun_error_show(const char *prefix, const struct mun_error *err) {
 }
 
 size_t mun_hash(const void *data, size_t size) {
+    // TODO a harder, better, faster, stronger hash function.
     size_t hash = 0;
     for (const char *c = (const char *)data; size--; c++)
         hash = hash * 33 + *c;
