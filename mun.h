@@ -97,6 +97,8 @@ static inline int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) {
 }
 
 static inline int mun_vec_splice_s(size_t s, struct mun_vec *v, size_t i, const void *e, size_t n) {
+    if (!n)
+        return 0;
     if (mun_vec_reserve_s(s, v, n))
         return -1;
     mun_vec_shift_s(s, v, i, n);
