@@ -1,8 +1,6 @@
 #pragma once
 //
-// mun // should've been in the standard library
-//
-// Okay, maybe these macros are a bit too weird, even for C.
+// mun // because any decent C library needs its own error handling and dynamic arrays.
 //
 #include <errno.h>
 #include <stddef.h>
@@ -13,9 +11,6 @@
 // A microsecond-resolution clock. That's good enough; epoll_wait(2) can't handle
 // less than millisecond resolution anyway.
 typedef int64_t mun_usec;
-
-#define MUN_USEC_MAX INT64_MAX
-
 mun_usec mun_usec_now(void);
 mun_usec mun_usec_monotonic(void);
 
@@ -38,14 +33,11 @@ struct mun_stackframe
 
 struct mun_error
 {
+    int code;  // Either `mun_errno_X`, or an actual `errno`.
     const char *name;
-    // One of `mun_errno_*`, not necessarily from the above enum. Or `errno`
-    // if this error was caused by a C library function.
-    int code;
-    // Number of entries in `stack` (from the beginning) that do not contain garbage.
-    unsigned stacklen;
     char text[128];
     // Stack at the time of the error, starting from innermost frame (where `mun_error_at` was called).
+    unsigned stacklen;
     struct mun_stackframe stack[16];
 };
 
@@ -53,10 +45,10 @@ struct mun_error
 // so this information may be outdated. Only valid until the next call to `mun_error_at`.
 struct mun_error *mun_last_error(void);
 
-// Overwrite the last error with a new one, with a brand new `printf`-style message.
+// Overwrite the last error with a new one, with a `printf`-style message. Always "fails".
 int mun_error_at(int, const char *name, struct mun_stackframe, const char *fmt, ...) __attribute__((format(printf, 4, 5)));
 
-// Add a stack frame to the last error, if there's space for it.
+// Add a stack frame to the last error, if there's space for it. Always "fails".
 int mun_error_up(struct mun_stackframe);
 
 // Print an error to stderr, possibly with pretty colored highlighting. If `err` is NULL,
@@ -71,25 +63,20 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 // Call `mun_error_at` with the current stack frame, error id "mun_errno_X", and name "X".
 #define mun_error(id, ...) mun_error_at(mun_errno_##id, #id, MUN_CURRENT_FRAME, __VA_ARGS__)
 
-// When used as a suffix to an expression (e.g. `do_something MUN_RETHROW`), returns 0
-// if the expression evaluates to `false` (returns 0, for example, meaning "no error"),
-// else returns -1 and calls `mun_error_up` with the current frame. Intended to make
-// stack traces point to correct line numbers (where the call actually happened, as opposed
-// to some `if (ret != 0)` or `return mun_error_up()` later.)
+// Should be used as a suffix to an expression that returns something true-ish if it failed,
+// in which case the current stack frame is marked in its error. Otherwise, 0 is returned.
 #define MUN_RETHROW ? mun_error_up(MUN_CURRENT_FRAME) : 0
 
-// Same as `MUN_RETHROW`, except assumes the expression does not use `mun_error`, but rather
-// sets `errno` and converts the latter to the former.
+// Same as `MUN_RETHROW`, but assumes the expression is a standard library function that
+// sets `errno` and does not call `mun_error_at`.
 #define MUN_RETHROW_OS ? mun_error_at(-errno, "errno", MUN_CURRENT_FRAME, "OS error") : 0
 
-// Type-unsafe, but still pretty generic, dynamic vector.
+// Type-unsafe, but still pretty generic, dynamic vector. Zero-initialized, or with one
+// of the `mun_vec_init_*` macros; finalized with `mun_vec_fini`.
 //
-// Initializer: zero.
-// Finalizer: `mun_vec_fini`.
-//
-// Usage:
-//     `struct mun_vec(some_type) variable = {};`
-//     `struct vector_of_some_types mun_vec(some_type);`
+//     struct vector_of_some_types mun_vec(some_type);
+//     struct mun_vec(some_type) variable = {};
+//     struct vector_of_some_types another_variable = {};
 //
 // Note: two `struct mun_vec(some_type)`s are technically not compatible with each other
 //       when used in the same translation unit. They have the same layout, but they're
@@ -98,13 +85,11 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 // Note: all of the below functions and macros take vectors by pointers.
 //
 #define mun_vec(T) { T* data; unsigned size, cap; char is_static; }
+#define mun_vec_type(v) __typeof__((v)->data[0])
 
 // Weakly typed vector. Loses information about the contents, but allows any strongly
 // typed vector to be passed to a function.
 struct mun_vec mun_vec(char);
-
-// "Return" the type of values stored in a vector.
-#define mun_vec_type(v) __typeof__((v)->data[0])
 
 // Decay a strongly typed vector into a (sizeof(T), weakly typed vector) pair.
 // Macros accept pointers to strongly typed vectors; functions with names ending with `_s`
@@ -144,8 +129,7 @@ struct mun_vec mun_vec(char);
 //
 #define mun_vec_init_str(str) mun_vec_init_borrow(str, strlen(str))
 
-// Finalizer of `struct mun_vec(T)`. The vector is still usable (and empty) after
-// a call to this.
+// Finalizer of `struct mun_vec(T)`. The vector becomes empty (but still usable).
 #define mun_vec_fini(v) mun_vec_fini_s((struct mun_vec *)(v))
 
 static inline void mun_vec_fini_s(struct mun_vec *v) {
@@ -166,9 +150,8 @@ static inline void mun_vec_shift_s(size_t s, struct mun_vec *v, size_t start, in
 
 // Resize the vector so that it may contain at least `n` more elements.
 //
-// Errors:
-//     `memory`: ran out of heap space;
-//     `memory`: this vector is static and cannot be resized.
+// Errors: `memory` if either ran out of address space, or this vector's underlying
+//         storage is static and cannot be resized.
 //
 #define mun_vec_reserve(v, n) mun_vec_reserve_s(mun_vec_strided(v), n)
 
@@ -191,8 +174,7 @@ static inline int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) {
 // Insert: insert an element at `i`th position.
 // Append: insert an element at the end.
 //
-// Errors:
-//     `memory`: see `mun_vec_reserve`.
+// Errors: `memory`; see `mun_vector_reserve`.
 //
 #define mun_vec_splice(v, i, e, n) mun_vec_splice_s(mun_vec_strided(v), i, e, n)
 #define mun_vec_insert(v, i, e)    mun_vec_splice(v, i, e, 1)

@@ -1,8 +1,3 @@
-//
-// nero // network romp
-//
-// One-to-one RPC over file descriptors. See `nero.h` for API.
-//
 #include "nero.h"
 #include <unistd.h>
 
@@ -35,8 +30,7 @@ struct nero_future
 // A coroutine that drains the write buffer and stops when it's empty. (This is slightly
 // easier than notifying it of new data.)
 //
-// Errors:
-//     `os`: see write(2).
+// Errors: see write(2).
 //
 static int nero_writer(struct nero *n) {
     ssize_t size = 0;
@@ -54,9 +48,7 @@ static int nero_writer(struct nero *n) {
 
 // Put data into the write buffer and spawn a draining coroutine if one is not yet running.
 //
-// Errors:
-//     `memory`: could not spawn a coroutine;
-//     `memory`: no space left to extend the buffer.
+// Errors: `memory`.
 //
 static int nero_write(struct nero *n, const uint8_t *data, size_t size) {
     if (!n->writer && !(n->writer = cone(&nero_writer, n)) MUN_RETHROW)
@@ -67,8 +59,8 @@ static int nero_write(struct nero *n, const uint8_t *data, size_t size) {
 // nero_frame ::= {type : u8} {size : u24} {rqid : u32} {data : u8}[size]
 //
 // Errors:
-//     `nero_overflow`: frame size limit exceeded;
-//     `memory`: see `nero_write`.
+//   * `nero_overflow`: frame size limit exceeded;
+//   * `memory`.
 //
 static int nero_write_header(struct nero *n, enum nero_frame_type type, uint32_t rqid, size_t size) {
     if (size > NERO_MAX_FRAME_SIZE)
@@ -115,8 +107,8 @@ static int nero_write_response_error(struct nero *n, uint32_t rqid) {
 // Parse data from a NERO_FRAME_RESPONSE_ERROR into a `mun_error`.
 //
 // Errors:
-//     `nero_remote` (variable errno): on success;
-//     `nero_protocol`: invalid frame format.
+//   * `nero_remote` (with errno from frame) on success;
+//   * `nero_protocol`: invalid frame format.
 //
 static int nero_restore_error(const uint8_t *data, size_t size, const char *function) {
     if (size < 6 || data[size - 1] != 0)
@@ -132,9 +124,9 @@ static int nero_restore_error(const uint8_t *data, size_t size, const char *func
 // Handle an inbound frame.
 //
 // Errors:
-//     `memory`: could not write response to buffer or wake a coroutine waiting for one;
-//     `nero_protocol`: invalid frame format or unknown type;
-//     `nero_overflow`: the local implementation called by a peer generated too much output.
+//   * `memory`;
+//   * `nero_protocol`: invalid frame format or unknown type;
+//   * `nero_overflow`: the local implementation called by a peer generated too much output.
 //
 static int nero_on_frame(struct nero *n, enum nero_frame_type type, uint32_t rqid, const uint8_t *data, size_t size) {
     if (type == NERO_FRAME_REQUEST) {
@@ -170,12 +162,11 @@ static int nero_on_frame(struct nero *n, enum nero_frame_type type, uint32_t rqi
 // Call a remote function and wait for a response.
 //
 // Errors:
-//     any: returned by peer;
-//     any romp error: could not serialize the arguments, see `romp_encode`;
-//     any romp error: could not deserialize the return value, see `romp_decode`;
-//     `memory`: no space in write buffer;
-//     `memory`: could not pause the coroutine;
-//     `cancelled`: the channel was finalized before a response arrived.
+//   * any, if returned by peer;
+//   * any romp error if unable to serialize the arguments, see `romp_encode`;
+//   * any romp error if unable to deserialize the return value, see `romp_decode`;
+//   * `cancelled`: the channel was finalized before a response arrived;
+//   * `memory`.
 //
 static int nero_call_wait(struct nero *n, struct nero_future *fut, const char *function, va_list args) {
     struct romp enc = {};

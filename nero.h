@@ -1,8 +1,6 @@
 #pragma once
 //
-// nero // network romp
-//
-// As much of an RPC as C allows, anyway.
+// nero // network romp // an RPC. Or as much of an RPC as C allows, anyway.
 //
 #ifndef NERO_MAX_FRAME_SIZE
 // 1. Refuse to send frames bigger than this.
@@ -21,11 +19,8 @@ enum
     mun_errno_nero_not_exported,
 };
 
-// The channel.
-//
-// Initializer: designated; must set `fd` and zero-initialize the rest.
-// Finalizer: `nero_fini`.
-//
+// The channel. Zero-initialized, except for `fd`, which must be a bidirectional
+// file descriptor (e.g. a socket); finalized with `nero_fini`.
 struct nero
 {
     int fd;
@@ -40,10 +35,7 @@ struct nero
 // A single exported function. Must do deserialization and serialization on its own
 // because there's no way to construct varargs using standard C. Owns neither the name
 // nor the data; make sure they are live until `nero_del` or `nero_fini` is called.
-//
-// Initializer: designated; also created by `nero_closure`.
-// Finalizer: none.
-//
+// Aggregate-initialized; also see `nero_closure` below.
 struct nero_closure
 {
     const char *name;
@@ -56,8 +48,7 @@ struct nero_closure
 
 // Export `c` functions atomically.
 //
-// Errors:
-//     `memory`: no space left to extend the function table.
+// Errors: `memory`.
 //
 static inline int nero_add(struct nero *n, const struct nero_closure *cs, size_t c) {
     return mun_vec_extend(&n->exported, cs, c);
@@ -68,7 +59,7 @@ static inline void nero_del(struct nero *n, const char *name) {
     mun_vec_erase(&n->exported, mun_vec_find(&n->exported, !strcmp(name, _->name)), 1);
 }
 
-// Finalizer of `struct nero`. Single use.
+// Finalizer of `struct nero`. Object state is undefined afterwards.
 void nero_fini(struct nero *);
 
 // Wait for incoming messages and handle them in a loop. The channel must not be destroyed
@@ -76,10 +67,10 @@ void nero_fini(struct nero *);
 // wait until it terminates first.
 //
 // Errors:
-//     `os`: see read(2);
-//     `memory`: could not allocate space for a read/write buffer;
-//     `nero_protocol`: received an oversized, unknown, or invalid frame;
-//     `nero_overflow`: a local handler wrote too much data into its result vector.
+//   * see read(2);
+//   * `nero_protocol`: received an oversized, unknown, or invalid frame;
+//   * `nero_overflow`: a local handler wrote too much data into its result vector;
+//   * `memory`.
 //
 int nero_run(struct nero *);
 
