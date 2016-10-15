@@ -32,7 +32,8 @@ int cone_event_emit(struct cone_event *ev) {
     return 0;
 }
 
-struct cone_event_schedule mun_vec(struct cone_event_at { mun_usec at; struct cone_closure f; });
+struct cone_event_at { mun_usec at; struct cone_closure f; };
+struct cone_event_schedule mun_vec(struct cone_event_at);
 
 static int cone_event_schedule_add(struct cone_event_schedule *ev, mun_usec at, struct cone_closure f) {
     return mun_vec_insert(ev, mun_vec_bisect(ev, at < _->at), &((struct cone_event_at){at, f}));
