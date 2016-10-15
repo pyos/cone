@@ -1,3 +1,8 @@
+//
+// cone // coroutines
+//
+// Signal-based stack jumping. See `cone.h` for API.
+//
 #include "cone.h"
 #include <fcntl.h>
 #include <signal.h>
@@ -11,14 +16,24 @@
 #if !CONE_XCHG_RSP
 #include <setjmp.h>
 #ifndef SA_ONSTACK
-#define SA_ONSTACK 0x8000000
+#define SA_ONSTACK 0x8000000  // avoid requiring _GNU_SOURCE
 #endif
 #endif
 
+// Call a function when the event is triggered. If the event is currently being handled,
+// the function will be called after all previously added callbacks. Events are one-shot;
+// to receive another notification, call `cone_event_add` again.
+//
+// Errors:
+//     `memory`: ran out of space while adding the callback.
+//
 static int cone_event_add(struct cone_event *ev, struct cone_closure f) {
     return mun_vec_append(ev, &f);
 }
 
+// Cancel a previous `cone_event_add(ev, f)`. No-op if there was none, or the event
+// was triggered and the callback has already been fired. Safe to call while the event
+// is being handled.
 static void cone_event_del(struct cone_event *ev, struct cone_closure f) {
     unsigned i = mun_vec_find(ev, _->code == f.code && _->data == f.data);
     if (i != ev->size)
@@ -32,19 +47,43 @@ int cone_event_emit(struct cone_event *ev) {
     return 0;
 }
 
-struct cone_event_at { mun_usec at; struct cone_closure f; };
+// A priority queue of functions to be called at precise points in time.
+//
+// Initializer: zero.
+// Finalizer: `mun_vec_fini`; must not be destroyed if there are callbacks attached.
+//
 struct cone_event_schedule mun_vec(struct cone_event_at);
+struct cone_event_at { mun_usec at; struct cone_closure f; };
 
+// Schedule a callback to be fired at some time defined by a monotonic clock
+// (see `mun_usec_monotonic`).
+//
+// Errors:
+//     `memory`: ran out of space while adding the callback.
+//
 static int cone_event_schedule_add(struct cone_event_schedule *ev, mun_usec at, struct cone_closure f) {
     return mun_vec_insert(ev, mun_vec_bisect(ev, at < _->at), &((struct cone_event_at){at, f}));
 }
 
+// Remove a callback previously scheduled with `cone_event_schedule_add(ev, at, f)`.
+// (`at` must be exactly the same.) No-op if there is no such callback or it has already
+// been called.
 static void cone_event_schedule_del(struct cone_event_schedule *ev, mun_usec at, struct cone_closure f) {
     for (size_t i = mun_vec_bisect(ev, at < _->at); i-- && ev->data[i].at == at; )
         if (ev->data[i].f.code == f.code && ev->data[i].f.data == f.data)
             return mun_vec_erase(ev, i, 1);
 }
 
+// Call all due callbacks and pop them off the queue. If a callback fails, it is
+// not removed, and no more functions are called/popped either.
+//
+// Return value:
+//     0 on error, MUN_USEC_MAX if there are no more callbacks in the queue,
+//     time until the next callback is due otherwise.
+//
+// Errors:
+//     any: depends on the functions in the queue.
+//
 static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev) {
     for (; ev->size; mun_vec_erase(ev, 0, 1)) {
         mun_usec now = mun_usec_monotonic();
@@ -56,17 +95,33 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev) {
     return MUN_USEC_MAX;
 }
 
+// A set of callbacks attached to a single file descriptor: one for reading, one
+// for writing. Both are called on errors.
+//
+// Initializer: zero.
+// Finalizer: none; must not be destroyed if there are callbacks attached.
+//
 struct cone_event_fd
 {
     struct cone_closure cbs[2];
 };
 
+// A map of file descriptors to corresponding callbacks.
+//
+// Initializer: `cone_event_io_init`.
+// Finalizer: `cone_event_io_fini`; must not be destroyed if there are callbacks attached.
+//
 struct cone_event_io
 {
     int epoll;
     struct mun_map(int, struct cone_event_fd) fds;
 };
 
+// Initializer of `cone_event_io`.
+//
+// Errors:
+//     `os`: if CONE_EPOLL is 1; see epoll_create1(2).
+//
 static int cone_event_io_init(struct cone_event_io *set) {
     *set = (struct cone_event_io){.epoll = -1};
 #if CONE_EPOLL
@@ -75,12 +130,23 @@ static int cone_event_io_init(struct cone_event_io *set) {
     return 0;
 }
 
+// Finalizer of `cone_event_io`. Single use.
 static void cone_event_io_fini(struct cone_event_io *set) {
     mun_map_fini(&set->fds);
     if (set->epoll >= 0)
         close(set->epoll);
 }
 
+// Request a function to be called when a file descriptor becomes available for reading
+// or writing. If it already is, behavior is undefined, so make sure `read`/`write` returns
+// EAGAIN or EWOULDBLOCK before doing this. Only one callback can be attached to a file
+// event simultaneously.
+//
+// Errors:
+//     `assert`: there is already a callback attached to this event.
+//     `memory`: ran out of space while adding a map entry;
+//     `os`: if CONE_EPOLL is 1; see epoll_ctl(2).
+//
 static int cone_event_io_add(struct cone_event_io *set, int fd, int write, struct cone_closure f) {
     mun_map_type(&set->fds) *e = mun_map_insert3(&set->fds, fd, (struct cone_event_fd){});
     if (e == NULL MUN_RETHROW)
@@ -98,6 +164,7 @@ static int cone_event_io_add(struct cone_event_io *set, int fd, int write, struc
     return 0;
 }
 
+// Remove a previously attached callback. No-op if there is none or this is not the correct one.
 static void cone_event_io_del(struct cone_event_io *set, int fd, int write, struct cone_closure f) {
     mun_map_type(&set->fds) *e = mun_map_find(&set->fds, &fd);
     if (e == NULL || e->b.cbs[write].code != f.code || e->b.cbs[write].data != f.data)
@@ -111,6 +178,16 @@ static void cone_event_io_del(struct cone_event_io *set, int fd, int write, stru
     }
 }
 
+// Fire all pending I/O events; if there are none, wait for an event for at most `timeout`
+// microseconds. (However, it's possible to wait for less than that and still do nothing,
+// like if a signal interrupts the system call.) If `timeout` is 0, it is assumed that
+// a previous `cone_event_schedule_emit` call has failed, so this function fails as well.
+//
+// Errors:
+//     `os`: see either epoll_wait(2) or select(2) depending on CONE_EPOLL.
+//     whatever the last error was if timeout is 0: see `cone_event_schedule_emit`;
+//     any: depends on the callbacks attached;
+//
 static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
     if (timeout == 0 MUN_RETHROW)
         return -1;
@@ -151,6 +228,12 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
     return 0;
 }
 
+// An amalgamation of `cone_event_io`, `cone_event_schedule`, and a pipe that forces
+// `cone_event_io_emit` to stop instantly.
+//
+// Initializer: `cone_loop_init`.
+// Finalizer: `cone_loop_fini`; must not be removed until there are no callbacks or coroutines.
+//
 struct cone_loop
 {
     int selfpipe[2];
@@ -166,12 +249,20 @@ int cone_unblock(int fd) {
     return flags == -1 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) MUN_RETHROW_OS;
 }
 
+// Read a byte from the ping pipe, then schedule a ping event to be fired on next
+// iteration. (It is unsafe to emit events from an I/O event handler; the less points
+// of failure, the better.)
+//
+// Errors:
+//     `memory`: ran out of space while scheduling an event to be fired.
+//
 static int cone_loop_consume_ping(struct cone_loop *loop) {
     ssize_t rd = read(loop->selfpipe[0], &rd, sizeof(rd));  // never yields
     atomic_store_explicit(&loop->pinged, 0, memory_order_release);
     return cone_event_schedule_add(&loop->at, mun_usec_monotonic(), cone_bind(&cone_event_emit, &loop->ping)) MUN_RETHROW;
 }
 
+// Finalizer of `cone_loop`. Single use.
 static void cone_loop_fini(struct cone_loop *loop) {
     close(loop->selfpipe[0]);
     close(loop->selfpipe[1]);
@@ -180,6 +271,14 @@ static void cone_loop_fini(struct cone_loop *loop) {
     mun_vec_fini(&loop->at);
 }
 
+// Initializer of `cone_loop`.
+//
+// Errors:
+//     `os`: see pipe(2);
+//     `os`: see `cone_unblock`;
+//     `os`: see `cone_event_io_init`;
+//     `memory`: ran out of space while adding a ping pipe callback.
+//
 static int cone_loop_init(struct cone_loop *loop) {
     if (pipe(loop->selfpipe) MUN_RETHROW_OS)
         return -1;
@@ -193,6 +292,14 @@ static int cone_loop_init(struct cone_loop *loop) {
     return 0;
 }
 
+// Until the reference count reaches zero, fire off callbacks while waiting for I/O
+// events in between. WARNING: should the loop stop while the reference count is nonzero,
+// the program's state will become indeterminate due to eternally frozen coroutines.
+// For this reason, it's better to do as little as possible directly in callbacks.
+//
+// Errors:
+//     any: see `cone_event_schedule-emit` and `cone_event_io_emit`.
+//
 static int cone_loop_run(struct cone_loop *loop) {
     while (atomic_load_explicit(&loop->active, memory_order_acquire))
         if (cone_event_io_emit(&loop->io, cone_event_schedule_emit(&loop->at)) MUN_RETHROW)
@@ -200,6 +307,14 @@ static int cone_loop_run(struct cone_loop *loop) {
     return 0;
 }
 
+// Send a ping through the pipe, waking up the loop if it's currently waiting for I/O
+// events and triggering a ping event. (If the loop is firing off timed callbacks, only
+// the second part is useful.) Surprisingly, this function is thread-safe.
+//
+// Errors:
+//     `os`: should the write of a single byte fail somehow despite the fact that nothing
+//           is written if we know a previous ping has not been consumed yet.
+//
 static int cone_loop_ping(struct cone_loop *loop) {
     _Bool expect = 0;
     if (atomic_compare_exchange_strong(&loop->pinged, &expect, 1))
@@ -208,24 +323,43 @@ static int cone_loop_ping(struct cone_loop *loop) {
     return 0;
 }
 
+// Increment the reference count of the loop. `cone_loop_run` will only stop when
+// a matching number of calls to `cone_loop_dec` is done.
 static void cone_loop_inc(struct cone_loop *loop) {
     atomic_fetch_add_explicit(&loop->active, 1, memory_order_release);
 }
 
+// Decrement the reference count. If it reaches 0, send a ping to notify and stop the loop.
+//
+// Errors:
+//     `os`: if refcount reaches zero and a ping fails; see `cone_loop_ping`.
+//
 static int cone_loop_dec(struct cone_loop *loop) {
     return atomic_fetch_sub_explicit(&loop->active, 1, memory_order_release) == 1 ? cone_loop_ping(loop) : 0;
 }
 
 enum
 {
+    // `cone_schedule` has been called, but `cone_run` has not (yet).
     CONE_FLAG_SCHEDULED = 0x01,
+    // Currently on this coroutine's stack.
     CONE_FLAG_RUNNING   = 0x02,
+    // This coroutine has reached its end. The next `cone_switch` will abort.
     CONE_FLAG_FINISHED  = 0x04,
+    // This coroutine has reached its end, and the `error` field contains a present.
     CONE_FLAG_FAILED    = 0x08,
+    // This coroutine has reached an untimely end due to `cone_cancel`.
     CONE_FLAG_CANCELLED = 0x10,
+    // This coroutine's `error` field has been examined by `cone_join`, so printing it
+    // to stderr is unnecessary.
     CONE_FLAG_RETHROWN  = 0x20,
 };
 
+// A nice, symmetric shape.
+//
+// Initializer: invalid; allocated by `cone_spawn`.
+// Finalizer: invalid; deallocated by `cone_decref`.
+//
 struct cone
 {
     unsigned refcount, flags;
@@ -241,9 +375,11 @@ struct cone
     char stack[];
 };
 
-_Thread_local struct cone * volatile cone;
+// The innermost coroutine that has `CONE_RUNNING` set.
+_Thread_local struct cone * volatile cone = NULL;
 
-static int cone_switch(struct cone *c) {
+// Swap the stack, in either direction.
+static void cone_switch(struct cone *c) {
     c->flags ^= CONE_FLAG_RUNNING;
 #if CONE_XCHG_RSP
     __asm__(" jmp  %=0f       \n"
@@ -263,17 +399,25 @@ static int cone_switch(struct cone *c) {
     if (!setjmp(c->ctx[!!(c->flags & CONE_FLAG_RUNNING)]))
         longjmp(c->ctx[!(c->flags & CONE_FLAG_RUNNING)], 1);
 #endif
-    return 0;
 }
 
+// Switch to this coroutine's stack. Behavior is undefined if already on it.
+//
+// Errors: none; the `int` return is for type compatibility with `cone_closure`.
+//
 static int cone_run(struct cone *c) {
     c->flags &= ~CONE_FLAG_SCHEDULED;
     struct cone* prev = cone;
-    int ret = cone_switch(cone = c);
+    cone_switch(cone = c);
     cone = prev;
-    return ret;
+    return 0;
 }
 
+// Call `cone_run` on the next iteration of the event loop.
+//
+// Errors:
+//     `memory`: ran out of space while scheduling the callback.
+//
 static int cone_schedule(struct cone *c) {
     if (!(c->flags & CONE_FLAG_SCHEDULED))
         if (cone_event_schedule_add(&c->loop->at, mun_usec_monotonic(), cone_bind(&cone_run, c)) MUN_RETHROW)
@@ -282,15 +426,21 @@ static int cone_schedule(struct cone *c) {
     return 0;
 }
 
-#define cone_pause(always_unsub, ev_add, ev_del, ...) do {                                     \
-    if (ev_add(__VA_ARGS__, cone_bind(&cone_schedule, cone)) || cone_switch(cone) MUN_RETHROW) \
-        return -1;                                                                             \
-    if (always_unsub || cone->flags & CONE_FLAG_CANCELLED)                                     \
-        ev_del(__VA_ARGS__, cone_bind(&cone_schedule, cone));                                  \
-    if (!(cone->flags & CONE_FLAG_CANCELLED))                                                  \
-        return 0;                                                                              \
-    cone->flags &= ~CONE_FLAG_CANCELLED;                                                       \
-    return cone_cancel(cone);                                                                  \
+// Sleep until an event is fired. If the coroutine is cancelled during that time,
+// unsubscribe and throw an error.
+//
+// Errors: see `cone_wait`, `cone_iowait`, `cone_sleep`.
+//
+#define cone_pause(always_unsub, ev_add, ev_del, ...) do {                \
+    if (ev_add(__VA_ARGS__, cone_bind(&cone_schedule, cone)) MUN_RETHROW) \
+        return -1;                                                        \
+    cone_switch(cone);                                                    \
+    if (always_unsub || cone->flags & CONE_FLAG_CANCELLED)                \
+        ev_del(__VA_ARGS__, cone_bind(&cone_schedule, cone));             \
+    if (!(cone->flags & CONE_FLAG_CANCELLED))                             \
+        return 0;                                                         \
+    cone->flags &= ~CONE_FLAG_CANCELLED;                                  \
+    return cone_cancel(cone);                                             \
 } while (0)
 
 int cone_wait(struct cone_event *ev) {
@@ -345,6 +495,11 @@ int cone_cancel(struct cone *c) {
     return cone_schedule(c) MUN_RETHROW;
 }
 
+// Main function run on the coroutine's stack. Must not return because the return
+// address is undefined. Errors encountered while executing the body are saved
+// in the object; `memory` errors during scheduling of the "done" callbacks are fatal
+// and terminate the program. Likewise, trying to go past the end of a coroutine
+// is an instant core dump.
 static __attribute__((noreturn)) void cone_body(struct cone *c) {
     if (c->flags & CONE_FLAG_CANCELLED ? cone_cancel(c) : c->body.code(c->body.data)) {
         c->error = *mun_last_error();
@@ -360,7 +515,11 @@ static __attribute__((noreturn)) void cone_body(struct cone *c) {
 }
 
 #if !CONE_XCHG_RSP
+// Argument to `cone_sigstackswitch` because I can't be bothered to use `sigqueue`.
 static _Thread_local struct cone *volatile cone_sigctx;
+
+// Construct a jump context that runs `cone_body` on an alternate stack. Intended
+// to be used with `sigaltstack`, `sigaction`, and `SA_ONSTACK`.
 static void cone_sigstackswitch() {
     struct cone *c = cone_sigctx;
     if (setjmp(c->ctx[0]))
@@ -368,6 +527,8 @@ static void cone_sigstackswitch() {
 }
 #endif
 
+// Create a coroutine on a different event loop (not the one we're currently on).
+// See documentation for `cone_spawn` in header.
 static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct cone_closure body) {
     size &= ~(size_t)15;
     if (size < sizeof(struct cone) + MINSIGSTKSZ)
@@ -382,10 +543,10 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
     c->done = (struct cone_event){};
 #if CONE_XCHG_RSP
     c->rsp = (void **)(c->stack + size - sizeof(struct cone)) - 4;
-    c->rsp[0] = c;                  // %rdi
-    c->rsp[1] = NULL;               // %rbp
-    c->rsp[2] = (void*)&cone_body;  // %rip
-    c->rsp[3] = NULL;               // return address
+    c->rsp[0] = c;                  // %rdi: first argument
+    c->rsp[1] = NULL;               // %rbp: nothing; there's no previous frame yet
+    c->rsp[2] = (void*)&cone_body;  // %rip: code to execute;
+    c->rsp[3] = NULL;               // return address: nothing; same as for %rbp
 #else
     stack_t old_stk, new_stk = {.ss_sp = c->stack, .ss_size = size - sizeof(struct cone)};
     struct sigaction old_act, new_act;
@@ -395,7 +556,7 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
     sigaltstack(&new_stk, &old_stk);
     sigaction(SIGUSR1, &new_act, &old_act);
     cone_sigctx = c;
-    raise(SIGUSR1);
+    raise(SIGUSR1);  // FIXME should block SIGUSR1 until this line
     sigaction(SIGUSR1, &old_act, NULL);
     sigaltstack(&old_stk, NULL);
 #endif
@@ -419,15 +580,19 @@ int cone_root(size_t stksz, struct cone_closure body) {
     return cone_loop_fini(&loop), cone_join(c) MUN_RETHROW;
 }
 
+// Like `main`, but called in the root coroutine.
+extern int comain(int argc, const char **argv);
+
 struct cone_main
 {
-    int retcode;
-    int argc;
+    int retcode, argc;
     const char **argv;
 };
 
-extern int comain(int argc, const char **argv);
-
+// Actually run `comain`. `cone_closure` does not allow passing two arguments.
+//
+// Errors: none; nonzero exit code is not an error as far as the application is concerned.
+//
 static int cone_main(struct cone_main *c) {
     c->retcode = comain(c->argc, c->argv);
     return 0;

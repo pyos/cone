@@ -29,7 +29,7 @@ static int test_romp_vec() {
     struct romp in = out;
     if (romp_decode(&in, "vi1", &decoded) MUN_RETHROW)
         return -1;
-    if (!mun_vec_eq(&original, &decoded))
+    if (original.size != decoded.size || memcmp(original.data, decoded.data, decoded.size))
         return mun_error(assert, "vector was corrupted during coding");
     return 0;
 }
@@ -52,7 +52,8 @@ static int test_romp_vec_vec() {
     if (decoded.size != original.size)
         return mun_error(assert, "sizes of outer vectors differ");
     for (unsigned i = 0; i < decoded.size; i++)
-        if (!mun_vec_eq(&original.data[i], &decoded.data[i]))
+        if (original.data[i].size != decoded.data[i].size ||
+            memcmp(original.data[i].data, decoded.data[i].data, decoded.data[i].size))
             return mun_error(assert, "inner vectors differ");
     return 0;
 }
