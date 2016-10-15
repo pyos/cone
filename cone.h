@@ -1,8 +1,6 @@
 #pragma once
 //
-// cone // coroutines
-//
-// Signal-based stack jumping: public API.
+// cone // jumping stacks, with signals!
 //
 // NOTE: if a program is linked with cone.o, it must define `comain` instead of `main`.
 //       (`comain` is automatically run in a coroutine. This could be done with `main`,
@@ -10,14 +8,12 @@
 //
 
 #if !defined(CONE_EPOLL) && __linux__
-// Use {0: select, 1: epoll} to wait for I/O. Default: 1 if supported (i.e. on Linux), else 0.
+// Use {0: select, 1: epoll} to wait for I/O.
 #define CONE_EPOLL 1
 #endif
 
 #if !defined(CONE_XCHG_RSP) && (__linux__ || __APPLE__) && __x86_64__
-// Use {0: sigaltstack and setjmp/longjmp, 1: inline x86-64 assembly} to switch stacks.
-// (Assembly is, of course, faster.) Default: 1 if supported (i.e. on x86-64 platforms
-// that use the System V ABI), else 0.
+// Use {0: sigaltstack+sigaction+setjmp+longjmp, 1: x86-64 SysV ABI assembly} to switch stacks.
 #define CONE_XCHG_RSP 1
 #endif
 
@@ -30,11 +26,7 @@
 #include "mun.h"
 
 // A single function bound to some data. Naturally, does not own the pointer; manage
-// it on your own.
-//
-// Initializer: designated (.code required, .data optional); also created by `cone_bind`.
-// Finalizer: none.
-//
+// it on your own. Aggregate-initialized; also see `cone_bind`.
 struct cone_closure
 {
     int (*code)(void*);
@@ -44,18 +36,14 @@ struct cone_closure
 // Construct a `cone_closure` while casting the function to the correct type.
 #define cone_bind(f, data) ((struct cone_closure){(int(*)(void*))f, data})
 
-// A manually triggered event.
-//
-// Initializer: zero.
-// Finalizer: `mun_vec_fini`; however, must not be destroyed if there are callbacks attached.
-//
+// A manually triggered event. Zero-initialized; finalized with `mun_vec_fini`; must not
+// be destroyed if there are callbacks attached, else program state is indeterminate.
 struct cone_event mun_vec(struct cone_closure);
 
 // Call everything added with `cone_event_add`. If a callback fails, it is not removed
-// from the queue, and no further callbacks are called/popped either.
+// from the queue, and no more callbacks are fired.
 //
-// Errors:
-//     any: depends on functions in the queue.
+// Errors: rethrows anything from the callbacks in the queue.
 //
 int cone_event_emit(struct cone_event *);
 
@@ -64,8 +52,7 @@ extern _Thread_local struct cone * volatile cone;
 
 // Switch a file descriptor into non-blocking mode.
 //
-// Errors:
-//     `os`: see fcntl(2), particularly its F_GETFL and F_SETFL modes.
+// Errors: see fcntl(2), particularly the F_GETFL and F_SETFL modes.
 //
 int cone_unblock(int fd);
 
@@ -81,10 +68,7 @@ int cone_root(size_t stack, struct cone_closure);
 // of 2: one reference for the calling function, and one for the event loop, dropped
 // automatically when the coroutine terminates.
 //
-// Errors:
-//     `memory`: could not allocate space for the stack.
-//     `memory`: ran out of space while setting up the finalizing callbacks.
-//     `memory`: ran out of space while scheduling the coroutine to be run.
+// Errors: `memory`.
 //
 struct cone *cone_spawn(size_t stack, struct cone_closure);
 
@@ -96,8 +80,8 @@ struct cone *cone_spawn(size_t stack, struct cone_closure);
 // No-op if the coroutine has already finished.
 //
 // Errors:
-//     `cancelled`: if `c` is an active coroutine;
-//     `memory`: if not, and ran out of space while scheduling for it to run.
+//   * `cancelled`: if `c` is `cone`;
+//   * `memory`.
 //
 int cone_cancel(struct cone *);
 
@@ -106,50 +90,42 @@ int cone_cancel(struct cone *);
 void cone_incref(struct cone *);
 
 // Decrement the reference count. If it becomes zero, destroy the coroutine; also,
-// if the coroutine has failed with an error, print that to stderr.
+// if the coroutine has failed with an error, it's printed to stderr (see `mun_error_show`).
 //
-// Errors: whatever the last error was if coroutine is NULL. Probably from `cone_spawn`.
-//         (This is intended to make `cone_decref(cone_spawn(...))` correct.)
+// Errors: if argument is NULL, rethrows the last error (in case it was from `cone_spawn`).
 //
 int cone_decref(struct cone *);
 
 // Sleep until a coroutine finishes. If it happens to throw an error in the process,
 // rethrow it into the current coroutine instead of printing. Consumes a single reference.
-// Same as `cone_decref` if the coroutine has already finished.
 //
-// Errors:
-//     `memory`, `cancelled`: see `cone_wait`;
-//     any: depends on what the coroutine may throw.
+// Errors: see `cone_wait`; also, anything thrown by the awaited coroutine.
 //
 int cone_join(struct cone *);
 
 // Sleep until an event is fired manually.
 //
 // Errors:
-//     `memory`: ran out of space while subscribing to the event.
-//     `cancelled`: `cone_cancel` was called while this coroutine was sleeping.
+//   * `cancelled`: `cone_cancel` was called while this coroutine was sleeping.
+//   * `memory`.
 //
 int cone_wait(struct cone_event *);
 
 // Sleep until a file descriptor is ready for reading/writing. Behavior is undefined
-// if it already is (call read/write until it returns EAGAIN/EWOULDBLOCK).
+// if it already is (call read/write until it returns EAGAIN/EWOULDBLOCK first).
 //
-// Errors:
-//     `assert`: another coroutine is already waiting for the same event.
-//     `memory`, `cancelled`: see `cone_wait`.
+// Errors: same as `cone_wait`, plus `assert` if another coroutine is waiting for the same event.
 //
 int cone_iowait(int fd, int write);
 
-// Sleep just because. Don't get interrupted by signals.
+// Sleep just because. Unlike normal system calls, does not interact with signals.
 //
-// Errors: `memory`, `cancelled`; see `cone_wait.
+// Errors: same as `cone_wait`.
 //
 int cone_sleep(mun_usec delay);
 
 // Wait until the next iteration of the event loop.
 //
-// Errors:
-//     `os`: could not send a ping to the event loop;
-//     `memory`, `cancelled`: see `cone_loop_ping` and `cone_wait`.
+// Errors: same as `cone_wait`.
 //
 int cone_yield(void);

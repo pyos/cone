@@ -1,8 +1,3 @@
-//
-// mun // should've been in the standard library
-//
-// Seriously. See `mun.h` for API.
-//
 #include "mun.h"
 #include <time.h>
 #include <stdio.h>
@@ -27,7 +22,8 @@ static void __attribute__((destructor)) mun_mach_clock_fini(void) {
 
 mun_usec mun_usec_now(void) {
     struct timeval val;
-    return gettimeofday(&val, NULL) ? MUN_USEC_MAX : (mun_usec)val.tv_sec * 1000000ull + val.tv_usec;
+    gettimeofday(&val, NULL);
+    return (mun_usec)val.tv_sec * 1000000ull + val.tv_usec;
 }
 
 mun_usec mun_usec_monotonic(void) {
@@ -78,12 +74,4 @@ void mun_error_show(const char *prefix, const struct mun_error *err) {
     fprintf(stderr, mun_error_fmt_head[ansi], prefix, err->code, err->name, err->text);
     for (unsigned i = 0; i < err->stacklen; i++)
         fprintf(stderr, mun_error_fmt_line[ansi], i + 1, err->stack[i].func, err->stack[i].file, err->stack[i].line);
-}
-
-size_t mun_hash(const void *data, size_t size) {
-    // TODO a harder, better, faster, stronger hash function.
-    size_t hash = 0;
-    for (const char *c = (const char *)data; size--; c++)
-        hash = hash * 33 + *c;
-    return hash;
 }

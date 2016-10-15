@@ -4,7 +4,7 @@
 main: obj/main.o obj/mun.o obj/cone.o obj/cold.o obj/romp.o obj/nero.o obj/deck.o
 	$(CCMD) $^ -o $@ -ldl
 
-tests: tests/mun tests/cone tests/romp tests/nero
+tests: tests/cone tests/romp tests/nero tests/deck
 
 tests/%: obj/tests/%
 	$<

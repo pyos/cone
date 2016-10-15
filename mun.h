@@ -1,8 +1,6 @@
 #pragma once
 //
-// mun // should've been in the standard library
-//
-// Okay, maybe these macros are a bit too weird, even for C.
+// mun // because any decent C library needs its own error handling and dynamic arrays.
 //
 #include <errno.h>
 #include <stddef.h>
@@ -13,9 +11,6 @@
 // A microsecond-resolution clock. That's good enough; epoll_wait(2) can't handle
 // less than millisecond resolution anyway.
 typedef int64_t mun_usec;
-
-#define MUN_USEC_MAX INT64_MAX
-
 mun_usec mun_usec_now(void);
 mun_usec mun_usec_monotonic(void);
 
@@ -38,14 +33,11 @@ struct mun_stackframe
 
 struct mun_error
 {
+    int code;  // Either `mun_errno_X`, or an actual `errno`.
     const char *name;
-    // One of `mun_errno_*`, not necessarily from the above enum. Or `errno`
-    // if this error was caused by a C library function.
-    int code;
-    // Number of entries in `stack` (from the beginning) that do not contain garbage.
-    unsigned stacklen;
     char text[128];
     // Stack at the time of the error, starting from innermost frame (where `mun_error_at` was called).
+    unsigned stacklen;
     struct mun_stackframe stack[16];
 };
 
@@ -53,10 +45,10 @@ struct mun_error
 // so this information may be outdated. Only valid until the next call to `mun_error_at`.
 struct mun_error *mun_last_error(void);
 
-// Overwrite the last error with a new one, with a brand new `printf`-style message.
+// Overwrite the last error with a new one, with a `printf`-style message. Always "fails".
 int mun_error_at(int, const char *name, struct mun_stackframe, const char *fmt, ...) __attribute__((format(printf, 4, 5)));
 
-// Add a stack frame to the last error, if there's space for it.
+// Add a stack frame to the last error, if there's space for it. Always "fails".
 int mun_error_up(struct mun_stackframe);
 
 // Print an error to stderr, possibly with pretty colored highlighting. If `err` is NULL,
@@ -71,25 +63,20 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 // Call `mun_error_at` with the current stack frame, error id "mun_errno_X", and name "X".
 #define mun_error(id, ...) mun_error_at(mun_errno_##id, #id, MUN_CURRENT_FRAME, __VA_ARGS__)
 
-// When used as a suffix to an expression (e.g. `do_something MUN_RETHROW`), returns 0
-// if the expression evaluates to `false` (returns 0, for example, meaning "no error"),
-// else returns -1 and calls `mun_error_up` with the current frame. Intended to make
-// stack traces point to correct line numbers (where the call actually happened, as opposed
-// to some `if (ret != 0)` or `return mun_error_up()` later.)
+// Should be used as a suffix to an expression that returns something true-ish if it failed,
+// in which case the current stack frame is marked in its error. Otherwise, 0 is returned.
 #define MUN_RETHROW ? mun_error_up(MUN_CURRENT_FRAME) : 0
 
-// Same as `MUN_RETHROW`, except assumes the expression does not use `mun_error`, but rather
-// sets `errno` and converts the latter to the former.
+// Same as `MUN_RETHROW`, but assumes the expression is a standard library function that
+// sets `errno` and does not call `mun_error_at`.
 #define MUN_RETHROW_OS ? mun_error_at(-errno, "errno", MUN_CURRENT_FRAME, "OS error") : 0
 
-// Type-unsafe, but still pretty generic, dynamic vector.
+// Type-unsafe, but still pretty generic, dynamic vector. Zero-initialized, or with one
+// of the `mun_vec_init_*` macros; finalized with `mun_vec_fini`.
 //
-// Initializer: zero.
-// Finalizer: `mun_vec_fini`.
-//
-// Usage:
-//     `struct mun_vec(some_type) variable = {};`
-//     `struct vector_of_some_types mun_vec(some_type);`
+//     struct vector_of_some_types mun_vec(some_type);
+//     struct mun_vec(some_type) variable = {};
+//     struct vector_of_some_types another_variable = {};
 //
 // Note: two `struct mun_vec(some_type)`s are technically not compatible with each other
 //       when used in the same translation unit. They have the same layout, but they're
@@ -98,13 +85,11 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 // Note: all of the below functions and macros take vectors by pointers.
 //
 #define mun_vec(T) { T* data; unsigned size, cap; char is_static; }
+#define mun_vec_type(v) __typeof__((v)->data[0])
 
 // Weakly typed vector. Loses information about the contents, but allows any strongly
 // typed vector to be passed to a function.
 struct mun_vec mun_vec(char);
-
-// "Return" the type of values stored in a vector.
-#define mun_vec_type(v) __typeof__((v)->data[0])
 
 // Decay a strongly typed vector into a (sizeof(T), weakly typed vector) pair.
 // Macros accept pointers to strongly typed vectors; functions with names ending with `_s`
@@ -144,8 +129,7 @@ struct mun_vec mun_vec(char);
 //
 #define mun_vec_init_str(str) mun_vec_init_borrow(str, strlen(str))
 
-// Finalizer of `struct mun_vec(T)`. The vector is still usable (and empty) after
-// a call to this.
+// Finalizer of `struct mun_vec(T)`. The vector becomes empty (but still usable).
 #define mun_vec_fini(v) mun_vec_fini_s((struct mun_vec *)(v))
 
 static inline void mun_vec_fini_s(struct mun_vec *v) {
@@ -166,9 +150,8 @@ static inline void mun_vec_shift_s(size_t s, struct mun_vec *v, size_t start, in
 
 // Resize the vector so that it may contain at least `n` more elements.
 //
-// Errors:
-//     `memory`: ran out of heap space;
-//     `memory`: this vector is static and cannot be resized.
+// Errors: `memory` if either ran out of address space, or this vector's underlying
+//         storage is static and cannot be resized.
 //
 #define mun_vec_reserve(v, n) mun_vec_reserve_s(mun_vec_strided(v), n)
 
@@ -191,8 +174,7 @@ static inline int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) {
 // Insert: insert an element at `i`th position.
 // Append: insert an element at the end.
 //
-// Errors:
-//     `memory`: see `mun_vec_reserve`.
+// Errors: `memory`; see `mun_vector_reserve`.
 //
 #define mun_vec_splice(v, i, e, n) mun_vec_splice_s(mun_vec_strided(v), i, e, n)
 #define mun_vec_insert(v, i, e)    mun_vec_splice(v, i, e, 1)
@@ -242,145 +224,3 @@ static inline void mun_vec_erase_s(size_t s, struct mun_vec *v, size_t i, size_t
     }                                                               \
     __L;                                                            \
 })
-
-// A pair of objects stored by value.
-//
-// Initializer: designated.
-// Finalizer: none.
-//
-#define mun_pair(A, B) { A a; B b; }
-#define mun_pair_type_a(p) __typeof__((p)->a)
-#define mun_pair_type_b(p) __typeof__((p)->b)
-
-// Compute some unspecified non-cryptographic hash of the data in memory.
-size_t mun_hash(const void *, size_t);
-
-// A dense hash set. Values are hashed by their memory contents, or some prefix thereof,
-// and compared byte-by-byte. `indices` is a sparse open-addressed set of indices into
-// the dense `values` array; each index has the same hash as the value it points to.
-// Supposedly, this improves locality.
-//
-// Initializer: zero.
-// Finalizer: `mun_set_fini`.
-//
-#define mun_set(T)                    \
-{                                     \
-    unsigned pending_dels;            \
-    struct mun_vec(unsigned) indices; \
-    struct mun_vec(T) values;         \
-}
-
-struct mun_set mun_set(char);
-
-// A dense hash map. Basically a set that stores (key, value) pairs and only computes
-// the hash from the memory contents of the former.
-//
-// Initializer: zero.
-// Finalizer: `mun_map_fini`.
-//
-#define mun_map(K, V) mun_set(struct mun_pair(K, V))
-
-// "Return" the type of elements stored in the set.
-#define mun_set_type(s) mun_vec_type(&(s)->values)
-#define mun_map_type(m) mun_set_type(m)
-#define mun_map_type_key(m) mun_pair_type_a((m)->values.data)
-
-// Decay a strongly typed set into a (sizeof(key), sizeof(whole value), weakly typed set)
-// triple.  For sets, sizeof(key) == sizeof(whole value); for maps, key is just the first
-// element of the value pair.
-#define mun_set_strided(s) sizeof(mun_set_type(s)), sizeof(mun_set_type(s)), (struct mun_set*)(s)
-#define mun_map_strided(m) sizeof(mun_map_type_key(m)), sizeof(mun_map_type(m)), (struct mun_set*)(m)
-
-// Finalizer of `struct mun_set(T)` and `struct mun_map(T)`. The set/map is empty
-// and usable after a call to this.
-#define mun_set_fini(s) mun_set_fini_s((struct mun_set*)(s))
-#define mun_map_fini(m) mun_set_fini_s((struct mun_set*)(m))
-
-static inline void mun_set_fini_s(struct mun_set *s) {
-    mun_vec_fini(&s->indices);
-    mun_vec_fini(&s->values);
-    s->pending_dels = 0;
-}
-
-// Try to insert a new element into the set; return either a pointer to it, or to the same
-// element that has been added earlier. For maps, the element is a key-value pair.
-// `mun_map_insert3` copy-constructs one in-place from a key and a value.
-//
-// Errors:
-//     `memory`: the set is overloaded, but there is not enough space to resize it.
-//
-#define mun_set_insert(s, v)     mun_set_insert_s(mun_set_strided(s), v)
-#define mun_map_insert(m, p)     mun_set_insert_s(mun_map_strided(m), p)
-#define mun_map_insert3(m, k, v) mun_map_insert(m, &((mun_map_type(m)){(k), (v)}))
-
-static inline unsigned mun_set_index_s(size_t ks, size_t vs, struct mun_set *s, const void *k) {
-    unsigned i = mun_hash(k, ks) & (s->indices.size - 1);
-    while (s->indices.data[i] && (s->indices.data[i] == (unsigned)-1 || memcmp(k, &s->values.data[s->indices.data[i] * vs - vs], ks)))
-        i = (i + 1) & (s->indices.size - 1);
-    return i;
-}
-
-static inline void *mun_set_insert_nr(size_t ks, size_t vs, struct mun_set *s, const void *v) {
-    unsigned i = mun_set_index_s(ks, vs, s, v);
-    if (s->indices.data[i] == 0) {
-        if (mun_vec_splice_s(vs, (struct mun_vec *)&s->values, s->values.size, v, 1) MUN_RETHROW)
-            return NULL;
-        s->indices.data[i] = s->values.size;
-    }
-    return &s->values.data[s->indices.data[i] * vs - vs];
-}
-
-static inline void *mun_set_insert_s(size_t ks, size_t vs, struct mun_set *s, const void *v) {
-    unsigned load = s->values.size - s->pending_dels, size = s->indices.size;
-    if (size == 0)
-        size = 8;
-    else if (load * 4 >= size * 3)
-        size *= 2;
-    else if (load * 4 <= size)
-        size /= 2;
-    if (size != s->indices.size || s->pending_dels * 4 > size) {
-        struct mun_set q = {};
-        if (mun_vec_reserve(&q.indices, size) || mun_vec_reserve_s(vs, (struct mun_vec *)&q.values, s->values.size - s->pending_dels))
-            return mun_set_fini(&q), NULL;
-        memset(q.indices.data, 0, (q.indices.size = size) * sizeof(unsigned));
-        for mun_vec_iter(&s->indices, i)
-            if (*i != 0 && *i != (unsigned)-1)
-                mun_set_insert_nr(ks, vs, &q, &s->values.data[*i * vs - vs]);
-        mun_set_fini(s);
-        *s = q;
-    }
-    return mun_set_insert_nr(ks, vs, s, v);
-}
-
-// Check if the element pointed to by the return value of `mun_set_insert` was inserted
-// by that call rather than some earlier one. Behavior is undefined if the set was
-// modified in between the `mun_set_insert`/`mun_set_was_inserted` call pair.
-#define mun_set_was_inserted(s, v) ((v) - (s)->values.data == (s)->values.size - 1)
-#define mun_map_was_inserted(m, v) mun_set_was_inserted(m, v)
-
-// Locate an element by its key. (For sets, the key is the value itself.) Return NULL
-// if this value is not in the set.
-#define mun_set_find(s, k) mun_set_find_s(mun_set_strided(s), k)
-#define mun_map_find(m, k) mun_set_find_s(mun_map_strided(m), k)
-
-static inline void *mun_set_find_s(size_t ks, size_t vs, struct mun_set *s, const void *k) {
-    if (s->indices.size) {
-        unsigned i = mun_set_index_s(ks, vs, s, k);
-        if (s->indices.data[i])
-            return &s->values.data[s->indices.data[i] * vs - vs];
-    }
-    return NULL;
-}
-
-// Locate a value by its key and remove it from the set. No-op if the element is not
-// in the set.
-#define mun_set_erase(s, k) mun_set_erase_s(mun_set_strided(s), k)
-#define mun_map_erase(m, k) mun_set_erase_s(mun_map_strided(m), k)
-
-static inline void mun_set_erase_s(size_t ks, size_t vs, struct mun_set *s, const void *k) {
-    if (s->indices.size) {
-        unsigned i = mun_set_index_s(ks, vs, s, k);
-        if (s->indices.data[i])
-            s->indices.data[i] = (unsigned)-1, s->pending_dels++;
-    }
-}

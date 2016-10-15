@@ -1,8 +1,8 @@
 //
 // cold // cone libc definitions
 //
-// This (optional) unit provides alternate definitions for some libc functions known to block.
-// Original libc functions are loaded with `dlsym`, so dynamic linking is required for this to work.
+// Optional unit that shadows some standard library symbols. Originals
+// are loaded with `dlsym`; dynamic linking is required for this to work.
 //
 #include "cone.h"
 #include <time.h>
@@ -14,31 +14,23 @@
     static ret (*libc_##name)(__VA_ARGS__) = NULL; \
     extern ret name(__VA_ARGS__)
 
-//
 // Yield to the event loop until `expr` stops failing with EWOULDBLOCK/EAGAIN, assuming
-// it attempts to read from/write to `fd`; store the result of `expr` in `r`.
-// If `fd` is not in non-blocking mode, this is equivalent to just `r = expr`.
-// If `expr` uses a different file descriptor or a different mode, behavior is undefined.
-//
+// it attempts to read from/write to `fd`; store the result in `r`. Same as `expr` if
+// `fd` is blocking.
 #define cold_iowait(r, fd, write, expr) \
     do r = expr; while (cone && r < 0 && (errno == EWOULDBLOCK || errno == EAGAIN) && !cone_iowait(fd, write));
 
-// Same as above, but in function-returning-`rettype` body form.
 #define cold_iocall(fd, write, rettype, expr) \
     { rettype r; cold_iowait(r, fd, write, expr); return r; }
 
 // man listen 2
-//
-// Changed: `fd` is automatically switched to non-blocking mode.
-//
+// `fd` is automatically switched to non-blocking mode.
 cold_def(int, listen, int fd, int backlog) {
     return !cone || !cone_unblock(fd) ? libc_listen(fd, backlog) : -1;
 }
 
 // man accept 2
-//
-// Changed: returned socket is non-blocking. Fails if `fcntl(fd, O_NONBLOCK)` does.
-//
+// Returned socket is non-blocking. Error codes of `fcntl` apply.
 cold_def(int, accept, int fd, struct sockaddr *addr, socklen_t *addrlen) {
     int client; cold_iowait(client, fd, 0, libc_accept(fd, addr, addrlen));
     if (client >= 0 && cone && cone_unblock(client))
@@ -47,18 +39,14 @@ cold_def(int, accept, int fd, struct sockaddr *addr, socklen_t *addrlen) {
 }
 
 #ifdef __linux__
-// man accept 2  --  Linux extension syscall
-//
-// Changed: SOCK_NONBLOCK is always on.
-//
+// man accept 2
+// SOCK_NONBLOCK is always on.
 cold_def(int, accept4, int fd, struct sockaddr *addr, socklen_t *addrlen, int flags)
     cold_iocall(fd, 0, int, libc_accept4(fd, addr, addrlen, cone ? flags | SOCK_NONBLOCK : flags))
 #endif
 
 // man {read,recv,recvfrom,recvmsg,write,send,sendto,sendmsg} 2
-//
-// Changed: coroutine-blocking, not thread-blocking.
-//
+// Coroutine-blocking versions.
 cold_def(ssize_t, read, int fd, void *buf, size_t count)
     cold_iocall(fd, 0, ssize_t, libc_read(fd, buf, count))
 
@@ -84,18 +72,14 @@ cold_def(ssize_t, sendmsg, int fd, const struct msghdr *msg, int flags)
     cold_iocall(fd, 1, ssize_t, libc_sendmsg(fd, msg, flags))
 
 // man sleep 3
-//
-// Changed: coroutine-blocking; does not interact with signals (but can be interrupted
-//          by `cone_cancel`); always returns the argument on error, even if slept for some time.
-//
+// Coroutine-blocking; does not interact with signals (but can be interrupted by
+// `cone_cancel`); always returns the argument on error, even if slept for some time.
 cold_def(unsigned, sleep, unsigned sec) {
     return !cone ? libc_sleep(sec) : cone_sleep((mun_usec)sec * 1000000ul) ? sec : 0;
 }
 
 // man nanosleep 2
-//
-// Changed: coroutine-blocking; does not interact with signals; does not fill `rem`.
-//
+// Coroutine-blocking; does not interact with signals; does not fill `rem`.
 cold_def(int, nanosleep, const struct timespec *req, struct timespec *rem) {
     return !cone ? libc_nanosleep(req, rem) : cone_sleep((mun_usec)req->tv_sec*1000000ull + req->tv_nsec/1000);
 }

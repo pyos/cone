@@ -1,8 +1,3 @@
-//
-// romp // simple serialization
-//
-// See `romp.h` for API.
-//
 #include "romp.h"
 
 enum romp_signo
@@ -26,10 +21,9 @@ struct romp_nested_vec mun_vec(struct mun_vec);
 
 // Decode a single element from a signature, advancing the pointer to the next one.
 // If the returned element is a vector, the next element is the type of its contents.
-// On error, returns a signature with zero signo.
+// On error, returns a zero-initialized structure.
 //
-// Errors:
-//     `romp_sign_syntax`: signature is invalid.
+// Errors: `romp_sign_syntax` if the signature is invalid.
 //
 static struct romp_sign romp_sign(const char **sign) {
     while (1) switch ((*sign)[0]) {
