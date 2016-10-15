@@ -98,12 +98,14 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev) {
 // A set of callbacks attached to a single file descriptor: one for reading, one
 // for writing. Both are called on errors.
 //
-// Initializer: zero.
+// Initializer: designated; set `fd` and zero-initialize the rest.
 // Finalizer: none; must not be destroyed if there are callbacks attached.
 //
 struct cone_event_fd
 {
+    int fd;
     struct cone_closure cbs[2];
+    struct cone_event_fd *link;
 };
 
 // A map of file descriptors to corresponding callbacks.
@@ -114,7 +116,7 @@ struct cone_event_fd
 struct cone_event_io
 {
     int epoll;
-    struct mun_map(int, struct cone_event_fd) fds;
+    struct cone_event_fd *fds[127];
 };
 
 // Initializer of `cone_event_io`.
@@ -132,9 +134,17 @@ static int cone_event_io_init(struct cone_event_io *set) {
 
 // Finalizer of `cone_event_io`. Single use.
 static void cone_event_io_fini(struct cone_event_io *set) {
-    mun_map_fini(&set->fds);
+    for (unsigned i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++)
+        for (struct cone_event_fd *c; (c = set->fds[i]) != NULL; free(c))
+            set->fds[i] = c->link;
     if (set->epoll >= 0)
         close(set->epoll);
+}
+
+static struct cone_event_fd **cone_event_io_bucket(struct cone_event_io *set, int fd) {
+    struct cone_event_fd **b = &set->fds[fd % (sizeof(set->fds) / sizeof(set->fds[0]))];
+    while (*b && (*b)->fd != fd) b = &(*b)->link;
+    return b;
 }
 
 // Request a function to be called when a file descriptor becomes available for reading
@@ -148,33 +158,34 @@ static void cone_event_io_fini(struct cone_event_io *set) {
 //     `os`: if CONE_EPOLL is 1; see epoll_ctl(2).
 //
 static int cone_event_io_add(struct cone_event_io *set, int fd, int write, struct cone_closure f) {
-    mun_map_type(&set->fds) *e = mun_map_insert3(&set->fds, fd, (struct cone_event_fd){});
-    if (e == NULL MUN_RETHROW)
-        return -1;
-#if CONE_EPOLL
-    if (mun_map_was_inserted(&set->fds, e)) {
-        struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|EPOLLET|EPOLLIN|EPOLLOUT, {.fd = fd}};
+    struct cone_event_fd **b = cone_event_io_bucket(set, fd);
+    if (*b == NULL) {
+        if ((*b = malloc(sizeof(struct cone_event_fd))) == NULL)
+            return mun_error(memory, "-");
+        **b = (struct cone_event_fd){.fd = fd};
+    #if CONE_EPOLL
+        struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|EPOLLET|EPOLLIN|EPOLLOUT, {.ptr = *b}};
         if (epoll_ctl(set->epoll, EPOLL_CTL_ADD, fd, &params) MUN_RETHROW_OS)
-            return mun_map_erase(&set->fds, &fd), -1;
-    }
-#endif
-    if (e->b.cbs[write].code)
+            return free(*b), *b = NULL, -1;
+    #endif
+    } else if ((*b)->cbs[write].code)
         return mun_error(assert, "two readers/writers on one file descriptor");
-    e->b.cbs[write] = f;
+    (*b)->cbs[write] = f;
     return 0;
 }
 
 // Remove a previously attached callback. No-op if there is none or this is not the correct one.
 static void cone_event_io_del(struct cone_event_io *set, int fd, int write, struct cone_closure f) {
-    mun_map_type(&set->fds) *e = mun_map_find(&set->fds, &fd);
-    if (e == NULL || e->b.cbs[write].code != f.code || e->b.cbs[write].data != f.data)
+    struct cone_event_fd **b = cone_event_io_bucket(set, fd), *e = *b;
+    if (e == NULL || e->cbs[write].code != f.code || e->cbs[write].data != f.data)
         return;
-    e->b.cbs[write] = (struct cone_closure){};
-    if (e->b.cbs[!write].code == NULL) {
+    e->cbs[write] = (struct cone_closure){};
+    if (e->cbs[!write].code == NULL) {
     #if CONE_EPOLL
-        epoll_ctl(set->epoll, EPOLL_CTL_DEL, e->a, NULL);
+        epoll_ctl(set->epoll, EPOLL_CTL_DEL, fd, NULL);
     #endif
-        mun_map_erase(&set->fds, &fd);
+        *b = e->link;
+        free(e);
     }
 }
 
@@ -199,31 +210,34 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
     if (got < 0)
         return errno != EINTR MUN_RETHROW_OS;
     for (int i = 0; i < got; i++) {
-        mun_map_type(&set->fds) *e = mun_map_find(&set->fds, &evs[i].data.fd);
+        struct cone_event_fd *e = evs[i].data.ptr;
         if (evs[i].events & (EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLHUP))
-            if (e->b.cbs[0].code && e->b.cbs[0].code(e->b.cbs[0].data) MUN_RETHROW)
+            if (e->cbs[0].code && e->cbs[0].code(e->cbs[0].data) MUN_RETHROW)
                 return -1;
         if (evs[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP))
-            if (e->b.cbs[1].code && e->b.cbs[1].code(e->b.cbs[1].data) MUN_RETHROW)
+            if (e->cbs[1].code && e->cbs[1].code(e->cbs[1].data) MUN_RETHROW)
                 return -1;
     }
 #else
     fd_set fds[2] = {};
     int max_fd = 0;
-    for mun_vec_iter(&set->fds.values, e) {
-        if (max_fd <= e->a)
-            max_fd = e->a + 1;
-        for (int i = 0; i < 2; i++)
-            if (e->b.cbs[i].code)
-                FD_SET(e->a, &fds[i]);
+    for (unsigned i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++) {
+        for (struct cone_event_fd *e = set->fds[i]; e; e = e->link) {
+            if (max_fd <= e->fd)
+                max_fd = e->fd + 1;
+            for (int i = 0; i < 2; i++)
+                if (e->cbs[i].code)
+                    FD_SET(e->fd, &fds[i]);
+        }
     }
     struct timeval us = {timeout / 1000000ull, timeout % 1000000ull};
     if (select(max_fd, &fds[0], &fds[1], NULL, &us) < 0)
         return errno != EINTR MUN_RETHROW_OS;
-    for mun_vec_iter(&set->fds.values, e)
-        for (int i = 0; i < 2; i++)
-            if (FD_ISSET(e->a, &fds[i]) && e->b.cbs[i].code && e->b.cbs[i].code(e->b.cbs[i].data) MUN_RETHROW)
-                return -1;
+    for (unsigned i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++)
+        for (struct cone_event_fd *e = set->fds[i]; e; e = e->link)
+            for (int i = 0; i < 2; i++)
+                if (FD_ISSET(e->fd, &fds[i]) && e->cbs[i].code && e->cbs[i].code(e->cbs[i].data) MUN_RETHROW)
+                    return -1;
 #endif
     return 0;
 }
