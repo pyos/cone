@@ -46,42 +46,33 @@ static int deck_wake(struct deck *lk) {
     return cone_event_emit(&lk->wake);
 }
 
-// Parse the remote state, update the local Lamport clock, write the new value to the output.
-//
-// Errors: `memory`.
-//
-static int deck_remote_clock(struct nero *rpc, struct deck *lk, struct romp *in, struct romp *out, struct deck_request *rq) {
-    if (romp_decode(in, "u4 u4", &rq->pid, &rq->time))
-        return -1;
+// Update the local Lamport clock, write the new value to the output.
+static void deck_remote_clock(struct nero *rpc, struct deck *lk, struct deck_request *rq, uint32_t *out) {
     lk->rpcs.data[mun_vec_find(&lk->rpcs, _->rpc == rpc)].pid = rq->pid;
-    return romp_encode(out, "u4", lk->time = (rq->time > lk->time ? rq->time : lk->time) + 1);
+    *out = lk->time = (rq->time > lk->time ? rq->time : lk->time) + 1;
 }
 
 // nero endpoint: push a lock acquisition request to our queue.
 //
 // Errors: `memory`.
 //
-static int deck_remote_request(struct nero *rpc, struct deck *lk, struct romp *in, struct romp *out) {
-    struct deck_request rq = {};
-    if (deck_remote_clock(rpc, lk, in, out, &rq) MUN_RETHROW)
-        return -1;
-    deck_debug_msg(lk->time, rq.pid, "request");
-    unsigned i = mun_vec_bisect(&lk->queue, rq.time < _->time || (rq.time == _->time && rq.pid < _->pid));
-    return mun_vec_insert(&lk->queue, i, &rq);
+static int deck_remote_request(struct nero *rpc, struct deck *lk, struct deck_request *rq, uint32_t *out) {
+    deck_remote_clock(rpc, lk, rq, out);
+    deck_debug_msg(lk->time, rq->pid, "request");
+    unsigned i = mun_vec_bisect(&lk->queue, rq->time < _->time || (rq->time == _->time && rq->pid < _->pid));
+    return mun_vec_insert(&lk->queue, i, rq);
 }
 
 // nero endpoint: remove a lock acquisition request from the queue. No-op if there was no request.
 //
 // Errors: `memory`.
 //
-static int deck_remote_release(struct nero *rpc, struct deck *lk, struct romp *in, struct romp *out) {
-    struct deck_request rq = {};
-    if (deck_remote_clock(rpc, lk, in, out, &rq) MUN_RETHROW)
-        return -1;
-    unsigned i = mun_vec_find(&lk->queue, _->pid == rq.pid);
+static int deck_remote_release(struct nero *rpc, struct deck *lk, struct deck_request *rq, uint32_t *out) {
+    deck_remote_clock(rpc, lk, rq, out);
+    unsigned i = mun_vec_find(&lk->queue, _->pid == rq->pid);
     if (i == lk->queue.size)
         return 0;
-    deck_debug_msg(lk->time, rq.pid, "release");
+    deck_debug_msg(lk->time, rq->pid, "release");
     mun_vec_erase(&lk->queue, i, 1);
     return i == 0 ? deck_wake(lk) : 0;
 }
@@ -101,7 +92,7 @@ struct deck_reqptr
 //
 static int deck_call_one(struct deck_reqptr *rp) {
     uint32_t time = 0;
-    if (nero_call(rp->rpc, rp->function, "u4 u4", rp->rq.pid, rp->rq.time, "u4", &time) MUN_RETHROW)
+    if (nero_call(rp->rpc, rp->function, "u4 u4", &rp->rq, "u4", &time) MUN_RETHROW)
         return -1;
     rp->lk->time = (time > rp->lk->time ? time : rp->lk->time) + 1;
     return 0;
@@ -144,8 +135,8 @@ void deck_fini(struct deck *lk) {
 
 int deck_add(struct deck *lk, struct nero *rpc, const char *request, const char *release) {
     struct nero_closure methods[] = {
-        nero_closure(request, &deck_remote_request, lk),
-        nero_closure(release, &deck_remote_release, lk),
+        nero_closure(request, &deck_remote_request, "u4 u4", "u4", lk),
+        nero_closure(release, &deck_remote_release, "u4 u4", "u4", lk),
     };
     struct deck_nero desc = {rpc, request, release, lk->pid};
     if (mun_vec_reserve(&lk->rpcs, 1) || nero_add(rpc, methods, 2) MUN_RETHROW)
