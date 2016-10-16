@@ -535,33 +535,32 @@ int cone_root(size_t stksz, struct cone_closure body) {
     return cone_loop_fini(&loop), cone_join(c) MUN_RETHROW;
 }
 
-static struct cone *cone_global = NULL;
-static struct cone_loop cone_global_loop = {};
+static struct cone_loop cone_main_loop = {};
 
-static int cone_run_main_loop(struct cone_loop *loop) {
+static int cone_main_run(struct cone_loop *loop) {
     if (cone_loop_run(loop))
-        mun_error_show("main loop exited with", NULL), exit(124);
+        mun_error_show("main loop", NULL), exit(124);
     return 0;
 }
 
-static void __attribute__((constructor)) cone_global_init(void) {
-    if (cone_loop_init(&cone_global_loop) MUN_RETHROW)
+static void __attribute__((constructor)) cone_main_init(void) {
+    if (cone_loop_init(&cone_main_loop) MUN_RETHROW)
         mun_error_show("cone init", NULL), exit(124);
-    cone_global = cone_spawn_on(&cone_global_loop, 2 << 20, cone_bind(cone_run_main_loop, &cone_global_loop));
-    if (cone_global == NULL MUN_RETHROW)
-        return cone_loop_fini(&cone_global_loop), mun_error_show("cone init", NULL), exit(124);
-    cone_switch(cone_global);
+    struct cone *c = cone_spawn_on(&cone_main_loop, 0, cone_bind(&cone_main_run, &cone_main_loop));
+    if (c == NULL MUN_RETHROW)
+        mun_error_show("cone init", NULL), exit(124);
+    cone_switch(c);
 }
 
-static void __attribute__((destructor)) cone_global_fini(void) {
-    if (cone_global) {
-        struct cone_loop *loop = cone_global->loop;
-        cone_loop_dec(loop);
-        cone_switch(cone_global);
-        while (cone_global->refcount > 1)  // may be 2 if this is the last coroutine and the loop
-            cone_decref(cone_global);      // stopped before firing the callbacks.
-        cone_decref(cone_global);
-        cone_loop_fini(loop);
-        cone_global = NULL;
-    }
+static void __attribute__((destructor)) cone_main_fini(void) {
+    struct cone *c = cone;
+    if (!c)
+        return;
+    struct cone_loop *loop = c->loop;
+    cone_loop_dec(loop);
+    cone_switch(c);
+    while (c->refcount > 1)  // may be 2 if this is the last coroutine and the loop
+        cone_decref(c);      // stopped before firing the callbacks.
+    cone_decref(c);
+    cone_loop_fini(loop);
 }
