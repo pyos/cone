@@ -24,6 +24,9 @@ struct siy_sign
 #define ALIGN(ptr, i) ((i) && (uintptr_t)(ptr) & ((i) - 1) ? \
     ((ptr) = (__typeof__(ptr))(((uintptr_t)(ptr) & ~((uintptr_t)(i) - 1)) + (i))) : (ptr))
 
+#define UINT_SIZE_SWITCH(s, f) \
+    (s == 1 ? f(uint8_t) : s == 2 ? f(uint16_t) : s == 4 ? f(uint32_t) : s == 8 ? f(uint64_t) : 0)
+
 static struct siy_sign siy_sign(const char *sign, int accept_end) {
     while (*sign && *sign == ' ')
         sign++;
@@ -38,10 +41,7 @@ static struct siy_sign siy_sign(const char *sign, int accept_end) {
         case SIY_INT:
         case SIY_UINT:
             r.size = (unsigned)*sign++ - '0';
-            r.align = r.size == 1 ? _Alignof(uint8_t)
-                    : r.size == 2 ? _Alignof(uint16_t)
-                    : r.size == 4 ? _Alignof(uint32_t)
-                    : r.size == 8 ? _Alignof(uint64_t) : 0;
+            r.align = UINT_SIZE_SWITCH(r.size, _Alignof);
             if (r.align)
                 break;
             mun_error(siy_sign_syntax, "invalid int size '%c'", sign[-1]);
@@ -89,19 +89,25 @@ static struct siy_sign siy_sign(const char *sign, int accept_end) {
 }
 
 static int siy_encode_uint(struct siy *out, uint64_t in, unsigned width) {
-    uint8_t packed[] = { in >> 56, in >> 48, in >> 40, in >> 32, in >> 24, in >> 16, in >> 8, in };
-    return mun_vec_extend(out, &packed[8 - width], width) MUN_RETHROW;
+    width -= (width == 1);  // always encode 1-byte values as 1 byte
+    uint8_t s = 0, r[9];
+    // MSB is set if there is a next byte, except when the integer is 64-bit and there
+    // are 9 bytes in the encoding; then the MSB of the last one is the MSB of
+    // the original number, and there is never a 10th byte.
+    do r[s++] = (in & 127) | (in > 127) << 7; while ((in >>= 7) && s <= width);
+    return mun_vec_extend(out, r, s) MUN_RETHROW;
 }
 
 static int siy_decode_uint(struct siy *in, uint64_t *out, unsigned width) {
-    if (in->size < width)
-        return mun_error(siy, "need %u octets, have %u", width, in->size);
-    *out = width == 1 ? siy_r1(in->data)
-         : width == 2 ? siy_r2(in->data)
-         : width == 4 ? siy_r4(in->data)
-         : width == 8 ? siy_r8(in->data) : 0;
-    mun_vec_erase(in, 0, width);
-    return 0;
+    width -= (width == 1);
+    uint8_t size = *out = 0;
+    const uint8_t *i = in->data;
+    do {
+        if (size == in->size)
+            return mun_error(siy, "could not decode an integer");
+        *out |= (*i & (127ull | (size == width) << 7)) << (7 * size);
+    } while (++size <= width && *i++ & 128);
+    return mun_vec_erase(in, 0, size), 0;
 }
 
 static int siy_encode_one(struct siy *out, struct siy_sign s, const void *in) {
@@ -109,11 +115,10 @@ static int siy_encode_one(struct siy *out, struct siy_sign s, const void *in) {
         case SIY_INT:
         case SIY_UINT:
         case SIY_DOUBLE:
-            if (siy_encode_uint(out, s.size == 1 ? *(uint8_t *)in
-                                   : s.size == 2 ? *(uint16_t*)in
-                                   : s.size == 4 ? *(uint32_t*)in
-                                   : s.size == 8 ? *(uint64_t*)in : 0, s.size) MUN_RETHROW)
+        #define X(t) *(t*)in
+            if (siy_encode_uint(out, UINT_SIZE_SWITCH(s.size, X), s.size) MUN_RETHROW)
                 return -1;
+        #undef X
             return 0;
         case SIY_VEC: {
             struct siy_sign q = siy_sign(s.contents, 0);
@@ -141,10 +146,9 @@ static int siy_decode_one(struct siy *in, struct siy_sign s, void *out) {
         case SIY_DOUBLE:
             if (siy_decode_uint(in, &u, s.size) MUN_RETHROW)
                 return -1;
-            if (s.size == 1) *(uint8_t *)out = u; else
-            if (s.size == 2) *(uint16_t*)out = u; else
-            if (s.size == 4) *(uint32_t*)out = u; else
-            if (s.size == 8) *(uint64_t*)out = u;
+        #define X(t) (*(t*)out = u)
+            UINT_SIZE_SWITCH(s.size, X);
+        #undef X
             return 0;
         case SIY_VEC: {
             struct siy_sign q = siy_sign(s.contents, 0);
