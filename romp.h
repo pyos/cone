@@ -1,6 +1,5 @@
 #pragma once
 #include "mun.h"
-#include <stdarg.h>
 
 struct romp mun_vec(uint8_t);
 
@@ -19,25 +18,31 @@ enum
 // with (optionally space-separated) type signs: `uN` for an N-byte unsigned integer,
 // where N is 1, 2, 4, or 8 (uintN_t); `iN` for an N-byte signed integer (intN_t);
 // `f` for a double-precision floating point number (double); `vX` for a vector of
-// elements described by sign `X` (struct mun_vec(T)). Nested vectors are allowed.
-// Behavior is undefined if the arguments do not match the signature.
+// elements described by sign `X` (struct mun_vec(T)); `(X)` for a structure that
+// contains naturally-aligned fields of types desribed by signature `X`.
+// Nested vectors are allowed.
 //
 // Errors:
 //   * `romp_sign_syntax`: the signature is invalid;
 //   * `memory`.
 //
-int romp_encode(struct romp *out, const char *sign, ...);
-int romp_encode_var(struct romp *out, const char *sign, va_list args);
+int romp_encode(struct romp *out, const char *sign, const void *);
 
-// Decode serialized values into storage pointed to by arguments. The signature is
-// the same as for `romp_encode`, except all arguments are pointers to appropriate types.
-// Data from the input vector is erased as arguments are decoded. Behavior is undefined
-// if the arguments do not match the signature.
+// Decode serialized values into storage pointed to by arguments. The signature is the same
+// as for `romp_encode`. Data from the input vector is erased as arguments are decoded.
 //
 // Errors:
 //   * `romp`: ran out of data before decoding everything;
 //   * `romp_sign_syntax`: the signature is invalid;
 //   * `memory`, but only if signature contains `vX`.
 //
-int romp_decode(struct romp *in, const char *sign, ...);
-int romp_decode_var(struct romp *in, const char *sign, va_list args);
+int romp_decode(struct romp *in, const char *sign, void *);
+
+struct romp_signinfo
+{
+    unsigned size;
+    unsigned align;
+};
+
+// Return the size and alignment required for a structure that has a given signature.
+struct romp_signinfo romp_signinfo(const char *);

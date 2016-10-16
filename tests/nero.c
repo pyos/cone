@@ -2,27 +2,29 @@
 #include <unistd.h>
 #include <sys/socket.h>
 
-static int test_counter_add(struct nero *rpc, uint32_t *n, struct romp *in, struct romp *out) {
+static int test_counter_add(struct nero *rpc, int32_t *state, int32_t *incr, int32_t *ret) {
     (void)rpc;
-    int32_t incr = 0;
-    return romp_decode(in, "i4", &incr) || romp_encode(out, "i4", *n += incr) MUN_RETHROW;
+    *ret = (*state += *incr);
+    return 0;
 }
 
 static int test_nero_server(struct nero *conn) {
     int32_t counter = 0;
-    struct nero_closure inc = nero_closure("add", &test_counter_add, &counter);
-    int ret = nero_add(conn, &inc, 1) || nero_run(conn) MUN_RETHROW;
+    struct nero_closure methods[] = {
+        nero_closure("add", &test_counter_add, "i4", "i4", &counter),
+    };
+    int ret = nero_add(conn, methods, 1) || nero_run(conn) MUN_RETHROW;
     return nero_fini(conn), ret;
 }
 
 static int test_nero_ok_call(struct nero *conn) {
     int32_t result = 0;
-    return nero_call(conn, "add", "i4", 1, "i4", &result) MUN_RETHROW;
+    return nero_call(conn, "add", "i4", &(int32_t){1}, "i4", &result) MUN_RETHROW;
 }
 
 static int test_nero_bad_call(struct nero *conn) {
     int32_t result = 0;
-    if (!nero_call(conn, "add", "", "i4", &result) MUN_RETHROW)
+    if (!nero_call(conn, "add", "", NULL, "i4", &result) MUN_RETHROW)
         return mun_error(assert, "nero_call should have failed");
     if (mun_last_error()->code != mun_errno_romp)
         return -1;
@@ -30,7 +32,7 @@ static int test_nero_bad_call(struct nero *conn) {
 }
 
 static int test_nero_nonexistent_call(struct nero *conn) {
-    if (!nero_call(conn, "something", "", "") MUN_RETHROW)
+    if (!nero_call(conn, "something", "", NULL, "", NULL) MUN_RETHROW)
         return mun_error(assert, "nero_call should have failed");
     if (mun_last_error()->code != mun_errno_nero_not_exported)
         return -1;

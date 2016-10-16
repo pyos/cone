@@ -1,27 +1,57 @@
 #include "../romp.h"
 #include <inttypes.h>
 
-static int test_romp_primitive() {
-    int16_t i2 = -12345L, i2dec = 0;
-    uint64_t u8 = 9876543210123456789ULL, u8dec = 0;
-    double f = 5123456.2435463, fdec = 0;
+#define CHECK_FIELD(src, dst, f, fmt) \
+    do if (src.f != dst.f) return mun_error(assert, #f ": expected " fmt ", got " fmt, src.f, dst.f); while (0)
 
+static int test_romp_primitive() {
+    struct T { int16_t a; uint64_t b; double c; };
+    struct T x = {-12345L, 9876543210123456789ULL, 5123456.2435463};
+    struct T y = {};
     struct romp out = mun_vec_init_static(uint8_t, 64);
-    if (romp_encode(&out, "i2 u8 f", i2, u8, f) MUN_RETHROW)
+    if (romp_encode(&out, "i2 u8 f", &x) MUN_RETHROW)
         return -1;
     if (out.size != 18)
         return mun_error(assert, "2 + 8 + 8 = 18, not %u", out.size);
-    if (romp_decode(&out, "i2 u8 f", &i2dec, &u8dec, &fdec) MUN_RETHROW)
+    if (romp_decode(&out, "i2 u8 f", &y) MUN_RETHROW)
         return -1;
-    if (i2dec != i2 || u8dec != u8 || fdec != f)
-        return mun_error(assert, "primitives were corrupted during coding");
+    CHECK_FIELD(x, y, a, "%d");
+    CHECK_FIELD(x, y, b, "%" PRIu64);
+    CHECK_FIELD(x, y, c, "%f");
+    return 0;
+}
+
+static int test_romp_struct() {
+    struct T
+    {
+        uint8_t  a;
+        uint16_t b;
+        uint64_t c;
+        uint8_t  d;
+        struct {
+            uint16_t e;
+            uint16_t f;
+        };
+    };
+    struct T x = {1, 2, 3, 4, {5, 6}};
+    struct T y = {};
+    struct romp out = mun_vec_init_static(uint8_t, 64);
+    if (romp_encode(&out, "(u1 u2 u8 u1 (u2 u2))", &x) MUN_RETHROW)
+        return -1;
+    if (romp_decode(&out, "(u1 u2 u8 u1 (u2 u2))", &y) MUN_RETHROW)
+        return -1;
+    CHECK_FIELD(x, y, a, "%u");
+    CHECK_FIELD(x, y, b, "%u");
+    CHECK_FIELD(x, y, c, "%" PRIu64);
+    CHECK_FIELD(x, y, d, "%u");
+    CHECK_FIELD(x, y, e, "%u");
+    CHECK_FIELD(x, y, f, "%u");
     return 0;
 }
 
 static int test_romp_vec() {
     struct mun_vec(char) original = mun_vec_init_str("text");
     struct mun_vec(char) decoded = mun_vec_init_static(char, 16);
-
     struct romp out = mun_vec_init_static(uint8_t, 16);
     if (romp_encode(&out, "vi1", &original) MUN_RETHROW)
         return -1;
@@ -56,5 +86,6 @@ static int test_romp_vec_vec() {
 }
 
 export { "romp:primitive", &test_romp_primitive }
+     , { "romp:struct", &test_romp_struct }
      , { "romp:vec[primitive]", &test_romp_vec }
      , { "romp:vec[vec[primitive]]", &test_romp_vec_vec }
