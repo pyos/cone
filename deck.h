@@ -1,11 +1,10 @@
 #pragma once
 //
-// deck // distributed lock
+// deck // Lamport mutex
 //
 #include "mun.h"
 #include "cone.h"
-#include "romp.h"
-#include "nero.h"
+#include "mae.h"
 
 // The lock. Zero-initialized, except for `pid`, which must be unique among nodes.
 // Finalized with `deck_fini`.
@@ -15,7 +14,7 @@ struct deck
     uint32_t time;
     unsigned state;
     struct cone_event wake;
-    struct mun_vec(struct deck_nero) rpcs;
+    struct mun_vec(struct deck_mae) rpcs;
     struct mun_vec(struct deck_request) queue;
 };
 
@@ -27,10 +26,10 @@ void deck_fini(struct deck *);
 //
 // Errors: `memory`.
 //
-int deck_add(struct deck *, struct nero *, const char *request, const char *release);
+int deck_add(struct deck *, struct mae *, const char *request, const char *release);
 
 // Forget about an RPC channel. No-op if it was never added.
-void deck_del(struct deck *, struct nero *);
+void deck_del(struct deck *, struct mae *);
 
 // Request the lock and block until it is acquired. Or just block if another coroutine
 // has already sent a request.

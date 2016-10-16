@@ -18,9 +18,9 @@ enum deck_state
     DECK_CANCELLED = 0x04000000ul,
 };
 
-struct deck_nero
+struct deck_mae
 {
-    struct nero *rpc;
+    struct mae *rpc;
     const char *request;
     const char *release;
     // Apparent ID of the remote side.
@@ -47,27 +47,27 @@ static int deck_wake(struct deck *lk) {
 }
 
 // Update the local Lamport clock, write the new value to the output.
-static void deck_remote_clock(struct nero *rpc, struct deck *lk, struct deck_request *rq, uint32_t *out) {
+static void deck_remote_clock(struct mae *rpc, struct deck *lk, struct deck_request *rq, uint32_t *out) {
     lk->rpcs.data[mun_vec_find(&lk->rpcs, _->rpc == rpc)].pid = rq->pid;
     *out = lk->time = (rq->time > lk->time ? rq->time : lk->time) + 1;
 }
 
-// nero endpoint: push a lock acquisition request to our queue.
+// mae endpoint: push a lock acquisition request to our queue.
 //
 // Errors: `memory`.
 //
-static int deck_remote_request(struct nero *rpc, struct deck *lk, struct deck_request *rq, uint32_t *out) {
+static int deck_remote_request(struct mae *rpc, struct deck *lk, struct deck_request *rq, uint32_t *out) {
     deck_remote_clock(rpc, lk, rq, out);
     deck_debug_msg(lk->time, rq->pid, "request");
     unsigned i = mun_vec_bisect(&lk->queue, rq->time < _->time || (rq->time == _->time && rq->pid < _->pid));
     return mun_vec_insert(&lk->queue, i, rq);
 }
 
-// nero endpoint: remove a lock acquisition request from the queue. No-op if there was no request.
+// mae endpoint: remove a lock acquisition request from the queue. No-op if there was no request.
 //
 // Errors: `memory`.
 //
-static int deck_remote_release(struct nero *rpc, struct deck *lk, struct deck_request *rq, uint32_t *out) {
+static int deck_remote_release(struct mae *rpc, struct deck *lk, struct deck_request *rq, uint32_t *out) {
     deck_remote_clock(rpc, lk, rq, out);
     unsigned i = mun_vec_find(&lk->queue, _->pid == rq->pid);
     if (i == lk->queue.size)
@@ -80,7 +80,7 @@ static int deck_remote_release(struct nero *rpc, struct deck *lk, struct deck_re
 struct deck_reqptr
 {
     struct deck *lk;
-    struct nero *rpc;
+    struct mae *rpc;
     struct deck_request rq;
     const char *function;
 };
@@ -92,7 +92,7 @@ struct deck_reqptr
 //
 static int deck_call_one(struct deck_reqptr *rp) {
     uint32_t time = 0;
-    if (nero_call(rp->rpc, rp->function, "u4 u4", &rp->rq, "u4", &time) MUN_RETHROW)
+    if (mae_call(rp->rpc, rp->function, "u4 u4", &rp->rq, "u4", &time) MUN_RETHROW)
         return -1;
     rp->lk->time = (time > rp->lk->time ? time : rp->lk->time) + 1;
     return 0;
@@ -125,33 +125,33 @@ static int deck_call_all(struct deck *lk, int is_release, struct deck_request rq
 void deck_fini(struct deck *lk) {
     lk->state |= DECK_CANCELLED;
     for (unsigned i = 0; i < lk->rpcs.size; i++) {
-        nero_del(lk->rpcs.data[i].rpc, lk->rpcs.data[i].request);
-        nero_del(lk->rpcs.data[i].rpc, lk->rpcs.data[i].release);
+        mae_del(lk->rpcs.data[i].rpc, lk->rpcs.data[i].request);
+        mae_del(lk->rpcs.data[i].rpc, lk->rpcs.data[i].release);
     }
     mun_vec_fini(&lk->rpcs);
     mun_vec_fini(&lk->queue);
     cone_event_emit(&lk->wake);
 }
 
-int deck_add(struct deck *lk, struct nero *rpc, const char *request, const char *release) {
-    struct nero_closure methods[] = {
-        nero_closure(request, &deck_remote_request, "u4 u4", "u4", lk),
-        nero_closure(release, &deck_remote_release, "u4 u4", "u4", lk),
+int deck_add(struct deck *lk, struct mae *rpc, const char *request, const char *release) {
+    struct mae_closure methods[] = {
+        mae_closure(request, &deck_remote_request, "u4 u4", "u4", lk),
+        mae_closure(release, &deck_remote_release, "u4 u4", "u4", lk),
     };
-    struct deck_nero desc = {rpc, request, release, lk->pid};
-    if (mun_vec_reserve(&lk->rpcs, 1) || nero_add(rpc, methods, 2) MUN_RETHROW)
+    struct deck_mae desc = {rpc, request, release, lk->pid};
+    if (mun_vec_reserve(&lk->rpcs, 1) || mae_add(rpc, methods, 2) MUN_RETHROW)
         return -1;
     mun_vec_append(&lk->rpcs, &desc);
     return 0;
 }
 
-void deck_del(struct deck *lk, struct nero *rpc) {
+void deck_del(struct deck *lk, struct mae *rpc) {
     unsigned i = mun_vec_find(&lk->rpcs, _->rpc == rpc);
     if (i == lk->rpcs.size)
         return;
     uint32_t pid = lk->rpcs.data[i].pid;
-    nero_del(rpc, lk->rpcs.data[i].request);
-    nero_del(rpc, lk->rpcs.data[i].release);
+    mae_del(rpc, lk->rpcs.data[i].request);
+    mae_del(rpc, lk->rpcs.data[i].release);
     mun_vec_erase(&lk->rpcs, i, 1);
     if (pid == lk->pid)
         return;

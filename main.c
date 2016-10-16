@@ -3,8 +3,8 @@
 #endif
 
 #include "mun.h"
+#include "mae.h"
 #include "cone.h"
-#include "nero.h"
 #include "deck.h"
 #include <fcntl.h>
 #include <netdb.h>
@@ -51,7 +51,7 @@ static int parse_arg(const char *arg, int server) {
 
 struct node
 {
-    struct nero rpc;
+    struct mae rpc;
     struct deck *deck;
     struct cone_event *fail;
 };
@@ -133,7 +133,7 @@ int interface(struct node *n) {
 }
 
 int handle_connection(struct node *n) {
-    int ret = nero_run(&n->rpc) MUN_RETHROW;
+    int ret = mae_run(&n->rpc) MUN_RETHROW;
     deck_del(n->deck, &n->rpc);
     return (cone_event_emit(n->fail) MUN_RETHROW) ? -1 : ret;
 }
@@ -204,6 +204,6 @@ failall:
     }
     deck_fini(&d);
     for (int i = 0; i < known; i++)
-        nero_fini(&nodes[i].rpc);
+        mae_fini(&nodes[i].rpc);
     return ret;
 }
