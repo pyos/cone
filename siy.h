@@ -1,4 +1,7 @@
 #pragma once
+//
+// siy // weird serialization protocol
+//
 #include "mun.h"
 
 struct siy mun_vec(uint8_t);
@@ -22,7 +25,7 @@ struct siy_signinfo
 
 // Serialize a naturally-aligned structure. The signature is a sequence of optionally
 // space-separated signs that describe its fields:
-//    * `uN`  - an N-byte unsigned integer (uintB_t, where B = 2**N);
+//    * `uN`  - an N-byte unsigned integer (uintB_t, where B = 8N);
 //    * `iN`  - an N-byte signed integer (intB_t);
 //    * `f`   - a double-precision floating point number (double);
 //    * `vX`  - a vector of objects described by sign `X` (struct mun_vec(T));

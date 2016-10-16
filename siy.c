@@ -5,7 +5,7 @@ enum siy_signo
     SIY_NONE   = 0,     // signature ::= typesign*
     SIY_ERROR  = 1,
     SIY_UINT   = 'u',   // typesign ::= 'u' {octets :: digit}
-    SIY_INT    = 'i',   //            | 'd' {octets :: digit}
+    SIY_INT    = 'i',   //            | 'i' {octets :: digit}
     SIY_DOUBLE = 'f',   //            | 'f'
     SIY_VEC    = 'v',   //            | 'v' {type :: typesign}
     SIY_STRUCT = '(',   //            | '(' {contents :: signature} ')';
@@ -110,9 +110,9 @@ static int siy_encode_one(struct siy *out, struct siy_sign s, const void *in) {
         case SIY_UINT:
         case SIY_DOUBLE:
             if (siy_encode_uint(out, s.size == 1 ? *(uint8_t *)in
-                                    : s.size == 2 ? *(uint16_t*)in
-                                    : s.size == 4 ? *(uint32_t*)in
-                                    : s.size == 8 ? *(uint64_t*)in : 0, s.size) MUN_RETHROW)
+                                   : s.size == 2 ? *(uint16_t*)in
+                                   : s.size == 4 ? *(uint32_t*)in
+                                   : s.size == 8 ? *(uint64_t*)in : 0, s.size) MUN_RETHROW)
                 return -1;
             return 0;
         case SIY_VEC: {
