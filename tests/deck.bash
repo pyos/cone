@@ -25,7 +25,7 @@ function finish_all() {
 trap "finish_all 0" SIGINT
 trap "finish_all 1" SIGTERM
 for ((i = 0; i < $1; i++)); do
-    port="3200${#addrs[@]}"
+    port="$((32000 + ${#addrs[@]}))"
     ./main "$1" ":$port" "${addrs[@]}" >>"$root/mutex" 2>"$root/port-$port.stderr" &
     echo "port $port = pid $!"
     sleep 0.1
