@@ -80,9 +80,9 @@ static int deck_remote_release(struct mae *rpc, struct deck *lk, struct deck_req
 struct deck_reqptr
 {
     struct deck *lk;
-    struct mae *rpc;
+    struct deck_mae *m;
     struct deck_request rq;
-    const char *function;
+    int is_release;
 };
 
 // Call a remote method on a single peer, update the local clock from the result.
@@ -92,7 +92,8 @@ struct deck_reqptr
 //
 static int deck_call_one(struct deck_reqptr *rp) {
     uint32_t time = 0;
-    if (mae_call(rp->rpc, rp->function, "u4 u4", &rp->rq, "u4", &time) MUN_RETHROW)
+    const char *fn = rp->is_release ? rp->m->release : rp->m->request;
+    if (mae_call(rp->m->rpc, fn, "u4 u4", &rp->rq, "u4", &time) MUN_RETHROW)
         return -1;
     rp->lk->time = (time > rp->lk->time ? time : rp->lk->time) + 1;
     return 0;
@@ -104,17 +105,14 @@ static int deck_call_one(struct deck_reqptr *rp) {
 //
 static int deck_call_all(struct deck *lk, int is_release, struct deck_request rq) {
     int fail = 0;
-    struct deck_reqptr reqs[lk->rpcs.size];
-    for (unsigned i = 0; i < lk->rpcs.size; i++)
-        reqs[i] = (struct deck_reqptr){
-            lk, lk->rpcs.data[i].rpc, rq,
-            is_release ? lk->rpcs.data[i].release : lk->rpcs.data[i].request
-        };
+    unsigned i = 0;
     struct cone *tasks[lk->rpcs.size];
-    for (unsigned i = 0; i < lk->rpcs.size; i++)
-        if ((tasks[i] = cone(deck_call_one, &reqs[i])) == NULL MUN_RETHROW)
-            fail = -1;
-    for (unsigned i = 0; i < lk->rpcs.size; i++)
+    struct deck_reqptr reqs[lk->rpcs.size];
+    for (; !fail && i < lk->rpcs.size; i++) {
+        reqs[i] = (struct deck_reqptr){lk, &lk->rpcs.data[i], rq, is_release};
+        fail = (tasks[i] = cone(deck_call_one, &reqs[i])) == NULL MUN_RETHROW;
+    }
+    while (i--)
         if (!fail)
             fail = cone_join(tasks[i]) MUN_RETHROW;
         else if (tasks[i] != NULL)
