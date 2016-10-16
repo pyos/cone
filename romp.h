@@ -14,35 +14,35 @@ enum
     mun_errno_romp_sign_syntax,
 };
 
-// Write a serialized version of arguments into a vector. The signature is a string
-// with (optionally space-separated) type signs: `uN` for an N-byte unsigned integer,
-// where N is 1, 2, 4, or 8 (uintN_t); `iN` for an N-byte signed integer (intN_t);
-// `f` for a double-precision floating point number (double); `vX` for a vector of
-// elements described by sign `X` (struct mun_vec(T)); `(X)` for a structure that
-// contains naturally-aligned fields of types desribed by signature `X`.
-// Nested vectors are allowed.
+struct romp_signinfo
+{
+    unsigned size;
+    unsigned align;
+};
+
+// Serialize a naturally-aligned structure. The signature is a sequence of optionally
+// space-separated signs that describe its fields:
+//    * `uN`  - an N-byte unsigned integer (uintB_t, where B = 2**N);
+//    * `iN`  - an N-byte signed integer (intB_t);
+//    * `f`   - a double-precision floating point number (double);
+//    * `vX`  - a vector of objects described by sign `X` (struct mun_vec(T));
+//    * `(S)` - a naturally-aligned structure with fields described by signature S.
 //
 // Errors:
 //   * `romp_sign_syntax`: the signature is invalid;
 //   * `memory`.
 //
-int romp_encode(struct romp *out, const char *sign, const void *);
+int romp_encode(struct romp *out, const char *sign, const void *in);
 
-// Decode serialized values into storage pointed to by arguments. The signature is the same
-// as for `romp_encode`. Data from the input vector is erased as arguments are decoded.
+// Deserialize data into a naturally-aligned structure. See `romp_encode` for a description
+// of the signature. Deserialized data is erased from the input vector.
 //
 // Errors:
 //   * `romp`: ran out of data before decoding everything;
 //   * `romp_sign_syntax`: the signature is invalid;
 //   * `memory`, but only if signature contains `vX`.
 //
-int romp_decode(struct romp *in, const char *sign, void *);
-
-struct romp_signinfo
-{
-    unsigned size;
-    unsigned align;
-};
+int romp_decode(struct romp *in, const char *sign, void *out);
 
 // Return the size and alignment required for a structure that has a given signature.
 struct romp_signinfo romp_signinfo(const char *);
