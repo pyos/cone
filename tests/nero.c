@@ -5,7 +5,10 @@
 static int test_counter_add(struct nero *rpc, uint32_t *n, struct romp *in, struct romp *out) {
     (void)rpc;
     int32_t incr = 0;
-    return romp_decode(in, "i4", &incr) || romp_encode(out, "i4", *n += incr) MUN_RETHROW;
+    if (romp_decode(in, "i4", &incr) MUN_RETHROW)
+        return -1;
+    *n += incr;
+    return romp_encode(out, "i4", n) MUN_RETHROW;
 }
 
 static int test_nero_server(struct nero *conn) {
@@ -17,12 +20,12 @@ static int test_nero_server(struct nero *conn) {
 
 static int test_nero_ok_call(struct nero *conn) {
     int32_t result = 0;
-    return nero_call(conn, "add", "i4", 1, "i4", &result) MUN_RETHROW;
+    return nero_call(conn, "add", "i4", &(int32_t){1}, "i4", &result) MUN_RETHROW;
 }
 
 static int test_nero_bad_call(struct nero *conn) {
     int32_t result = 0;
-    if (!nero_call(conn, "add", "", "i4", &result) MUN_RETHROW)
+    if (!nero_call(conn, "add", "", NULL, "i4", &result) MUN_RETHROW)
         return mun_error(assert, "nero_call should have failed");
     if (mun_last_error()->code != mun_errno_romp)
         return -1;
@@ -30,7 +33,7 @@ static int test_nero_bad_call(struct nero *conn) {
 }
 
 static int test_nero_nonexistent_call(struct nero *conn) {
-    if (!nero_call(conn, "something", "", "") MUN_RETHROW)
+    if (!nero_call(conn, "something", "", NULL, "", NULL) MUN_RETHROW)
         return mun_error(assert, "nero_call should have failed");
     if (mun_last_error()->code != mun_errno_nero_not_exported)
         return -1;

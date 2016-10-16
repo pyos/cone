@@ -75,7 +75,6 @@ void nero_fini(struct nero *);
 int nero_run(struct nero *);
 
 // Call a remote function, block until a response arrives. `nero_run` must be active
-// in another coroutine. Variadic arguments are (romp signature for arguments, arguments,
-// romp signature for return values, pointers to locations of return values).
-int nero_call(struct nero *, const char *function, ...);
-int nero_call_var(struct nero *, const char *function, va_list);
+// in another coroutine. romp object packs are used to pass arguments (isign/i) and
+// return values (osign/o); see `romp_encode` and `romp_decode` for their descriptions.
+int nero_call(struct nero *, const char *f, const char *isign, const void *i, const char *osign, void *o);
