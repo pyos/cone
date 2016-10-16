@@ -22,7 +22,7 @@ struct siy_sign
 };
 
 #define ALIGN(ptr, i) ((i) && (uintptr_t)(ptr) & ((i) - 1) ? \
-    ((ptr) = (__typeof__(ptr))(((uintptr_t)(ptr) & ~((i) - 1)) + (i))) : (ptr))
+    ((ptr) = (__typeof__(ptr))(((uintptr_t)(ptr) & ~((uintptr_t)(i) - 1)) + (i))) : (ptr))
 
 static struct siy_sign siy_sign(const char *sign, int accept_end) {
     while (*sign && *sign == ' ')
