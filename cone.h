@@ -1,12 +1,7 @@
 #pragma once
 //
-// cone // jumping stacks, with signals!
+// cone // stack switching through POSIX signal abuse
 //
-// NOTE: if a program is linked with cone.o, it must define `comain` instead of `main`.
-//       (`comain` is automatically run in a coroutine. This could be done with `main`,
-//       sure, but only with great effort and a lot of segfaults.)
-//
-
 #if !defined(CONE_EPOLL) && __linux__
 // Use {0: select, 1: epoll} to wait for I/O.
 #define CONE_EPOLL 1
