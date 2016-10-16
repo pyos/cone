@@ -23,4 +23,4 @@ obj/%.o: %.c cone.h mun.h siy.h mae.h deck.h
 	$(CCMD) -c $< -o $@
 
 clean:
-	rm -rf obj main stress-test-data
+	rm -rf obj main
