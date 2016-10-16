@@ -21,8 +21,8 @@ struct romp_sign
     const char *next;
 };
 
-#define ALIGN(ptr, i) ((i) && (uintptr_t)(ptr) % (i) ? \
-    ((ptr) = (__typeof__(ptr))((uintptr_t)(ptr) + (i) - (uintptr_t)(ptr) % (i))) : (ptr))
+#define ALIGN(ptr, i) ((i) && (uintptr_t)(ptr) & ((i) - 1) ? \
+    ((ptr) = (__typeof__(ptr))(((uintptr_t)(ptr) & ~((i) - 1)) + (i))) : (ptr))
 
 static struct romp_sign romp_sign(const char *sign, int accept_end) {
     while (*sign && *sign == ' ')
