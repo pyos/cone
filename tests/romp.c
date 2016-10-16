@@ -50,42 +50,57 @@ static int test_romp_struct() {
 }
 
 static int test_romp_vec() {
-    struct mun_vec(char) original = mun_vec_init_str("text");
-    struct mun_vec(char) decoded = mun_vec_init_static(char, 16);
+    struct mun_vec(char) x = mun_vec_init_str("text");
+    struct mun_vec(char) y = mun_vec_init_static(char, 16);
     struct romp out = mun_vec_init_static(uint8_t, 16);
-    if (romp_encode(&out, "vi1", &original) MUN_RETHROW)
+    if (romp_encode(&out, "vi1", &x) || romp_decode(&out, "vi1", &y) MUN_RETHROW)
         return -1;
-    if (romp_decode(&out, "vi1", &decoded) MUN_RETHROW)
+    if (x.size != y.size || memcmp(x.data, y.data, y.size))
+        return mun_error(assert, "vectors differ");
+    return 0;
+}
+
+static int test_romp_vec_struct() {
+    struct T { uint8_t a; uint32_t b; };
+    struct T xs[] = {{1, 2}, {3, 4}, {5, 6}};
+    struct mun_vec(struct T) x = mun_vec_init_array(xs);
+    struct mun_vec(struct T) y = mun_vec_init_static(struct T, 4);
+    struct romp out = mun_vec_init_static(uint8_t, 32);
+    if (romp_encode(&out, "v(u1 u4)", &x) MUN_RETHROW)
         return -1;
-    if (original.size != decoded.size || memcmp(original.data, decoded.data, decoded.size))
-        return mun_error(assert, "vector was corrupted during coding");
+    if (romp_decode(&out, "v(u1 u4)", &y) MUN_RETHROW)
+        return -1;
+    CHECK_FIELD(x, y, size, "%u");
+    for (unsigned i = 0; i < y.size; i++) {
+        CHECK_FIELD(x.data[i], y.data[i], a, "%u");
+        CHECK_FIELD(x.data[i], y.data[i], b, "%u");
+    }
     return 0;
 }
 
 static int test_romp_vec_vec() {
     char arena[32];
     struct charvec mun_vec(char);
-    struct charvec raw[] = {mun_vec_init_str("abc"), mun_vec_init_str("defgh")};
-    struct mun_vec(struct charvec) original = mun_vec_init_array(raw);
-    struct mun_vec(struct charvec) decoded = mun_vec_init_static(struct charvec, sizeof(arena) / 8);
-    for (unsigned i = 0; i < decoded.size; i++)
-        decoded.data[i] = (struct charvec)mun_vec_init_borrow(arena + 8 * i, 8);
+    struct charvec xs[] = {mun_vec_init_str("abc"), mun_vec_init_str("defgh")};
+    struct mun_vec(struct charvec) x = mun_vec_init_array(xs);
+    struct mun_vec(struct charvec) y = mun_vec_init_static(struct charvec, sizeof(arena) / 8);
+    for (unsigned i = 0; i < y.size; i++)
+        y.data[i] = (struct charvec) mun_vec_init_borrow(arena + 8 * i, 8);
 
     struct romp out = mun_vec_init_static(uint8_t, 32);
-    if (romp_encode(&out, "vvi1", &original) MUN_RETHROW)
+    if (romp_encode(&out, "v(vi1)", &x) MUN_RETHROW)
         return -1;
-    if (romp_decode(&out, "vvi1", &decoded) MUN_RETHROW)
+    if (romp_decode(&out, "v(vi1)", &y) MUN_RETHROW)
         return -1;
-    if (decoded.size != original.size)
-        return mun_error(assert, "sizes of outer vectors differ");
-    for (unsigned i = 0; i < decoded.size; i++)
-        if (original.data[i].size != decoded.data[i].size ||
-            memcmp(original.data[i].data, decoded.data[i].data, decoded.data[i].size))
+    CHECK_FIELD(x, y, size, "%u");
+    for (unsigned i = 0; i < y.size; i++)
+        if (x.data[i].size != y.data[i].size || memcmp(x.data[i].data, y.data[i].data, y.data[i].size))
             return mun_error(assert, "inner vectors differ");
     return 0;
 }
 
-export { "romp:primitive", &test_romp_primitive }
+export { "romp:value", &test_romp_primitive }
      , { "romp:struct", &test_romp_struct }
-     , { "romp:vec[primitive]", &test_romp_vec }
-     , { "romp:vec[vec[primitive]]", &test_romp_vec_vec }
+     , { "romp:vec[value]", &test_romp_vec }
+     , { "romp:vec[struct]", &test_romp_vec_struct }
+     , { "romp:vec[vec[value]]", &test_romp_vec_vec }
