@@ -491,7 +491,7 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
         size = CONE_DEFAULT_STACK;
     struct cone *c = (struct cone *)malloc(size);
     if (c == NULL)
-        return mun_error(memory, "no space for stack"), NULL;
+        return mun_error(memory, "no space for a stack"), NULL;
     c->refcount = 1;
     c->flags = 0;
     c->loop = loop;
@@ -535,26 +535,33 @@ int cone_root(size_t stksz, struct cone_closure body) {
     return cone_loop_fini(&loop), cone_join(c) MUN_RETHROW;
 }
 
-// Like `main`, but called in the root coroutine.
-extern int comain(int argc, const char **argv);
+static struct cone *cone_global = NULL;
+static struct cone_loop cone_global_loop = {};
 
-struct cone_main
-{
-    int retcode, argc;
-    const char **argv;
-};
-
-// Actually run `comain`. `cone_closure` does not allow passing two arguments. Never fails;
-// nonzero exit code is not an error as far as the application is concerned. The `int`
-// return type is for type compatibility with `cone_closure`.
-static int cone_main(struct cone_main *c) {
-    c->retcode = comain(c->argc, c->argv);
+static int cone_run_main_loop(struct cone_loop *loop) {
+    if (cone_loop_run(loop))
+        mun_error_show("main loop exited with", NULL), exit(124);
     return 0;
 }
 
-extern int main(int argc, const char **argv) {
-    struct cone_main c = {1, argc, argv};
-    if (cone_root(0, cone_bind(&cone_main, &c)) || c.retcode == -1)
-        return mun_error_show("comain exited with", NULL), 1;
-    return c.retcode;
+static void __attribute__((constructor)) cone_global_init(void) {
+    if (cone_loop_init(&cone_global_loop) MUN_RETHROW)
+        mun_error_show("cone init", NULL), exit(124);
+    cone_global = cone_spawn_on(&cone_global_loop, 2 << 20, cone_bind(cone_run_main_loop, &cone_global_loop));
+    if (cone_global == NULL MUN_RETHROW)
+        return cone_loop_fini(&cone_global_loop), mun_error_show("cone init", NULL), exit(124);
+    cone_switch(cone_global);
+}
+
+static void __attribute__((destructor)) cone_global_fini(void) {
+    if (cone_global) {
+        struct cone_loop *loop = cone_global->loop;
+        cone_loop_dec(loop);
+        cone_switch(cone_global);
+        while (cone_global->refcount > 1)  // may be 2 if this is the last coroutine and the loop
+            cone_decref(cone_global);      // stopped before firing the callbacks.
+        cone_decref(cone_global);
+        cone_loop_fini(loop);
+        cone_global = NULL;
+    }
 }

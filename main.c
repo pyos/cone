@@ -138,7 +138,12 @@ int handle_connection(struct node *n) {
     return (cone_event_emit(n->fail) MUN_RETHROW) ? -1 : ret;
 }
 
-int comain(int argc, const char **argv) {
+int show_error_and_exit(void) {
+    mun_error_show("main caught", NULL);
+    return 1;
+}
+
+int main(int argc, const char **argv) {
     struct cone_event fail = {};
     struct deck d = {.pid = getpid()};
 
@@ -147,38 +152,38 @@ int comain(int argc, const char **argv) {
         fprintf(stderr, "          \033[8m%s\033[28m ^  ^            ^---- addresses of previously started nodes\n", argv[0]);
         fprintf(stderr, "          \033[8m%s\033[28m |  \\---- where to bind\n", argv[0]);
         fprintf(stderr, "          \033[8m%s\033[28m \\---- total number of expected nodes\n", argv[0]);
-        return mun_error(input, "not enough arguments");
+        return 2;
     }
     char *end;
     int n = strtol(argv[1], &end, 10) - 1;
     if (!*argv[1] || *end)
-        return mun_error(input, "N must be an integer.");
+        return mun_error(input, "N must be an integer."), show_error_and_exit();
     int known = argc - 3;
     if (n < known)
-        return mun_error(input, "more arguments than nodes in total");
+        return mun_error(input, "more arguments than nodes in total"), show_error_and_exit();
 
     struct node nodes[n];
     for (int i = 0; i < n; i++)
         nodes[i] = (struct node){{}, &d, &fail};
     for (int i = 0; i < known; i++)
         if ((nodes[i].rpc.fd = parse_arg(argv[i + 3], 0)) < 0 MUN_RETHROW)
-            return -1;
+            return show_error_and_exit();
 
     if (n > known) {
         int srv = parse_arg(argv[2], 1);
         if (srv < 0 MUN_RETHROW)
-            return -1;
+            return show_error_and_exit();
         if (listen(srv, 127) < 0 MUN_RETHROW_OS)
-            return -1;
+            return show_error_and_exit();
         if (isatty(2))
             fprintf(stderr, "\033[33;1m # main\033[0m: awaiting %d more connection(s)\n", n - known);
         for (; n > known; known++)
             if ((nodes[known].rpc.fd = accept(srv, NULL, NULL)) < 0 MUN_RETHROW_OS)
-                return -1;
+                return show_error_and_exit();
     }
     for (int i = 0; i < known; i++)
         if (deck_add(&d, &nodes[i].rpc, "flock/request", "flock/release") MUN_RETHROW)
-            return -1;
+            return show_error_and_exit();
 
     struct cone *children[known + 1];
     memset(children, 0, sizeof(struct cone *) * (known + 1));
