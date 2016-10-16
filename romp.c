@@ -13,8 +13,8 @@ enum romp_signo
 struct romp_sign
 {
     enum romp_signo sign;
-    // `sizeof` of the type that this signature describes.
-    unsigned stride;
+    unsigned size;
+    unsigned align;
 };
 
 struct romp_nested_vec mun_vec(struct mun_vec);
@@ -26,27 +26,44 @@ struct romp_nested_vec mun_vec(struct mun_vec);
 // Errors: `romp_sign_syntax` if the signature is invalid.
 //
 static struct romp_sign romp_sign(const char **sign) {
-    while (1) switch ((*sign)[0]) {
+    struct romp_sign r = {};
+next:
+    switch ((*sign)[0]) {
         case ' ':
             (*sign)++;
-            break;
+            goto next;
         case 0:
         case ')':
-            return mun_error(romp_sign_syntax, "expected a type"), (struct romp_sign){};
+            mun_error(romp_sign_syntax, "expected a type");
+            break;
         case ROMP_SIGN_DOUBLE:
-            return (struct romp_sign){*(*sign)++, 8};
+            r = (struct romp_sign){*(*sign)++, 8, _Alignof(double)};
+            break;
         case ROMP_SIGN_VEC:
-            return (struct romp_sign){*(*sign)++, sizeof(struct mun_vec)};
+            r = (struct romp_sign){*(*sign)++, sizeof(struct mun_vec), _Alignof(struct mun_vec)};
+            break;
         case ROMP_SIGN_INT:
         case ROMP_SIGN_UINT:
-            if ((*sign)[1] == '1' || (*sign)[1] == '2' || (*sign)[1] == '4' || (*sign)[1] == '8')
-                return (struct romp_sign){*(*sign)++, *(*sign)++ - '0'};
-            return mun_error(romp_sign_syntax, "`%c' is not a valid int size", (*sign)[1]), (struct romp_sign){};
+            switch ((*sign)[1]) {
+                case '1': r = (struct romp_sign){*(*sign)++, *(*sign)++  - '0', _Alignof(uint8_t)};  break;
+                case '2': r = (struct romp_sign){*(*sign)++, *(*sign)++  - '0', _Alignof(uint16_t)}; break;
+                case '4': r = (struct romp_sign){*(*sign)++, *(*sign)++  - '0', _Alignof(uint32_t)}; break;
+                case '8': r = (struct romp_sign){*(*sign)++, *(*sign)++  - '0', _Alignof(uint64_t)}; break;
+                default: mun_error(romp_sign_syntax, "`%c' is not a valid int size", (*sign)[1]); break;
+            }
+            break;
         case ROMP_SIGN_STRUCT:
-            return mun_error(not_implemented, "romp: struct sign"), (struct romp_sign){};
+            r.sign = *(*sign)++;
+            const char *sc = *sign;
+            for (struct romp_sign s; (s = romp_sign(&sc)).sign;) {
+                r.size += s.size;
+                r.align = r.align > s.align ? r.align : s.align;
+            }
+            break;
         default:
-            return mun_error(romp_sign_syntax, "`%c' is not a known type", (*sign)[0]), (struct romp_sign){};
+            mun_error(romp_sign_syntax, "`%c' is not a known type", (*sign)[0]);
     }
+    return r;
 }
 
 static int romp_encode_uint(struct romp *out, uint64_t in, unsigned width) {
@@ -102,7 +119,7 @@ static int romp_encode_vec(struct romp *out, const char **sign, const struct mun
                 return -1;
         return 0;
     }
-    return mun_vec_extend(out, in->data, in->size * s.stride) MUN_RETHROW;
+    return mun_vec_extend(out, in->data, in->size * s.size) MUN_RETHROW;
 }
 
 static int romp_decode_vec(struct romp *in, const char **sign, struct mun_vec *out) {
@@ -110,7 +127,7 @@ static int romp_decode_vec(struct romp *in, const char **sign, struct mun_vec *o
     struct romp_sign s = romp_sign(sign);
     if (!s.sign || romp_decode_uint(in, &size, 4) MUN_RETHROW)
         return -1;
-    if (mun_vec_reserve_s(s.stride, out, size) MUN_RETHROW)
+    if (mun_vec_reserve_s(s.size, out, size) MUN_RETHROW)
         return -1;
     if (s.sign == ROMP_SIGN_VEC) {
         struct romp_nested_vec *v = (struct romp_nested_vec *) out;
@@ -120,8 +137,107 @@ static int romp_decode_vec(struct romp *in, const char **sign, struct mun_vec *o
                 return mun_vec_fini(v), -1;
         }
     } else
-        mun_vec_extend_s(s.stride, out, in->data, size);
-    mun_vec_erase(in, 0, s.stride * size);
+        mun_vec_extend_s(s.size, out, in->data, size);
+    mun_vec_erase(in, 0, s.size * size);
+    return 0;
+}
+
+#define REALIGNED_TO(ptr, i) \
+    (ptr = ((uintptr_t)ptr & (i - 1)) ? (__typeof__(ptr))(((uintptr_t)ptr + i) & ~(i - 1)) : ptr)
+
+#define REALIGNED_AS(ptr, T) ((T*)REALIGNED_TO(ptr, _Alignof(T)))
+
+static int romp_encode_struct(struct romp *out, const char **sign, const char *in, int nested) {
+    int64_t ir = 0;
+    uint64_t ur = 0;
+    for (struct romp_sign s; **sign != (nested ? ')' : 0);) switch ((s = romp_sign(sign)).sign) {
+        case ROMP_SIGN_NONE:
+            return -1;
+        case ROMP_SIGN_UINT:
+            ur = s.size == 1 ? *REALIGNED_AS(in, const uint8_t)
+               : s.size == 2 ? *REALIGNED_AS(in, const uint16_t)
+               : s.size == 4 ? *REALIGNED_AS(in, const uint32_t)
+               : s.size == 8 ? *REALIGNED_AS(in, const uint64_t) : 0;
+            if (romp_encode_uint(out, ur, s.size) MUN_RETHROW)
+                return -1;
+            in += s.size;
+            break;
+        case ROMP_SIGN_INT:
+            ir = s.size == 1 ? *REALIGNED_AS(in, const int8_t)
+               : s.size == 2 ? *REALIGNED_AS(in, const int16_t)
+               : s.size == 4 ? *REALIGNED_AS(in, const int32_t)
+               : s.size == 8 ? *REALIGNED_AS(in, const int64_t) : 0;
+            if (romp_encode_int(out, ir, s.size) MUN_RETHROW)
+                return -1;
+            in += s.size;
+            break;
+        case ROMP_SIGN_DOUBLE:
+            if (romp_encode_double(out, *REALIGNED_AS(in, const double)) MUN_RETHROW)
+                return -1;
+            in += s.size;
+            break;
+        case ROMP_SIGN_VEC:
+            if (romp_encode_vec(out, sign, REALIGNED_AS(in, const struct mun_vec)) MUN_RETHROW)
+                return -1;
+            in += s.size;
+            break;
+        case ROMP_SIGN_STRUCT:
+            if (romp_encode_struct(out, sign, REALIGNED_TO(in, s.align), 1) MUN_RETHROW)
+                return -1;
+            in += s.size;
+            break;
+    }
+    if (nested)
+        (*sign)++;
+    return 0;
+}
+
+static int romp_decode_struct(struct romp *in, const char **sign, char *out, int nested) {
+    int64_t ir = 0;
+    uint64_t ur = 0;
+    for (struct romp_sign s; **sign != (nested ? ')' : 0);) switch ((s = romp_sign(sign)).sign) {
+        case ROMP_SIGN_NONE:
+            return -1;
+        case ROMP_SIGN_UINT:
+            if (romp_decode_uint(in, &ur, s.size) MUN_RETHROW)
+                return -1;
+            switch (s.size) {
+                case 1: *REALIGNED_AS(out, uint8_t ) = ur; break;
+                case 2: *REALIGNED_AS(out, uint16_t) = ur; break;
+                case 4: *REALIGNED_AS(out, uint32_t) = ur; break;
+                case 8: *REALIGNED_AS(out, uint64_t) = ur; break;
+            }
+            out += s.size;
+            break;
+        case ROMP_SIGN_INT:
+            if (romp_decode_int(in, &ir, s.size) MUN_RETHROW)
+                return -1;
+            switch (s.size) {
+                case 1: *REALIGNED_AS(out, int8_t ) = ir; break;
+                case 2: *REALIGNED_AS(out, int16_t) = ir; break;
+                case 4: *REALIGNED_AS(out, int32_t) = ir; break;
+                case 8: *REALIGNED_AS(out, int64_t) = ir; break;
+            }
+            out += s.size;
+            break;
+        case ROMP_SIGN_DOUBLE:
+            if (romp_decode_double(in, REALIGNED_AS(out, double)) MUN_RETHROW)
+                return -1;
+            out += s.size;
+            break;
+        case ROMP_SIGN_VEC:
+            if (romp_decode_vec(in, sign, REALIGNED_AS(out, struct mun_vec)) MUN_RETHROW)
+                return -1;
+            out += s.size;
+            break;
+        case ROMP_SIGN_STRUCT:
+            if (romp_decode_struct(in, sign, REALIGNED_TO(out, s.align), 1) MUN_RETHROW)
+                return -1;
+            out += s.size;
+            break;
+    }
+    if (nested)
+        (*sign)++;
     return 0;
 }
 
@@ -132,17 +248,17 @@ int romp_encode_var(struct romp *out, const char *sign, va_list args) {
         case ROMP_SIGN_NONE:
             return -1;
         case ROMP_SIGN_UINT:
-            ur = s.stride == 4 ? va_arg(args, uint32_t)
-               : s.stride == 8 ? va_arg(args, uint64_t)
+            ur = s.size == 4 ? va_arg(args, uint32_t)
+               : s.size == 8 ? va_arg(args, uint64_t)
                : va_arg(args, unsigned);
-            if (romp_encode_uint(out, ur, s.stride) MUN_RETHROW)
+            if (romp_encode_uint(out, ur, s.size) MUN_RETHROW)
                 return -1;
             break;
         case ROMP_SIGN_INT:
-            ir = s.stride == 4 ? va_arg(args, int32_t)
-               : s.stride == 8 ? va_arg(args, int64_t)
+            ir = s.size == 4 ? va_arg(args, int32_t)
+               : s.size == 8 ? va_arg(args, int64_t)
                : va_arg(args, unsigned);
-            if (romp_encode_int(out, ir, s.stride) MUN_RETHROW)
+            if (romp_encode_int(out, ir, s.size) MUN_RETHROW)
                 return -1;
             break;
         case ROMP_SIGN_DOUBLE:
@@ -154,7 +270,9 @@ int romp_encode_var(struct romp *out, const char *sign, va_list args) {
                 return -1;
             break;
         case ROMP_SIGN_STRUCT:
-            return mun_error(not_implemented, "romp_encode_struct");
+            if (romp_encode_struct(out, &sign, va_arg(args, const char *), 1) MUN_RETHROW)
+                return -1;
+            break;
     }
     return 0;
 }
@@ -166,9 +284,9 @@ int romp_decode_var(struct romp *in, const char *sign, va_list args) {
         case ROMP_SIGN_NONE:
             return -1;
         case ROMP_SIGN_UINT:
-            if (romp_decode_uint(in, &ur, s.stride) MUN_RETHROW)
+            if (romp_decode_uint(in, &ur, s.size) MUN_RETHROW)
                 return -1;
-            switch (s.stride) {
+            switch (s.size) {
                 case 1: *va_arg(args, uint8_t  *) = ur; break;
                 case 2: *va_arg(args, uint16_t *) = ur; break;
                 case 4: *va_arg(args, uint32_t *) = ur; break;
@@ -176,9 +294,9 @@ int romp_decode_var(struct romp *in, const char *sign, va_list args) {
             }
             break;
         case ROMP_SIGN_INT:
-            if (romp_decode_int(in, &ir, s.stride) MUN_RETHROW)
+            if (romp_decode_int(in, &ir, s.size) MUN_RETHROW)
                 return -1;
-            switch (s.stride) {
+            switch (s.size) {
                 case 1: *va_arg(args, int8_t  *) = ir; break;
                 case 2: *va_arg(args, int16_t *) = ir; break;
                 case 4: *va_arg(args, int32_t *) = ir; break;
@@ -194,7 +312,9 @@ int romp_decode_var(struct romp *in, const char *sign, va_list args) {
                 return -1;
             break;
         case ROMP_SIGN_STRUCT:
-            return mun_error(not_implemented, "romp_decode_struct");
+            if (romp_decode_struct(in, &sign, va_arg(args, char *), 1) MUN_RETHROW)
+                return -1;
+            break;
     }
     return 0;
 }

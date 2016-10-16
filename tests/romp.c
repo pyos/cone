@@ -55,6 +55,39 @@ static int test_romp_vec_vec() {
     return 0;
 }
 
+struct test_struct
+{
+    uint8_t first;
+    uint16_t padded1;
+    uint64_t padded2;
+    uint8_t second;
+    struct {
+        uint16_t x;
+        uint16_t y;
+    } padded3;
+};
+
+static int test_romp_struct() {
+    struct test_struct v = {1, 2, 3, 4, {5, 6}};
+    struct test_struct r = {};
+    struct romp out = mun_vec_init_static(uint8_t, 64);
+    if (romp_encode(&out, "(u1 u2 u8 u1 (u2 u2))", &v) MUN_RETHROW)
+        return -1;
+    if (romp_decode(&out, "(u1 u2 u8 u1 (u2 u2))", &r) MUN_RETHROW)
+        return -1;
+#define CHECK_FIELD(f, fmt) \
+    do if (r.f != v.f) return mun_error(assert, #f ": expected " fmt ", got " fmt, v.f, r.f); while (0)
+    CHECK_FIELD(first, "%u");
+    CHECK_FIELD(padded1, "%u");
+    CHECK_FIELD(padded2, "%" PRIu64);
+    CHECK_FIELD(second, "%u");
+    CHECK_FIELD(padded3.x, "%u");
+    CHECK_FIELD(padded3.y, "%u");
+#undef CHECK_FIELD
+    return 0;
+}
+
 export { "romp:primitive", &test_romp_primitive }
      , { "romp:vec[primitive]", &test_romp_vec }
      , { "romp:vec[vec[primitive]]", &test_romp_vec_vec }
+     , { "romp:struct", &test_romp_struct }
