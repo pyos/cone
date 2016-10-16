@@ -134,12 +134,20 @@ static int nero_on_frame(struct nero *n, enum nero_frame_type type, uint32_t rqi
         if (sep == NULL)
             return mun_error(nero_protocol, "malformed request");
         const char *function = (const char *)data;
-        struct romp in = mun_vec_init_borrow(sep + 1, size - (sep - data) - 1);
-        struct romp out = {};
         unsigned i = mun_vec_find(&n->exported, !strcmp(function, _->name));
         if (i == n->exported.size)
             return mun_error(nero_not_exported, "%s", function), nero_write_response_error(n, rqid);
-        if (n->exported.data[i].code(n, n->exported.data[i].data, &in, &out))
+        struct nero_closure *c = &n->exported.data[i];
+        struct romp in = mun_vec_init_borrow(sep + 1, size - (sep - data) - 1);
+        struct romp out = {};
+        struct romp_signinfo isi = romp_signinfo(c->isign);
+        struct romp_signinfo osi = romp_signinfo(c->osign);
+        _Alignas(max_align_t) char ibuf[isi.size], obuf[osi.size];
+        if (romp_decode(&in, c->isign, ibuf))
+            return nero_write_response_error(n, rqid);
+        if (c->code(n, c->data, ibuf, obuf))
+            return nero_write_response_error(n, rqid);
+        if (romp_encode(&out, c->osign, obuf))
             return mun_vec_fini(&out), nero_write_response_error(n, rqid);
         if (nero_write_response(n, rqid, &out) MUN_RETHROW)
             return mun_vec_fini(&out), -1;

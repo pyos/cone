@@ -2,19 +2,18 @@
 #include <unistd.h>
 #include <sys/socket.h>
 
-static int test_counter_add(struct nero *rpc, uint32_t *n, struct romp *in, struct romp *out) {
+static int test_counter_add(struct nero *rpc, int32_t *state, int32_t *incr, int32_t *ret) {
     (void)rpc;
-    int32_t incr = 0;
-    if (romp_decode(in, "i4", &incr) MUN_RETHROW)
-        return -1;
-    *n += incr;
-    return romp_encode(out, "i4", n) MUN_RETHROW;
+    *ret = (*state += *incr);
+    return 0;
 }
 
 static int test_nero_server(struct nero *conn) {
     int32_t counter = 0;
-    struct nero_closure inc = nero_closure("add", &test_counter_add, &counter);
-    int ret = nero_add(conn, &inc, 1) || nero_run(conn) MUN_RETHROW;
+    struct nero_closure methods[] = {
+        nero_closure("add", &test_counter_add, "i4", "i4", &counter),
+    };
+    int ret = nero_add(conn, methods, 1) || nero_run(conn) MUN_RETHROW;
     return nero_fini(conn), ret;
 }
 

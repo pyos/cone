@@ -39,12 +39,15 @@ struct nero
 struct nero_closure
 {
     const char *name;
-    int (*code)(struct nero *, void *, struct romp *in, struct romp *out);
+    const char *isign;
+    const char *osign;
+    int (*code)(struct nero *, void *, const void *in, void *out);
     void *data;
 };
 
 // Create a `struct nero_closure` while casting the function to an appropriate type.
-#define nero_closure(name, f, data) ((struct nero_closure){name, (int(*)(struct nero*,void*,struct romp*,struct romp*))(f), data})
+#define nero_closure(name, f, isign, osign, data) \
+    ((struct nero_closure){name, isign, osign, (int(*)(struct nero*,void*,const void*,void*))(f), data})
 
 // Export `c` functions atomically.
 //
