@@ -6,7 +6,7 @@ tests: tests/cone tests/siy tests/mae
 tests/%: obj/tests/%
 	$<
 
-CCMD = $(CC) -std=c11 -I. -Wall -Wextra -fPIC $(CFLAGS) -D_POSIX_C_SOURCE=200809L
+CCMD = $(CC) -std=c11 -I. -Wall -Wextra -Wpointer-arith -fPIC $(CFLAGS) -D_POSIX_C_SOURCE=200809L
 
 obj/tests/%: tests/%.c tests/base.c obj/mun.o obj/cone.o obj/cold.o obj/siy.o obj/mae.o
 	@mkdir -p $(dir $@)
