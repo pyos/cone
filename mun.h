@@ -130,9 +130,10 @@ struct mun_vec mun_vec(char);
 #define mun_vec_init_str(str) mun_vec_init_borrow(str, strlen(str))
 
 // Finalizer of `struct mun_vec(T)`. The vector becomes empty (but still usable).
-#define mun_vec_fini(v) mun_vec_fini_s((struct mun_vec *)(v))
+#define mun_vec_fini(v) mun_vec_fini_s(mun_vec_strided(v))
 
-static inline void mun_vec_fini_s(struct mun_vec *v) {
+static inline void mun_vec_fini_s(size_t s, struct mun_vec *v) {
+    (void)s;
     if (!v->is_static)
         free(v->data), *v = (struct mun_vec){};
     else

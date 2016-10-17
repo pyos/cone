@@ -159,7 +159,7 @@ static int siy_decode_one(struct siy *in, struct siy_sign s, void *out) {
                 return -1;
             while (u--)
                 if (siy_decode_one(in, q, &v->data[v->size++ * q.size]) MUN_RETHROW)
-                    return mun_vec_fini(v), -1;
+                    return mun_vec_fini_s(q.size, v), -1;
             return 0;
         }
         case SIY_STRUCT:
