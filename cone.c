@@ -16,7 +16,7 @@
 #endif
 
 // Call a function when the next time the event is triggered, or, if already in
-// `cone_event_emit`, as soon as the existing callbacks are fired..
+// `cone_event_emit`, as soon as the existing callbacks are fired.
 //
 // Errors: `memory`.
 //
@@ -63,9 +63,6 @@ static void cone_event_schedule_del(struct cone_event_schedule *ev, mun_usec at,
 // Call all due callbacks and pop them off the queue. If a callback fails, it is
 // not removed, and the rest are not fired either.
 //
-// Return: 0 on error, time until the next callback is due otherwise; -1 if there
-//         are no callbacks left.
-//
 // Errors: does not fail by itself, but rethrows anything from functions in the queue.
 //
 static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev) {
@@ -74,9 +71,9 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev) {
         if (ev->data[0].at > now)
             return ev->data[0].at - now;
         if (ev->data[0].f.code(ev->data[0].f.data) MUN_RETHROW)
-            return 0;
+            return -1;
     }
-    return -1;
+    return INT32_MAX;
 }
 
 // A set of callbacks attached to a single file descriptor: one for reading, one
@@ -178,9 +175,9 @@ static void cone_event_io_del(struct cone_event_io *set, int fd, int write, stru
 //   * see either epoll_wait(2) or select(2) depending on CONE_EPOLL.
 //
 static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
-    if (timeout == 0 MUN_RETHROW)
+    if (timeout < 0 MUN_RETHROW)
         return -1;
-    if (timeout > 60000000ll || timeout < 0)
+    if (timeout > 60000000ll)
         timeout = 60000000ll;
 #if CONE_EPOLL
     struct epoll_event evs[32];
@@ -554,13 +551,13 @@ static void __attribute__((constructor)) cone_main_init(void) {
 
 static void __attribute__((destructor)) cone_main_fini(void) {
     struct cone *c = cone;
-    if (!c)
-        return;
-    struct cone_loop *loop = c->loop;
-    cone_loop_dec(loop);
-    cone_switch(c);
-    while (c->refcount > 1)  // may be 2 if this is the last coroutine and the loop
-        cone_decref(c);      // stopped before firing the callbacks.
-    cone_decref(c);
-    cone_loop_fini(loop);
+    if (c) {
+        struct cone_loop *loop = c->loop;
+        cone_loop_dec(loop);
+        cone_switch(c);
+        cone_decref(c);
+        if (cone_event_schedule_emit(&loop->at) < 0)
+            mun_error_show("cone fini", NULL), exit(124);
+        cone_loop_fini(loop);
+    }
 }
