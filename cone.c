@@ -166,11 +166,11 @@ static void cone_event_io_del(struct cone_event_io *set, int fd, int write, stru
 }
 
 // Fire all pending I/O events; if there are none, wait for an event for at most `timeout`
-// microseconds, or until interrupted by a signal or a ping. If `timeout` is 0, rethrow
+// microseconds, or until interrupted by a signal or a ping. If `timeout` is -1, rethrow
 // the previous error under the assumption that a `cone_event_schedule_emit` call has failed.
 //
 // Errors:
-//   * rethrows the last error if timeout is 0;
+//   * rethrows the last error if timeout is -1;
 //   * rethrows anything the callbacks might throw;
 //   * see either epoll_wait(2) or select(2) depending on CONE_EPOLL.
 //
