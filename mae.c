@@ -115,7 +115,7 @@ static int mae_restore_error(const uint8_t *data, size_t size, const char *funct
         return mun_error(mae_protocol, "truncated error response");
     uint32_t code = siy_r4(data);
     const char *name = (const char *)data + 4;
-    const char *text = memchr(name, 0, size - 4) + 1;
+    const char *text = (const char *)memchr(name, 0, size - 4) + 1;
     if (text == &name[size - 4])
         return mun_error(mae_protocol, "error response only has one string");
     return mun_error_at(code, "mae_remote", MUN_CURRENT_FRAME, "%s / %s: %s", function, name, text);

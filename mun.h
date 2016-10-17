@@ -85,11 +85,11 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 // Note: all of the below functions and macros take vectors by pointers.
 //
 #define mun_vec(T) { T* data; unsigned size, cap; char is_static; }
-#define mun_vec_type(v) __typeof__((v)->data[0])
+#define mun_vec_type(v) __typeof__(*(v)->data)
 
 // Weakly typed vector. Loses information about the contents, but allows any strongly
-// typed vector to be passed to a function.
-struct mun_vec mun_vec(char);
+// typed vector to be passed to a function. (Type is `void` to make `sizeof` invalid.)
+struct mun_vec mun_vec(void);
 
 // Decay a strongly typed vector into a (sizeof(T), weakly typed vector) pair.
 // Macros accept pointers to strongly typed vectors; functions with names ending with `_s`
@@ -130,9 +130,10 @@ struct mun_vec mun_vec(char);
 #define mun_vec_init_str(str) mun_vec_init_borrow(str, strlen(str))
 
 // Finalizer of `struct mun_vec(T)`. The vector becomes empty (but still usable).
-#define mun_vec_fini(v) mun_vec_fini_s((struct mun_vec *)(v))
+#define mun_vec_fini(v) mun_vec_fini_s(mun_vec_strided(v))
 
-static inline void mun_vec_fini_s(struct mun_vec *v) {
+static inline void mun_vec_fini_s(size_t s, struct mun_vec *v) {
+    (void)s;
     if (!v->is_static)
         free(v->data), *v = (struct mun_vec){};
     else
@@ -142,9 +143,11 @@ static inline void mun_vec_fini_s(struct mun_vec *v) {
 // Move the tail of a vector and change the size accordingly.
 #define mun_vec_shift(v, start, offset) mun_vec_shift_s(mun_vec_strided(v), start, offset)
 
+#define mun_vec_data_s(stride, v) ((char (*)[stride])(v)->data)
+
 static inline void mun_vec_shift_s(size_t s, struct mun_vec *v, size_t start, int offset) {
     if (start < v->size)
-        memmove(v->data + (start + offset) * s, v->data + start * s, (v->size - start) * s);
+        memmove(&mun_vec_data_s(s, v)[start + offset], &mun_vec_data_s(s, v)[start], (v->size - start) * s);
     v->size += offset;
 }
 
@@ -187,7 +190,7 @@ static inline int mun_vec_splice_s(size_t s, struct mun_vec *v, size_t i, const 
     if (mun_vec_reserve_s(s, v, n))
         return -1;
     mun_vec_shift_s(s, v, i, n);
-    memcpy(v->data + i * s, e, n * s);
+    memcpy(&mun_vec_data_s(s, v)[i], e, n * s);
     return 0;
 }
 

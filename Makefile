@@ -12,7 +12,7 @@ tests/%: obj/tests/%
 tests/deck: tests/deck.bash main
 	bash tests/deck.bash 10 && python tests/deck.py
 
-CCMD = $(CC) -std=c11 -I. -Wall -Wextra -fPIC $(CFLAGS) -D_POSIX_C_SOURCE=200809L
+CCMD = $(CC) -std=c11 -I. -Wall -Wextra -Wpointer-arith -fPIC $(CFLAGS) -D_POSIX_C_SOURCE=200809L
 
 obj/tests/%: tests/%.c tests/base.c obj/mun.o obj/cone.o obj/cold.o obj/siy.o obj/mae.o obj/deck.o
 	@mkdir -p $(dir $@)

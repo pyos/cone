@@ -126,7 +126,7 @@ static int siy_encode_one(struct siy *out, struct siy_sign s, const void *in) {
             if (q.sign == SIY_ERROR || siy_encode_uint(out, v->size, 4) MUN_RETHROW)
                 return -1;
             for (unsigned i = 0; i < v->size; i++)
-                if (siy_encode_one(out, q, &v->data[q.size * i]) MUN_RETHROW)
+                if (siy_encode_one(out, q, &mun_vec_data_s(q.size, v)[i]) MUN_RETHROW)
                     return -1;
             return 0;
         }
@@ -158,8 +158,8 @@ static int siy_decode_one(struct siy *in, struct siy_sign s, void *out) {
             if (mun_vec_reserve_s(q.size, v, u) MUN_RETHROW)
                 return -1;
             while (u--)
-                if (siy_decode_one(in, q, &v->data[v->size++ * q.size]) MUN_RETHROW)
-                    return mun_vec_fini(v), -1;
+                if (siy_decode_one(in, q, &mun_vec_data_s(q.size, v)[v->size++]) MUN_RETHROW)
+                    return mun_vec_fini_s(q.size, v), -1;
             return 0;
         }
         case SIY_STRUCT:
@@ -171,15 +171,17 @@ static int siy_decode_one(struct siy *in, struct siy_sign s, void *out) {
 }
 
 int siy_encode(struct siy *out, const char *sign, const void *in) {
-    for (struct siy_sign s; (s = siy_sign(sign, 1)).size; in += s.size, sign = s.next)
-        if (s.sign == SIY_ERROR || siy_encode_one(out, s, ALIGN(in, s.align)) MUN_RETHROW)
+    const char *in_ = in;
+    for (struct siy_sign s; (s = siy_sign(sign, 1)).size; in_ += s.size, sign = s.next)
+        if (s.sign == SIY_ERROR || siy_encode_one(out, s, ALIGN(in_, s.align)) MUN_RETHROW)
             return -1;
     return 0;
 }
 
 int siy_decode(struct siy *in, const char *sign, void *out) {
-    for (struct siy_sign s; (s = siy_sign(sign, 1)).size; out += s.size, sign = s.next)
-        if (s.sign == SIY_ERROR || siy_decode_one(in, s, ALIGN(out, s.align)) MUN_RETHROW)
+    char *out_ = out;
+    for (struct siy_sign s; (s = siy_sign(sign, 1)).size; out_ += s.size, sign = s.next)
+        if (s.sign == SIY_ERROR || siy_decode_one(in, s, ALIGN(out_, s.align)) MUN_RETHROW)
             return -1;
     return 0;
 }
