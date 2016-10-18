@@ -32,34 +32,6 @@
 #endif
 #endif
 
-// Call a function when the next time the event is triggered, or, if already in
-// `cone_event_emit`, as soon as the existing callbacks are fired.
-//
-// Errors: `memory`.
-//
-static int cone_event_add(struct cone_event *ev, struct cone_closure f) {
-    return mun_vec_append(ev, &f);
-}
-
-// Cancel a previous `cone_event_add(ev, f)`. No-op if there was none/it has already been fired.
-static void cone_event_del(struct cone_event *ev, struct cone_closure f) {
-    size_t i = mun_vec_find(ev, _->code == f.code && _->data == f.data);
-    if (i != ev->size)
-        mun_vec_erase(ev, i, 1);
-}
-
-// Call everything added with `cone_event_add`. If a callback fails, it is not removed
-// from the queue, and no more callbacks are fired.
-//
-// Errors: rethrows anything from the callbacks in the queue.
-//
-static int cone_event_emit(struct cone_event *ev, size_t n) {
-    for (; n-- && ev->size; mun_vec_erase(ev, 0, 1))
-        if (ev->data[0].code(ev->data[0].data) MUN_RETHROW)
-            return -1;
-    return 0;
-}
-
 // A priority queue of functions to be called at precise points in time.
 // Zero-initialized; finalized with `mun_vec_fini`; must not be destroyed
 // if there are callbacks attached, else program state is indeterminate.
@@ -407,35 +379,45 @@ static int cone_schedule(struct cone *c) {
 
 // Sleep until an event is fired. If the coroutine is cancelled during that time,
 // unsubscribe and throw a `cancelled` error.
-#define cone_pause(always_unsub, ev_add, ev_del, ...) do {                \
-    if (ev_add(__VA_ARGS__, cone_bind(&cone_schedule, cone)) MUN_RETHROW) \
-        return -1;                                                        \
-    cone_switch(cone);                                                    \
-    if (always_unsub || cone->flags & CONE_FLAG_CANCELLED)                \
-        ev_del(__VA_ARGS__, cone_bind(&cone_schedule, cone));             \
-    if (!(cone->flags & CONE_FLAG_CANCELLED))                             \
-        return 0;                                                         \
-    cone->flags &= ~CONE_FLAG_CANCELLED;                                  \
-    return cone_cancel(cone);                                             \
+#define cone_pause(always_unsub, ev_add, ev_del, ...) do { \
+    if (ev_add(__VA_ARGS__) MUN_RETHROW)                   \
+        return -1;                                         \
+    cone_switch(cone);                                     \
+    if (always_unsub || cone->flags & CONE_FLAG_CANCELLED) \
+        ev_del(__VA_ARGS__);                               \
+    if (!(cone->flags & CONE_FLAG_CANCELLED))              \
+        return 0;                                          \
+    cone->flags &= ~CONE_FLAG_CANCELLED;                   \
+    return cone_cancel(cone);                              \
 } while (0)
+
+
+static void cone_unschedule(struct cone_event *ev, struct cone **c) {
+    size_t i = mun_vec_find(ev, *_ == *c);
+    if (i != ev->size)
+        mun_vec_erase(ev, i, 1);
+}
 
 int cone_wait(struct cone_event *ev, cone_atom *uptr, unsigned u) {
     if (atomic_load(uptr) != u)
         return 1;
-    cone_pause(0, cone_event_add, cone_event_del, ev);
+    cone_pause(0, mun_vec_append, cone_unschedule, ev, &(struct cone *){cone});
 }
 
 int cone_wake(struct cone_event *ev, size_t n) {
-    return cone_event_emit(ev, n);
+    for (; n-- && ev->size; mun_vec_erase(ev, 0, 1))
+        if (cone_schedule(ev->data[0]) MUN_RETHROW)
+            return -1;
+    return 0;
 }
 
 int cone_iowait(int fd, int write) {
-    cone_pause(1, cone_event_io_add, cone_event_io_del, &cone->loop->io, fd, write);
+    cone_pause(1, cone_event_io_add, cone_event_io_del, &cone->loop->io, fd, write, cone_bind(&cone_schedule, cone));
 }
 
 int cone_sleep(mun_usec delay) {
     mun_usec at = mun_usec_monotonic() + delay;
-    cone_pause(0, cone_event_schedule_add, cone_event_schedule_del, &cone->loop->at, at);
+    cone_pause(0, cone_event_schedule_add, cone_event_schedule_del, &cone->loop->at, at, cone_bind(&cone_schedule, cone));
 }
 
 int cone_yield(void) {
@@ -489,9 +471,9 @@ static __attribute__((noreturn)) void cone_body(struct cone *c) {
         c->flags |= CONE_FLAG_FAILED;
     }
     c->flags |= CONE_FLAG_FINISHED;
-    for mun_vec_iter(&c->done, cb)
-        if (cone_event_schedule_add(&c->loop->at, mun_usec_monotonic(), *cb))
-            mun_error_show("cone fatal", NULL), abort();
+    if (cone_event_schedule_add(&c->loop->at, mun_usec_monotonic(), cone_bind(&cone_decref, c))
+     || cone_wake(&c->done, (size_t)-1) MUN_RETHROW)
+        mun_error_show("cone fatal", NULL), abort();
     cone_loop_dec(c->loop);
     cone_switch(c);
     abort();
@@ -543,7 +525,7 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
     sigaction(SIGUSR1, &old_act, NULL);
     sigaltstack(&old_stk, NULL);
 #endif
-    if (cone_event_add(&c->done, cone_bind(&cone_decref, c)) || cone_schedule(c) MUN_RETHROW)
+    if (cone_schedule(c) MUN_RETHROW)
         return cone_decref(c), NULL;
     return cone_loop_inc(loop), cone_incref(c), c;
 }

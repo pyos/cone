@@ -19,7 +19,7 @@ struct cone_closure
 
 // A manually triggered event. Zero-initialized; finalized with `mun_vec_fini`; must not
 // be destroyed if there are callbacks attached, else program state is indeterminate.
-struct cone_event mun_vec(struct cone_closure);
+struct cone_event mun_vec(struct cone *);
 
 // The coroutine in which the code is currently executing.
 extern _Thread_local struct cone * volatile cone;
