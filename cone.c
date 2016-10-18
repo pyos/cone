@@ -3,6 +3,23 @@
 #include <signal.h>
 #include <unistd.h>
 #include <stdatomic.h>
+
+#if !defined(CONE_EPOLL) && __linux__
+// Use {0: select, 1: epoll} to wait for I/O.
+#define CONE_EPOLL 1
+#endif
+
+#if !defined(CONE_XCHG_RSP) && (__linux__ || __APPLE__) && __x86_64__
+// Use {0: sigaltstack+sigaction+setjmp+longjmp, 1: x86-64 SysV ABI assembly} to switch stacks.
+#define CONE_XCHG_RSP 1
+#endif
+
+#ifndef CONE_DEFAULT_STACK
+// How much space to allocate for a stack if 0 was passed to `cone_root`/`cone_spawn`.
+// Must be at least MINSIGSTKSZ plus 256 bytes, else behavior is undefined.
+#define CONE_DEFAULT_STACK 65536
+#endif
+
 #if CONE_EPOLL
 #include <sys/epoll.h>
 #else

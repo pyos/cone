@@ -2,6 +2,12 @@
 #include <unistd.h>
 #include <stdatomic.h>
 
+#ifndef MAE_MAX_FRAME_SIZE
+// 1. Refuse to send frames bigger than this.
+// 2. Close the connection upon receiving a frame bigger than this.
+#define MAE_MAX_FRAME_SIZE 65535
+#endif
+
 enum mae_frame_type
 {
     MAE_FRAME_REQUEST = 0,
