@@ -53,7 +53,11 @@ int cone_unblock(int fd);
 
 // Create a coroutine on a new event loop, then block until all coroutines on it complete.
 //
-// Errors: see `cone_loop_init`, `cone_spawn`, `cone_loop_run`, `cone_join`.
+// Errors:
+//   * `memory`;
+//   * anything thrown by the main coroutine;
+//   * see pipe(2), fcntl(2);
+//   * see epoll_create(2) and epoll_wait(2) if CONE_EPOLL is 1, select(2) otherwise.
 //
 int cone_root(size_t stack, struct cone_closure);
 
@@ -70,18 +74,17 @@ struct cone *cone_spawn(size_t stack, struct cone_closure);
 // Create a new coroutine with the default stack size.
 #define cone(f, arg) cone_spawn(0, cone_bind(f, arg))
 
-// If the coroutine is currently sleeping, arrange for it to be woken up with an error.
-// If it is not, then this is the currently active coroutine, so just throw an error directly.
-// No-op if the coroutine has already finished.
+// Arrange for the coroutine to be woken up with an error, even if the event it was waiting
+// for did not yet occur. No-op if the coroutine has already finished.
 //
 // Errors:
-//   * `cancelled`: if `c` is `cone`;
+//   * `cancelled` if the argument is the currently running coroutine;
 //   * `memory`.
 //
 int cone_cancel(struct cone *);
 
 // Increment the reference count. The coroutine will not be destroyed until `cone_decref`
-// is called the matching number of times.
+// is called matching number of times.
 void cone_incref(struct cone *);
 
 // Decrement the reference count. If it becomes zero, destroy the coroutine; also,
