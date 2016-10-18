@@ -43,7 +43,7 @@ static int deck_wake(struct deck *lk) {
         return 0;
     lk->state &= ~DECK_REQUESTED;
     deck_debug_msg(++lk->time, lk->pid, "acquire");
-    return cone_event_emit(&lk->wake);
+    return cone_wake(&lk->wake, (size_t)-1);
 }
 
 // Update the local Lamport clock, write the new value to the output.
@@ -128,7 +128,7 @@ void deck_fini(struct deck *lk) {
     }
     mun_vec_fini(&lk->rpcs);
     mun_vec_fini(&lk->queue);
-    cone_event_emit(&lk->wake);
+    cone_wake(&lk->wake, (size_t)-1);
 }
 
 int deck_add(struct deck *lk, struct mae *rpc, const char *request, const char *release) {
@@ -178,13 +178,15 @@ int deck_acquire(struct deck *lk) {
                 return -1;
             deck_debug_msg(lk->time, lk->pid, "request");
             lk->state |= DECK_REQUESTED;
-            if (deck_call_all(lk, 0, arq))
-                return lk->state &= ~DECK_REQUESTED, deck_release_impl(lk, "cancel"), -1;
+            if (deck_call_all(lk, 0, arq)) {
+                lk->state &= ~DECK_REQUESTED;
+                return deck_release_impl(lk, "cancel"), -1;
+            }
             lk->state |= DECK_ACKED;
             if (deck_wake(lk) MUN_RETHROW)
                 return -1;
-        } else if (cone_wait(&lk->wake) MUN_RETHROW)
-            return -1;
+        } else if (cone_wait(&lk->wake, &lk->state, lk->state) < 0 MUN_RETHROW)
+            return -1;  // FIXME the whole lock should be protected by a coro-owned mutex.
     }
     lk->state++;
     return 0;

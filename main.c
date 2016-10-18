@@ -129,13 +129,13 @@ int interface_inner(struct node *n) {
 
 int interface(struct node *n) {
     int ret = interface_inner(n) MUN_RETHROW;
-    return (cone_event_emit(n->fail) MUN_RETHROW) ? -1 : ret;
+    return (cone_wake(n->fail, 1) MUN_RETHROW) ? -1 : ret;
 }
 
 int handle_connection(struct node *n) {
     int ret = mae_run(&n->rpc) MUN_RETHROW;
     deck_del(n->deck, &n->rpc);
-    return (cone_event_emit(n->fail) MUN_RETHROW) ? -1 : ret;
+    return (cone_wake(n->fail, 1) MUN_RETHROW) ? -1 : ret;
 }
 
 int show_error_and_exit(void) {
@@ -194,11 +194,12 @@ int main(int argc, const char **argv) {
             goto failall;
         }
     }
+    cone_atom null = 0;
     struct node fake = {{}, &d, &fail};
     if ((children[known] = cone(&interface, &fake)) == NULL)
         mun_error_show("interface failed to start due to", NULL), ret = 1;
     else
-        cone_wait(&fail);
+        cone_wait(&fail, &null, 0);
 failall:
     for (int i = known + 1; i--;) {
         if (children[i]) {

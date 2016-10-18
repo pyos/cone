@@ -12,7 +12,7 @@ struct deck
 {
     uint32_t pid;
     uint32_t time;
-    unsigned state;
+    cone_atom state;
     struct cone_event wake;
     struct mun_vec(struct deck_mae) rpcs;
     struct mun_vec(struct deck_request) queue;
