@@ -20,6 +20,8 @@
 
 #include "mun.h"
 
+typedef volatile _Atomic unsigned cone_atom;
+
 // A single function bound to some data. Naturally, does not own the pointer; manage
 // it on your own. Aggregate-initialized; also see `cone_bind`.
 struct cone_closure
@@ -34,13 +36,6 @@ struct cone_closure
 // A manually triggered event. Zero-initialized; finalized with `mun_vec_fini`; must not
 // be destroyed if there are callbacks attached, else program state is indeterminate.
 struct cone_event mun_vec(struct cone_closure);
-
-// Call everything added with `cone_event_add`. If a callback fails, it is not removed
-// from the queue, and no more callbacks are fired.
-//
-// Errors: rethrows anything from the callbacks in the queue.
-//
-int cone_event_emit(struct cone_event *);
 
 // The coroutine in which the code is currently executing.
 extern _Thread_local struct cone * volatile cone;
@@ -101,13 +96,22 @@ int cone_decref(struct cone *);
 //
 int cone_join(struct cone *);
 
-// Sleep until an event is fired manually.
+// If the value at the address is the same as the one passed as an argument, sleep until
+// `cone_wake` is called with the same event. Otherwise, return 1. This compare-and-sleep
+// operation is atomic, but only within a single event loop; if multiple coroutines
+// from different loops touch the same `cone_atom`, behavior is undefined.
 //
 // Errors:
 //   * `cancelled`: `cone_cancel` was called while this coroutine was sleeping.
 //   * `memory`.
 //
-int cone_wait(struct cone_event *);
+int cone_wait(struct cone_event *, cone_atom *, unsigned);
+
+// Wake up at most N coroutines paused with `cone_wait`.
+//
+// Errors: `memory`.
+//
+int cone_wake(struct cone_event *, size_t);
 
 // Sleep until a file descriptor is ready for reading/writing. Behavior is undefined
 // if it already is (call read/write until it returns EAGAIN/EWOULDBLOCK first).

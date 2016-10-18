@@ -31,8 +31,13 @@ static void cone_event_del(struct cone_event *ev, struct cone_closure f) {
         mun_vec_erase(ev, i, 1);
 }
 
-int cone_event_emit(struct cone_event *ev) {
-    for (; ev->size; mun_vec_erase(ev, 0, 1))
+// Call everything added with `cone_event_add`. If a callback fails, it is not removed
+// from the queue, and no more callbacks are fired.
+//
+// Errors: rethrows anything from the callbacks in the queue.
+//
+static int cone_event_emit(struct cone_event *ev, size_t n) {
+    for (; n-- && ev->size; mun_vec_erase(ev, 0, 1))
         if (ev->data[0].code(ev->data[0].data) MUN_RETHROW)
             return -1;
     return 0;
@@ -224,8 +229,8 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
 struct cone_loop
 {
     int selfpipe[2];
-    volatile _Atomic unsigned active;
-    volatile _Atomic _Bool pinged;
+    cone_atom active;
+    cone_atom pinged;
     struct cone_event ping;
     struct cone_event_io io;
     struct cone_event_schedule at;
@@ -243,7 +248,7 @@ int cone_unblock(int fd) {
 static int cone_loop_consume_ping(struct cone_loop *loop) {
     ssize_t rd = read(loop->selfpipe[0], &rd, sizeof(rd));  // never yields
     atomic_store_explicit(&loop->pinged, 0, memory_order_release);
-    return cone_event_schedule_add(&loop->at, mun_usec_monotonic(), cone_bind(&cone_event_emit, &loop->ping)) MUN_RETHROW;
+    return cone_wake(&loop->ping, (size_t)-1) MUN_RETHROW;
 }
 
 // Finalizer of `struct cone_loop`. Object state is undefined afterwards.
@@ -289,7 +294,7 @@ static int cone_loop_run(struct cone_loop *loop) {
 // Send a ping through the pipe, waking up the loop if it's currently waiting for I/O
 // events and triggering a ping event. Surprisingly, this function is thread-safe.
 static void cone_loop_ping(struct cone_loop *loop) {
-    _Bool expect = 0;
+    unsigned expect = 0;
     if (atomic_compare_exchange_strong(&loop->pinged, &expect, 1))
         write(loop->selfpipe[1], "", 1);
 }
@@ -321,7 +326,8 @@ enum
 // else program state is indeterminate, and 100% incorrect if `CONE_FLAG_RUNNING` was on.
 struct cone
 {
-    unsigned refcount, flags;
+    cone_atom refcount;
+    cone_atom flags;
     struct cone_loop *loop;
     struct cone_closure body;
     struct cone_event done;
@@ -396,8 +402,14 @@ static int cone_schedule(struct cone *c) {
     return cone_cancel(cone);                                             \
 } while (0)
 
-int cone_wait(struct cone_event *ev) {
+int cone_wait(struct cone_event *ev, cone_atom *uptr, unsigned u) {
+    if (atomic_load(uptr) != u)
+        return 1;
     cone_pause(0, cone_event_add, cone_event_del, ev);
+}
+
+int cone_wake(struct cone_event *ev, size_t n) {
+    return cone_event_emit(ev, n);
 }
 
 int cone_iowait(int fd, int write) {
@@ -411,15 +423,15 @@ int cone_sleep(mun_usec delay) {
 
 int cone_yield(void) {
     cone_loop_ping(cone->loop);
-    return cone_wait(&cone->loop->ping) MUN_RETHROW;
+    return cone_wait(&cone->loop->ping, &cone->loop->pinged, 1) MUN_RETHROW;
 }
 
 void cone_incref(struct cone *c) {
-    c->refcount++;
+    atomic_fetch_add(&c->refcount, 1);
 }
 
 int cone_decref(struct cone *c) {
-    if (c && --c->refcount == 0) {
+    if (c && atomic_fetch_sub(&c->refcount, 1) == 1) {
         if ((c->flags & (CONE_FLAG_FAILED | CONE_FLAG_RETHROWN)) == CONE_FLAG_FAILED)
             if (c->error.code != mun_errno_cancelled)
                 mun_error_show("cone destroyed with", &c->error);
@@ -430,14 +442,15 @@ int cone_decref(struct cone *c) {
 }
 
 int cone_join(struct cone *c) {
-    int ret = !(c->flags & CONE_FLAG_FINISHED) && cone_wait(&c->done) MUN_RETHROW;
-    if (!ret && c->flags & CONE_FLAG_FAILED) {
+    for (unsigned f; !((f = atomic_load(&c->flags)) & CONE_FLAG_FINISHED); )
+        if (cone_wait(&c->done, &c->flags, f) < 0 MUN_RETHROW)
+            return cone_decref(c), -1;
+    if (c->flags & CONE_FLAG_FAILED) {
         *mun_last_error() = c->error;
         c->flags |= CONE_FLAG_RETHROWN;
-        ret = -1;
+        return cone_decref(c), -1;
     }
-    cone_decref(c);
-    return ret;
+    return cone_decref(c), 0;
 }
 
 int cone_cancel(struct cone *c) {
@@ -489,7 +502,7 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
     struct cone *c = (struct cone *)malloc(size);
     if (c == NULL)
         return mun_error(memory, "no space for a stack"), NULL;
-    c->refcount = 1;
+    atomic_init(&c->refcount, 1);
     c->flags = 0;
     c->loop = loop;
     c->body = body;
