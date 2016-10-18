@@ -25,12 +25,18 @@
 #else
 #include <sys/select.h>
 #endif
+
 #if !CONE_XCHG_RSP
 #include <setjmp.h>
 #ifndef SA_ONSTACK
 #define SA_ONSTACK 0x8000000  // avoid requiring _GNU_SOURCE
 #endif
 #endif
+
+int cone_unblock(int fd) {
+    int flags = fcntl(fd, F_GETFL);
+    return flags == -1 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) MUN_RETHROW_OS;
+}
 
 // A priority queue of functions to be called at precise points in time.
 // Zero-initialized; finalized with `mun_vec_fini`; must not be destroyed
@@ -225,11 +231,6 @@ struct cone_loop
     struct cone_event_schedule at;
 };
 
-int cone_unblock(int fd) {
-    int flags = fcntl(fd, F_GETFL);
-    return flags == -1 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) MUN_RETHROW_OS;
-}
-
 // Read a byte from the ping pipe, then schedule a ping event to be fired on next iteration.
 //
 // Errors: `memory`.
@@ -261,8 +262,7 @@ static int cone_loop_init(struct cone_loop *loop) {
     if (pipe(loop->selfpipe) MUN_RETHROW_OS)
         return -1;
     if (cone_event_io_init(&loop->io)
-     || cone_event_io_add(&loop->io, loop->selfpipe[0], 0, cone_bind(&cone_loop_consume_ping, loop))
-     || cone_unblock(loop->selfpipe[0]) || cone_unblock(loop->selfpipe[1]) MUN_RETHROW)
+     || cone_event_io_add(&loop->io, loop->selfpipe[0], 0, cone_bind(&cone_loop_consume_ping, loop)) MUN_RETHROW)
         return cone_loop_fini(loop), -1;
     return 0;
 }
