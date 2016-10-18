@@ -35,10 +35,10 @@ struct mun_stackframe
 struct mun_error
 {
     int code;  // Either `mun_errno_X`, or an actual `errno`.
+    unsigned stacklen;
     const char *name;
     char text[128];
     // Stack at the time of the error, starting from innermost frame (where `mun_error_at` was called).
-    unsigned stacklen;
     struct mun_stackframe stack[16];
 };
 
@@ -85,7 +85,7 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 //
 // Note: all of the below functions and macros take vectors by pointers.
 //
-#define mun_vec(T) { T* data; size_t size, cap; }
+#define mun_vec(T) { __typeof__(T)* data; size_t size, cap; }
 #define mun_vec_type(v) __typeof__(*(v)->data)
 
 // Weakly typed vector. Loses information about the contents, but allows any strongly
@@ -96,6 +96,7 @@ struct mun_vec mun_vec(void);
 // Macros accept pointers to strongly typed vectors; functions with names ending with `_s`
 // accept this pair of arguments instead.
 #define mun_vec_strided(v) sizeof(mun_vec_type(v)), (struct mun_vec*)(v)
+#define mun_vec_data_s(stride, v) ((char (*)[stride])(v)->data)
 
 // Initializer for a vector that uses on-stack storage for `n` elements of type `T`.
 // The resulting vector is empty, but can be appended to up to `n` times.
@@ -145,8 +146,6 @@ static inline void mun_vec_fini_s(size_t s, struct mun_vec *v) {
 // Move the tail of a vector and change the size accordingly.
 #define mun_vec_shift(v, start, offset) mun_vec_shift_s(mun_vec_strided(v), start, offset)
 
-#define mun_vec_data_s(stride, v) ((char (*)[stride])(v)->data)
-
 static inline void mun_vec_shift_s(size_t s, struct mun_vec *v, size_t start, int offset) {
     if (start < v->size)
         memmove(&mun_vec_data_s(s, v)[start + offset], &mun_vec_data_s(s, v)[start], (v->size - start) * s);
@@ -161,16 +160,16 @@ static inline void mun_vec_shift_s(size_t s, struct mun_vec *v, size_t start, in
 #define mun_vec_reserve(v, n) mun_vec_reserve_s(mun_vec_strided(v), n)
 
 static inline int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) {
-    if (v->size + n <= (v->cap & ~MUN_VEC_STATIC_BIT))
+    size_t cap = v->cap & ~MUN_VEC_STATIC_BIT;
+    if (v->size + n <= cap)
         return 0;
     if (v->cap & MUN_VEC_STATIC_BIT)
-        return mun_error(memory, "static vector of %zu cannot fit %zu", v->cap, v->size + n);
-    size_t ncap = v->cap + (n > v->cap ? n : v->cap);
-    void *r = realloc(v->data, ncap * s);
+        return mun_error(memory, "static vector of %zu cannot fit %zu", cap, v->size + n);
+    void *r = realloc(v->data, (cap += n > cap ? n : cap) * s);
     if (r == NULL)
-        return mun_error(memory, "%zu * %zu bytes", ncap, s);
+        return mun_error(memory, "%zu * %zu bytes", cap, s);
     v->data = r;
-    v->cap = ncap;
+    v->cap = cap;
     return 0;
 }
 
