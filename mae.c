@@ -1,5 +1,12 @@
 #include "mae.h"
 #include <unistd.h>
+#include <stdatomic.h>
+
+#ifndef MAE_MAX_FRAME_SIZE
+// 1. Refuse to send frames bigger than this.
+// 2. Close the connection upon receiving a frame bigger than this.
+#define MAE_MAX_FRAME_SIZE 65535
+#endif
 
 enum mae_frame_type
 {
@@ -13,12 +20,13 @@ enum mae_return_reason
     MAE_RETURN_OK = 0,
     MAE_RETURN_ERROR,
     MAE_RETURN_CANCEL,
+    MAE_RETURN_UNSET,
 };
 
 struct mae_future
 {
     uint32_t id;
-    enum mae_return_reason rr;
+    cone_atom rr;
     struct cone_event wake;
     struct siy response;
 };
@@ -134,7 +142,7 @@ static int mae_on_frame(struct mae *n, enum mae_frame_type type, uint32_t rqid, 
         if (sep == NULL)
             return mun_error(mae_protocol, "malformed request");
         const char *function = (const char *)data;
-        unsigned i = mun_vec_find(&n->exported, !strcmp(function, _->name));
+        size_t i = mun_vec_find(&n->exported, !strcmp(function, _->name));
         if (i == n->exported.size)
             return mun_error(mae_not_exported, "%s", function), mae_write_response_error(n, rqid);
         struct mae_closure *c = &n->exported.data[i];
@@ -154,12 +162,12 @@ static int mae_on_frame(struct mae *n, enum mae_frame_type type, uint32_t rqid, 
         return mun_vec_fini(&out), 0;
     }
     if (type == MAE_FRAME_RESPONSE || type == MAE_FRAME_RESPONSE_ERROR) {
-        unsigned i = mun_vec_find(&n->queued, rqid == (*_)->id);
+        size_t i = mun_vec_find(&n->queued, rqid == (*_)->id);
         if (i != n->queued.size) {
             struct mae_future *fut = n->queued.data[i];
             mun_vec_erase(&n->queued, i, 1);
-            fut->rr = type == MAE_FRAME_RESPONSE_ERROR ? MAE_RETURN_ERROR : MAE_RETURN_OK;
-            if (mun_vec_extend(&fut->response, data, size) || cone_event_emit(&fut->wake) MUN_RETHROW)
+            atomic_store(&fut->rr, type == MAE_FRAME_RESPONSE_ERROR ? MAE_RETURN_ERROR : MAE_RETURN_OK);
+            if (mun_vec_extend(&fut->response, data, size) || cone_wake(&fut->wake, 1) MUN_RETHROW)
                 return -1;
         }
         return 0;
@@ -184,21 +192,25 @@ static int mae_call_wait(struct mae *n, struct mae_future *fut, const char *f,
     if (mae_write_request(n, fut->id, f, &enc) MUN_RETHROW)
         return mun_vec_fini(&enc), -1;
     mun_vec_fini(&enc);
-    if (cone_wait(&fut->wake) MUN_RETHROW)
+    atomic_store(&fut->rr, MAE_RETURN_UNSET);
+    if (cone_wait(&fut->wake, &fut->rr, MAE_RETURN_UNSET) < 0 MUN_RETHROW)
         return -1;
-    if (fut->rr == MAE_RETURN_OK)
+    unsigned rr = atomic_load(&fut->rr);
+    if (rr == MAE_RETURN_OK)
         return siy_decode(&fut->response, osign, o) MUN_RETHROW;
-    if (fut->rr == MAE_RETURN_ERROR)
+    if (rr == MAE_RETURN_ERROR)
         return mae_restore_error(fut->response.data, fut->response.size, f) MUN_RETHROW;
-    if (fut->rr == MAE_RETURN_CANCEL)
+    if (rr == MAE_RETURN_CANCEL)
         return cone_cancel(cone);
     return mun_error(assert, "invalid mae_return_reason");
 }
 
 void mae_fini(struct mae *n) {
-    for (unsigned i = 0; i < n->queued.size; i++)
-        if (cone_event_emit(&n->queued.data[i]->wake))
+    for mun_vec_iter(&n->queued, it) {
+        atomic_store(&(*it)->rr, MAE_RETURN_CANCEL);
+        if (cone_wake(&(*it)->wake, 1))
             mun_error_show("could not wake coroutine due to", NULL);
+    }
     mun_vec_fini(&n->rbuffer);
     mun_vec_fini(&n->wbuffer);
     mun_vec_fini(&n->queued);
@@ -232,13 +244,13 @@ int mae_run(struct mae *n) {
 }
 
 int mae_call(struct mae *n, const char *f, const char *isign, const void *i, const char *osign, void *o) {
-    struct mae_future fut = {.id = ++n->last_id, .rr = MAE_RETURN_CANCEL};
+    struct mae_future fut = {.id = ++n->last_id, .rr = ATOMIC_VAR_INIT((unsigned)MAE_RETURN_UNSET)};
     struct mae_future *fp = &fut;
     if (mun_vec_append(&n->queued, &fp) MUN_RETHROW)
         return -1;
     if (mae_call_wait(n, &fut, f, isign, i, osign, o) MUN_RETHROW) {
         mun_vec_fini(&fut.response);
-        unsigned i = mun_vec_find(&n->queued, *_ == &fut);
+        size_t i = mun_vec_find(&n->queued, *_ == &fut);
         if (i != n->queued.size)
             mun_vec_erase(&n->queued, i, 1);
         return -1;

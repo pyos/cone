@@ -2,12 +2,6 @@
 //
 // mae // siy calls over file descriptors.
 //
-#ifndef MAE_MAX_FRAME_SIZE
-// 1. Refuse to send frames bigger than this.
-// 2. Close the connection upon receiving a frame bigger than this.
-#define MAE_MAX_FRAME_SIZE 65535
-#endif
-
 #include "mun.h"
 #include "cone.h"
 #include "siy.h"
