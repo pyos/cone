@@ -134,7 +134,7 @@ static int mae_on_frame(struct mae *n, enum mae_frame_type type, uint32_t rqid, 
         if (sep == NULL)
             return mun_error(mae_protocol, "malformed request");
         const char *function = (const char *)data;
-        unsigned i = mun_vec_find(&n->exported, !strcmp(function, _->name));
+        size_t i = mun_vec_find(&n->exported, !strcmp(function, _->name));
         if (i == n->exported.size)
             return mun_error(mae_not_exported, "%s", function), mae_write_response_error(n, rqid);
         struct mae_closure *c = &n->exported.data[i];
@@ -154,7 +154,7 @@ static int mae_on_frame(struct mae *n, enum mae_frame_type type, uint32_t rqid, 
         return mun_vec_fini(&out), 0;
     }
     if (type == MAE_FRAME_RESPONSE || type == MAE_FRAME_RESPONSE_ERROR) {
-        unsigned i = mun_vec_find(&n->queued, rqid == (*_)->id);
+        size_t i = mun_vec_find(&n->queued, rqid == (*_)->id);
         if (i != n->queued.size) {
             struct mae_future *fut = n->queued.data[i];
             mun_vec_erase(&n->queued, i, 1);
@@ -196,8 +196,8 @@ static int mae_call_wait(struct mae *n, struct mae_future *fut, const char *f,
 }
 
 void mae_fini(struct mae *n) {
-    for (unsigned i = 0; i < n->queued.size; i++)
-        if (cone_event_emit(&n->queued.data[i]->wake))
+    for mun_vec_iter(&n->queued, it)
+        if (cone_event_emit(&(*it)->wake))
             mun_error_show("could not wake coroutine due to", NULL);
     mun_vec_fini(&n->rbuffer);
     mun_vec_fini(&n->wbuffer);
@@ -238,7 +238,7 @@ int mae_call(struct mae *n, const char *f, const char *isign, const void *i, con
         return -1;
     if (mae_call_wait(n, &fut, f, isign, i, osign, o) MUN_RETHROW) {
         mun_vec_fini(&fut.response);
-        unsigned i = mun_vec_find(&n->queued, *_ == &fut);
+        size_t i = mun_vec_find(&n->queued, *_ == &fut);
         if (i != n->queued.size)
             mun_vec_erase(&n->queued, i, 1);
         return -1;

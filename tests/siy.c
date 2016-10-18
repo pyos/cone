@@ -80,7 +80,7 @@ static int test_siy_vec_struct(char *msg) {
     test_dump(&out, msg);
     if (siy_decode(&out, "v(u1 u4)", &y) MUN_RETHROW)
         return -1;
-    CHECK_FIELD(x, y, size, "%u");
+    CHECK_FIELD(x, y, size, "%zu");
     for (unsigned i = 0; i < y.size; i++) {
         CHECK_FIELD(x.data[i], y.data[i], a, "%u");
         CHECK_FIELD(x.data[i], y.data[i], b, "%u");
@@ -103,7 +103,7 @@ static int test_siy_vec_vec(char *msg) {
     test_dump(&out, msg);
     if (siy_decode(&out, "v(vi1)", &y) MUN_RETHROW)
         return -1;
-    CHECK_FIELD(x, y, size, "%u");
+    CHECK_FIELD(x, y, size, "%zu");
     for (unsigned i = 0; i < y.size; i++)
         if (x.data[i].size != y.data[i].size || memcmp(x.data[i].data, y.data[i].data, y.data[i].size))
             return mun_error(assert, "inner vectors differ");

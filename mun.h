@@ -11,6 +11,7 @@
 // A microsecond-resolution clock. That's good enough; epoll_wait(2) can't handle
 // less than millisecond resolution anyway.
 typedef int64_t mun_usec;
+#define MUN_USEC_MAX INT64_MAX
 mun_usec mun_usec_now(void);
 mun_usec mun_usec_monotonic(void);
 
@@ -84,7 +85,7 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 //
 // Note: all of the below functions and macros take vectors by pointers.
 //
-#define mun_vec(T) { T* data; unsigned size, cap; char is_static; }
+#define mun_vec(T) { T* data; size_t size, cap; }
 #define mun_vec_type(v) __typeof__(*(v)->data)
 
 // Weakly typed vector. Loses information about the contents, but allows any strongly
@@ -101,7 +102,8 @@ struct mun_vec mun_vec(void);
 //
 //     struct mun_vec(char) xs = mun_vec_init_static(char, 128);
 //
-#define mun_vec_init_static(T, n) {(T[n]){}, 0, n, 1}
+#define MUN_VEC_STATIC_BIT ((size_t)1 << (8 * sizeof(size_t) - 1))
+#define mun_vec_init_static(T, n) {(T[n]){}, 0, (n) | MUN_VEC_STATIC_BIT}
 
 // Initializer for a vector that shares storage with some other pointer. It is assumed
 // that the storage is pre-initialized, i.e. initial size is the same as capacity.
@@ -110,7 +112,7 @@ struct mun_vec mun_vec(void);
 //     struct mun_vec(uint32_t) ys = mun_vec_init_borrow(calloc(4, 16), 16);
 //     free(ys.data);
 //
-#define mun_vec_init_borrow(p, n) {p, n, n, 1}
+#define mun_vec_init_borrow(p, n) {p, n, (n) | MUN_VEC_STATIC_BIT}
 
 // Initializer for a vector that uses an array for underlying storage. DO NOT confuse
 // arrays with pointers they decay to!
@@ -134,10 +136,10 @@ struct mun_vec mun_vec(void);
 
 static inline void mun_vec_fini_s(size_t s, struct mun_vec *v) {
     (void)s;
-    if (!v->is_static)
-        free(v->data), *v = (struct mun_vec){};
-    else
+    if (v->cap & MUN_VEC_STATIC_BIT)
         v->size = 0;
+    else
+        free(v->data), *v = (struct mun_vec){};
 }
 
 // Move the tail of a vector and change the size accordingly.
@@ -159,14 +161,14 @@ static inline void mun_vec_shift_s(size_t s, struct mun_vec *v, size_t start, in
 #define mun_vec_reserve(v, n) mun_vec_reserve_s(mun_vec_strided(v), n)
 
 static inline int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) {
-    if (v->size + n <= v->cap)
+    if (v->size + n <= (v->cap & ~MUN_VEC_STATIC_BIT))
         return 0;
-    if (v->is_static)
-        return mun_error(memory, "static vector of %u cannot fit %zu", v->cap, v->size + n);
-    unsigned ncap = v->cap + (n > v->cap ? n : v->cap);
+    if (v->cap & MUN_VEC_STATIC_BIT)
+        return mun_error(memory, "static vector of %zu cannot fit %zu", v->cap, v->size + n);
+    size_t ncap = v->cap + (n > v->cap ? n : v->cap);
     void *r = realloc(v->data, ncap * s);
     if (r == NULL)
-        return mun_error(memory, "%u * %zu bytes", ncap, s);
+        return mun_error(memory, "%zu * %zu bytes", ncap, s);
     v->data = r;
     v->cap = ncap;
     return 0;
@@ -212,7 +214,7 @@ static inline void mun_vec_erase_s(size_t s, struct mun_vec *v, size_t i, size_t
 // Find the index of the first element that makes `expr` (where `_` is a pointer
 // to that element) `true`; return the size of the vector if there is none.
 #define mun_vec_find(vec, expr) ({                        \
-    unsigned __i = 0;                                     \
+    size_t __i = 0;                                       \
     for mun_vec_iter(vec, _) if (expr) break; else __i++; \
     __i;                                                  \
 })
@@ -220,7 +222,7 @@ static inline void mun_vec_erase_s(size_t s, struct mun_vec *v, size_t i, size_t
 // Same as `mun_vec_find`, but faster and only works for vectors where `expr`
 // is `false` for the first few elements and `true` for the rest.
 #define mun_vec_bisect(vec, expr) ({                                \
-    unsigned __L = 0, __R = (vec)->size, __i;                       \
+    size_t __L = 0, __R = (vec)->size, __i;                         \
     while (__L != __R) {                                            \
         mun_vec_type(vec) *_ = &(vec)->data[__i = (__L + __R) / 2]; \
         if (expr) __R = __i; else __L = __i + 1;                    \

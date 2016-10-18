@@ -26,7 +26,7 @@ static int cone_event_add(struct cone_event *ev, struct cone_closure f) {
 
 // Cancel a previous `cone_event_add(ev, f)`. No-op if there was none/it has already been fired.
 static void cone_event_del(struct cone_event *ev, struct cone_closure f) {
-    unsigned i = mun_vec_find(ev, _->code == f.code && _->data == f.data);
+    size_t i = mun_vec_find(ev, _->code == f.code && _->data == f.data);
     if (i != ev->size)
         mun_vec_erase(ev, i, 1);
 }
@@ -73,7 +73,7 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev) {
         if (ev->data[0].f.code(ev->data[0].f.data) MUN_RETHROW)
             return -1;
     }
-    return INT32_MAX;
+    return MUN_USEC_MAX;
 }
 
 // A set of callbacks attached to a single file descriptor: one for reading, one
@@ -109,7 +109,7 @@ static int cone_event_io_init(struct cone_event_io *set) {
 
 // Finalizer of `struct cone_event_io`. Object state is undefined afterwards.
 static void cone_event_io_fini(struct cone_event_io *set) {
-    for (unsigned i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++)
+    for (size_t i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++)
         for (struct cone_event_fd *c; (c = set->fds[i]) != NULL; free(c))
             set->fds[i] = c->link;
     if (set->epoll >= 0)
@@ -196,7 +196,7 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
 #else
     fd_set fds[2] = {};
     int max_fd = 0;
-    for (unsigned i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++) {
+    for (size_t i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++) {
         for (struct cone_event_fd *e = set->fds[i]; e; e = e->link) {
             if (max_fd <= e->fd)
                 max_fd = e->fd + 1;
@@ -208,7 +208,7 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
     struct timeval us = {timeout / 1000000ull, timeout % 1000000ull};
     if (select(max_fd, &fds[0], &fds[1], NULL, &us) < 0)
         return errno != EINTR MUN_RETHROW_OS;
-    for (unsigned i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++)
+    for (size_t i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++)
         for (struct cone_event_fd *e = set->fds[i]; e; e = e->link)
             for (int i = 0; i < 2; i++)
                 if (FD_ISSET(e->fd, &fds[i]) && e->cbs[i].code && e->cbs[i].code(e->cbs[i].data) MUN_RETHROW)
