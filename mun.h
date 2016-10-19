@@ -180,9 +180,9 @@ static inline int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) {
 //
 // Errors: `memory`; see `mun_vector_reserve`.
 //
-#define mun_vec_splice(v, i, e, n) mun_vec_splice_s(mun_vec_strided(v), i, e, n)
+#define mun_vec_splice(v, i, e, n) mun_vec_splice_s(mun_vec_strided(v), i, (const mun_vec_type(v)*){e}, n)
 #define mun_vec_insert(v, i, e)    mun_vec_splice(v, i, e, 1)
-#define mun_vec_extend(v, e, n)    mun_vec_extend_s(mun_vec_strided(v), e, n)
+#define mun_vec_extend(v, e, n)    mun_vec_extend_s(mun_vec_strided(v), (const mun_vec_type(v)*){e}, n)
 #define mun_vec_append(v, e)       mun_vec_extend(v, e, 1)
 
 static inline int mun_vec_splice_s(size_t s, struct mun_vec *v, size_t i, const void *e, size_t n) {
