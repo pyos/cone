@@ -110,8 +110,18 @@ static int test_siy_vec_vec(char *msg) {
     return 0;
 }
 
+static int test_siy_signinfo() {
+    struct siy_signinfo si = siy_signinfo("u4 u4");
+    if (si.size != 8)
+        return mun_error(assert, "invalid size %u; expected 8", si.size);
+    if (si.align != 4)
+        return mun_error(assert, "invalid alignment %u; expected 4", si.align);
+    return 0;
+}
+
 export { "siy:value", &test_siy_primitive }
      , { "siy:struct", &test_siy_struct }
      , { "siy:vec[value]", &test_siy_vec }
      , { "siy:vec[struct]", &test_siy_vec_struct }
      , { "siy:vec[vec[value]]", &test_siy_vec_vec }
+     , { "siy:signinfo", &test_siy_signinfo }

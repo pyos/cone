@@ -187,6 +187,14 @@ int siy_decode(struct siy *in, const char *sign, void *out) {
 }
 
 struct siy_signinfo siy_signinfo(const char *sign) {
-    struct siy_sign s = siy_sign(sign, 0);
-    return (struct siy_signinfo){s.size, s.align};
+    struct siy_signinfo si = {};
+    for (struct siy_sign s; (s = siy_sign(sign, 1)).sign != SIY_NONE;) {
+        if (s.sign == SIY_ERROR || s.sign == SIY_END)
+            return (struct siy_signinfo){};
+        ALIGN(si.size, s.align);
+        si.size += s.size;
+        si.align = s.align > si.align ? s.align : si.align;
+        sign = s.next;
+    }
+    return si;
 }
