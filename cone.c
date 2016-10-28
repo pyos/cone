@@ -92,28 +92,39 @@ struct cone_event_fd
 struct cone_event_io
 {
     int epoll;
+    int selfpipe[2];
+    cone_atom pinged;
+    struct cone_event ping;
     struct cone_event_fd *fds[127];
 };
 
-// Initializer of `struct cone_event_io`.
-//
-// Errors: see epoll_create1(2) if CONE_EPOLL is 1.
-//
-static int cone_event_io_init(struct cone_event_io *set) {
-    set->epoll = -1;
-#if CONE_EPOLL
-    if ((set->epoll = epoll_create1(0)) < 0 MUN_RETHROW) return -1;
-#endif
-    return 0;
-}
-
 // Finalizer of `struct cone_event_io`. Object state is undefined afterwards.
 static void cone_event_io_fini(struct cone_event_io *set) {
+    mun_vec_fini(&set->ping);
     for (size_t i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++)
         for (struct cone_event_fd *c; (c = set->fds[i]) != NULL; free(c))
             set->fds[i] = c->link;
     if (set->epoll >= 0)
         close(set->epoll);
+    if (set->selfpipe[0] >= 0)
+        close(set->selfpipe[0]), close(set->selfpipe[1]);
+}
+
+// Send a ping through the pipe, aborting `cone_event_io_emit` and triggering the ping event.
+static void cone_event_io_ping(struct cone_event_io *set) {
+    unsigned expect = 0;
+    if (atomic_compare_exchange_strong(&set->pinged, &expect, 1))
+        write(set->selfpipe[1], "", 1);
+}
+
+// Read a byte from the ping pipe, then schedule a ping event to be fired on next iteration.
+//
+// Errors: `memory`.
+//
+static int cone_event_io_on_ping(struct cone_event_io *set) {
+    ssize_t rd = read(set->selfpipe[0], &rd, sizeof(rd));  // never yields
+    atomic_store_explicit(&set->pinged, 0, memory_order_release);
+    return cone_wake(&set->ping, (size_t)-1) MUN_RETHROW;
 }
 
 // Find the pointer that links to the structure describing this fd. Or should,
@@ -163,6 +174,21 @@ static void cone_event_io_del(struct cone_event_io *set, int fd, int write, stru
         *b = e->link;
         free(e);
     }
+}
+
+// Initializer of `struct cone_event_io`.
+//
+// Errors: see epoll_create1(2) if CONE_EPOLL is 1.
+//
+static int cone_event_io_init(struct cone_event_io *set) {
+    set->selfpipe[0] = set->selfpipe[1] = set->epoll = -1;
+#if CONE_EPOLL
+    if ((set->epoll = epoll_create1(0)) < 0 MUN_RETHROW)
+        return -1;
+#endif
+    if (pipe(set->selfpipe) || cone_event_io_add(set, set->selfpipe[0], 0, cone_bind(&cone_event_io_on_ping, set)) MUN_RETHROW_OS)
+        return cone_event_io_fini(set), -1;
+    return 0;
 }
 
 // Fire all pending I/O events; if there are none, wait for an event for at most `timeout`
@@ -223,30 +249,14 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
 // or coroutines, else program state is indeterminate.
 struct cone_loop
 {
-    int selfpipe[2];
     cone_atom active;
-    cone_atom pinged;
-    struct cone_event ping;
     struct cone_event_io io;
     struct cone_event_schedule at;
 };
 
-// Read a byte from the ping pipe, then schedule a ping event to be fired on next iteration.
-//
-// Errors: `memory`.
-//
-static int cone_loop_consume_ping(struct cone_loop *loop) {
-    ssize_t rd = read(loop->selfpipe[0], &rd, sizeof(rd));  // never yields
-    atomic_store_explicit(&loop->pinged, 0, memory_order_release);
-    return cone_wake(&loop->ping, (size_t)-1) MUN_RETHROW;
-}
-
 // Finalizer of `struct cone_loop`. Object state is undefined afterwards.
 static void cone_loop_fini(struct cone_loop *loop) {
-    close(loop->selfpipe[0]);
-    close(loop->selfpipe[1]);
     cone_event_io_fini(&loop->io);
-    mun_vec_fini(&loop->ping);
     mun_vec_fini(&loop->at);
 }
 
@@ -257,14 +267,7 @@ static void cone_loop_fini(struct cone_loop *loop) {
 //   * see pipe(2), cone_unblock, and cone_event_io_init.
 //
 static int cone_loop_init(struct cone_loop *loop) {
-    atomic_init(&loop->active, 0);
-    atomic_init(&loop->pinged, 0);
-    if (pipe(loop->selfpipe) MUN_RETHROW_OS)
-        return -1;
-    if (cone_event_io_init(&loop->io)
-     || cone_event_io_add(&loop->io, loop->selfpipe[0], 0, cone_bind(&cone_loop_consume_ping, loop)) MUN_RETHROW)
-        return cone_loop_fini(loop), -1;
-    return 0;
+    return cone_event_io_init(&loop->io);
 }
 
 // Until the reference count reaches zero, fire off callbacks while waiting for I/O
@@ -280,14 +283,6 @@ static int cone_loop_run(struct cone_loop *loop) {
     return 0;
 }
 
-// Send a ping through the pipe, waking up the loop if it's currently waiting for I/O
-// events and triggering a ping event. Surprisingly, this function is thread-safe.
-static void cone_loop_ping(struct cone_loop *loop) {
-    unsigned expect = 0;
-    if (atomic_compare_exchange_strong(&loop->pinged, &expect, 1))
-        write(loop->selfpipe[1], "", 1);
-}
-
 // Increment the reference count of the loop. `cone_loop_run` will only stop when
 // a matching number of calls to `cone_loop_dec` is done.
 static void cone_loop_inc(struct cone_loop *loop) {
@@ -297,7 +292,7 @@ static void cone_loop_inc(struct cone_loop *loop) {
 // Decrement the reference count. If it reaches 0, send a ping to notify and stop the loop.
 static void cone_loop_dec(struct cone_loop *loop) {
     if (atomic_fetch_sub_explicit(&loop->active, 1, memory_order_release) == 1)
-        cone_loop_ping(loop);
+        cone_event_io_ping(&loop->io);
 }
 
 enum
@@ -421,8 +416,8 @@ int cone_sleep(mun_usec delay) {
 }
 
 int cone_yield(void) {
-    cone_loop_ping(cone->loop);
-    return cone_wait(&cone->loop->ping, &cone->loop->pinged, 1) MUN_RETHROW;
+    cone_event_io_ping(&cone->loop->io);
+    return cone_wait(&cone->loop->io.ping, &cone->loop->io.pinged, 1) MUN_RETHROW;
 }
 
 void cone_incref(struct cone *c) {
