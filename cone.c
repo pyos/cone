@@ -15,7 +15,7 @@
 #endif
 
 #ifndef CONE_DEFAULT_STACK
-// How much space to allocate for a stack if 0 was passed to `cone_root`/`cone_spawn`.
+// How much space to allocate for a stack if 0 was passed to `cone_spawn`.
 // Must be at least MINSIGSTKSZ plus 256 bytes, else behavior is undefined.
 #define CONE_DEFAULT_STACK 65536
 #endif
@@ -533,16 +533,6 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
 
 struct cone *cone_spawn(size_t size, struct cone_closure body) {
     return cone_spawn_on(cone->loop, size, body);
-}
-
-int cone_root(size_t stksz, struct cone_closure body) {
-    struct cone_loop loop = {};
-    if (cone_loop_init(&loop) MUN_RETHROW)
-        return -1;
-    struct cone *c = cone_spawn_on(&loop, stksz, body);
-    if (c == NULL || cone_loop_run(&loop) MUN_RETHROW)
-        return cone_decref(c), cone_loop_fini(&loop), -1;
-    return cone_loop_fini(&loop), cone_join(c) MUN_RETHROW;
 }
 
 static struct cone_loop cone_main_loop = {};

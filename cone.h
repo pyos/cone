@@ -30,16 +30,6 @@ extern _Thread_local struct cone * volatile cone;
 //
 int cone_unblock(int fd);
 
-// Create a coroutine on a new event loop, then block until all coroutines on it complete.
-//
-// Errors:
-//   * `memory`;
-//   * anything thrown by the main coroutine;
-//   * see pipe(2), fcntl(2);
-//   * see epoll_create(2) and epoll_wait(2) if CONE_EPOLL is 1, select(2) otherwise.
-//
-int cone_root(size_t stack, struct cone_closure);
-
 // Create a new coroutine that runs a given function with a single pointer argument.
 // `size` is the size of the stack, including space for coroutine metadata; if there is
 // not enough, default stack size is used. The returned coroutine has a reference count
