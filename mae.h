@@ -1,7 +1,4 @@
 #pragma once
-//
-// mae // siy calls over file descriptors.
-//
 #include "mun.h"
 #include "cone.h"
 #include "siy.h"
@@ -26,10 +23,6 @@ struct mae
     struct mun_vec(struct mae_closure) exported;
 };
 
-// A single exported function. Must do deserialization and serialization on its own
-// because there's no way to construct varargs using standard C. Owns neither the name
-// nor the data; make sure they are live until `mae_del` or `mae_fini` is called.
-// Aggregate-initialized; also see `mae_closure` below.
 struct mae_closure
 {
     const char *name;
@@ -39,39 +32,28 @@ struct mae_closure
     void *data;
 };
 
-// Create a `struct mae_closure` while casting the function to an appropriate type.
 #define mae_closure(name, f, isign, osign, data) \
     ((struct mae_closure){name, isign, osign, (int(*)(struct mae*,void*,const void*,void*))(f), data})
 
-// Export `c` functions atomically.
-//
-// Errors: `memory`.
-//
-static inline int mae_add(struct mae *n, const struct mae_closure *cs, size_t c) {
-    return mun_vec_extend(&n->exported, cs, c);
+void mae_fini(struct mae *);
+
+// Export N `mae_closure`s atomically.
+static inline mun_throws(memory) int mae_add(struct mae *m, const struct mae_closure *cs, size_t n) {
+    return mun_vec_extend(&m->exported, cs, n);
 }
 
 // Erase one exported function by name. Behavior is undefined if no such function exists.
-static inline void mae_del(struct mae *n, const char *name) {
-    mun_vec_erase(&n->exported, mun_vec_find(&n->exported, !strcmp(name, _->name)), 1);
+static inline void mae_del(struct mae *m, const char *name) {
+    mun_vec_erase(&m->exported, mun_vec_find(&m->exported, !strcmp(name, _->name)), 1);
 }
-
-// Finalizer of `struct mae`. Object state is undefined afterwards.
-void mae_fini(struct mae *);
 
 // Wait for incoming messages and handle them in a loop. The channel must not be destroyed
 // while this is running; even after cancelling the coroutine blocked in this function,
 // wait until it terminates first.
-//
-// Errors:
-//   * see read(2);
-//   * `mae_protocol`: received an oversized, unknown, or invalid frame;
-//   * `mae_overflow`: a local handler wrote too much data into its result vector;
-//   * `memory`.
-//
-int mae_run(struct mae *);
+mun_throws(memory, mae_overflow, mae_protocol) int mae_run(struct mae *);
 
 // Call a remote function, block until a response arrives. `mae_run` must be active
 // in another coroutine. siy object packs are used to pass arguments (isign/i) and
 // return values (osign/o); see `siy_encode` and `siy_decode` for their descriptions.
+mun_throws(memory, siy_truncated, siy_sign_syntax)
 int mae_call(struct mae *, const char *f, const char *isign, const void *i, const char *osign, void *o);

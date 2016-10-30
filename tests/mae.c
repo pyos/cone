@@ -26,7 +26,7 @@ static int test_mae_bad_call(struct mae *conn) {
     int32_t result = 0;
     if (!mae_call(conn, "add", "", NULL, "i4", &result) MUN_RETHROW)
         return mun_error(assert, "mae_call should have failed");
-    if (mun_last_error()->code != mun_errno_siy)
+    if (mun_last_error()->code != mun_errno_siy_truncated)
         return -1;
     return 0;
 }
