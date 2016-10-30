@@ -372,20 +372,28 @@ static int cone_schedule(struct cone *c) {
     return 0;
 }
 
-// Sleep until an event is fired. If the coroutine is cancelled during that time,
-// unsubscribe and throw a `cancelled` error.
+// Throw an error if `cone_cancel` has been called.
+//
+// Errors: `cancelled`.
+//
+static int cone_ensure_running(struct cone *c) {
+    if (c->flags & CONE_FLAG_CANCELLED) {
+        c->flags &= ~CONE_FLAG_CANCELLED;
+        return errno = ECANCELED, mun_error(cancelled, " ");
+    }
+    return 0;
+}
+
 #define cone_pause(always_unsub, ev_add, ev_del, ...) do { \
+    if (cone_ensure_running(cone) MUN_RETHROW)             \
+        return -1;                                         \
     if (ev_add(__VA_ARGS__) MUN_RETHROW)                   \
         return -1;                                         \
     cone_switch(cone);                                     \
     if (always_unsub || cone->flags & CONE_FLAG_CANCELLED) \
         ev_del(__VA_ARGS__);                               \
-    if (!(cone->flags & CONE_FLAG_CANCELLED))              \
-        return 0;                                          \
-    cone->flags &= ~CONE_FLAG_CANCELLED;                   \
-    return cone_cancel(cone);                              \
+    return cone_ensure_running(cone);                      \
 } while (0)
-
 
 static void cone_unschedule(struct cone_event *ev, struct cone **c) {
     size_t i = mun_vec_find(ev, *_ == *c);
@@ -448,11 +456,9 @@ int cone_join(struct cone *c) {
 }
 
 int cone_cancel(struct cone *c) {
-    if (c->flags & CONE_FLAG_RUNNING)
-        return errno = ECANCELED, mun_error(cancelled, "self-cancel");
-    if (c->flags & CONE_FLAG_FINISHED)
-        return 0;
     c->flags |= CONE_FLAG_CANCELLED;
+    if (c->flags & (CONE_FLAG_RUNNING | CONE_FLAG_FINISHED))
+        return 0;
     return cone_schedule(c) MUN_RETHROW;
 }
 
@@ -461,7 +467,7 @@ int cone_cancel(struct cone *c) {
 // object; `memory` errors during scheduling of the "done" callbacks abort the program.
 // Trying to go past the end of a coroutine is also an instant SIGABRT.
 static __attribute__((noreturn)) void cone_body(struct cone *c) {
-    if (c->flags & CONE_FLAG_CANCELLED ? cone_cancel(c) : c->body.code(c->body.data)) {
+    if (cone_ensure_running(c) || c->body.code(c->body.data)) {
         c->error = *mun_last_error();
         c->flags |= CONE_FLAG_FAILED;
     }

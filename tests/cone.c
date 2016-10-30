@@ -1,5 +1,60 @@
 #include <unistd.h>
 
+static int test_sleep_for(mun_usec *us) {
+    return cone_sleep(*us);
+}
+
+static int test_concurrent_sleep_for(char *msg, mun_usec us_a, mun_usec us_b, int cancel_b) {
+    struct cone *a = cone(&test_sleep_for, &us_a);
+    struct cone *b = cone(&test_sleep_for, &us_b);
+    if (a == NULL || b == NULL MUN_RETHROW)
+        return cone_decref(a), cone_decref(b), -1;
+    mun_usec start = mun_usec_monotonic();
+    if (cone_join(a) || (cancel_b && cone_cancel(b)) MUN_RETHROW)
+        return cone_decref(b), -1;
+    if (cone_join(b) MUN_RETHROW)
+        if (!cancel_b || mun_last_error()->code != mun_errno_cancelled)
+            return -1;
+    mun_usec end = mun_usec_monotonic();
+    sprintf(msg, "%fs", (end - start) / 1000000.0);
+    return 0;
+}
+
+static int test_concurrent_sleep(char *msg) {
+    return test_concurrent_sleep_for(msg, 500000, 1000000, 0);
+}
+
+static int test_cancelled_sleep(char *msg) {
+    return test_concurrent_sleep_for(msg, 100000, 1000000, 1);
+}
+
+static int test_yield(char *msg) {
+    const unsigned N = 1000000;
+    mun_usec a = mun_usec_monotonic();
+    for (unsigned i = 0; i < N; i++)
+        cone_yield();
+    mun_usec b = mun_usec_monotonic();
+    sprintf(msg, "%f us/yield", (double)(b - a) / N);
+    return 0;
+}
+
+static int test_nop(void *unused) {
+    (void)unused;
+    return 0;
+}
+
+static int test_spawn(char *msg) {
+    const unsigned N = 1000000;
+    mun_usec a = mun_usec_monotonic();
+    struct cone *c;
+    for (unsigned i = 0; i < N; i++)
+        if ((c = cone(&test_nop, NULL)) == NULL || cone_join(c) MUN_RETHROW)
+            return -1;
+    mun_usec b = mun_usec_monotonic();
+    sprintf(msg, "%f us/cone", (double)(b - a) / N);
+    return 0;
+}
+
 struct args { unsigned N; int fd; const char *data; size_t size; };
 
 static int writer(struct args *aptr) {
@@ -37,57 +92,8 @@ static int test_rdwr() {
     return close(fds[0]), close(fds[1]), 0;
 }
 
-static int test_sleep(char *msg) {
-    mun_usec a = mun_usec_monotonic();
-    if (sleep(1))
-        return mun_error(assert, "did not sleep");
-    mun_usec b = mun_usec_monotonic();
-    if (b - a < 1000000)
-        return mun_error(assert, "slept for less than wanted");
-    sprintf(msg, "wanted 1s, got %fs", (b - a) / 1000000.0);
-    return 0;
-}
-
-static int test_concurrent_sleep(char *msg) {
-    struct cone *a = cone(&test_sleep, msg);
-    struct cone *b = cone(&test_sleep, msg);
-    if (a == NULL || b == NULL MUN_RETHROW)
-        return cone_decref(a), cone_decref(b), -1;
-    mun_usec start = mun_usec_monotonic();
-    if (cone_join(a) MUN_RETHROW)
-        return cone_decref(b), -1;
-    if (cone_join(b) MUN_RETHROW)
-        return -1;
-    if (mun_usec_monotonic() - start > 1100000)
-        return mun_error(assert, "slept too much");
-    return 0;
-}
-
-static int test_yield(char *msg) {
-    const unsigned N = 1000000;
-    mun_usec a = mun_usec_monotonic();
-    for (unsigned i = 0; i < N; i++)
-        cone_yield();
-    mun_usec b = mun_usec_monotonic();
-    sprintf(msg, "%f us/yield", (double)(b - a) / N);
-    return 0;
-}
-
-static int test_nop() { return 0; }
-static int test_spawn(char *msg) {
-    const unsigned N = 1000000;
-    mun_usec a = mun_usec_monotonic();
-    struct cone *c;
-    for (unsigned i = 0; i < N; i++)
-        if ((c = cone(&test_nop, NULL)) == NULL || cone_join(c) MUN_RETHROW)
-            return -1;
-    mun_usec b = mun_usec_monotonic();
-    sprintf(msg, "%f us/cone", (double)(b - a) / N);
-    return 0;
-}
-
-export { "cone:sleep", &test_sleep }
-     , { "cone:concurrent sleep", &test_concurrent_sleep }
+export { "cone:sleep (0.5s concurrent with 1s)", &test_concurrent_sleep }
+     , { "cone:sleep (0.1s concurrent with 1s cancelled after 0.1s)", &test_cancelled_sleep }
      , { "cone:yield", &test_yield }
      , { "cone:spawn", &test_spawn }
      , { "cone:reader + writer", &test_rdwr }

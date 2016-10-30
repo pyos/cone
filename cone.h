@@ -54,11 +54,11 @@ struct cone *cone_spawn(size_t stack, struct cone_closure);
 #define cone(f, arg) cone_spawn(0, cone_bind(f, arg))
 
 // Arrange for the coroutine to be woken up with an error, even if the event it was waiting
-// for did not yet occur. No-op if the coroutine has already finished.
+// for did not yet occur. No-op if the coroutine has already finished. If it is currently
+// running, it will only receive a cancellation signal upon reaching `cone_wait`,
+// `cone_iowait`, `cone_sleep`, or `cone_yield`; and even then, the error may be ignored.
 //
-// Errors:
-//   * `cancelled` if the argument is the currently running coroutine;
-//   * `memory`.
+// Errors: `memory`.
 //
 int cone_cancel(struct cone *);
 
