@@ -104,7 +104,7 @@ static int siy_decode_uint(struct siy *in, uint64_t *out, unsigned width) {
     const uint8_t *i = in->data;
     do {
         if (size == in->size)
-            return mun_error(siy, "could not decode an integer");
+            return mun_error(siy_truncated, "could not decode an integer");
         *out |= (*i & (127ull | (size == width) << 7)) << (7 * size);
     } while (++size <= width && *i++ & 128);
     return mun_vec_erase(in, 0, size), 0;

@@ -1,7 +1,4 @@
 #pragma once
-//
-// mun // because any decent C library needs its own error handling and dynamic arrays.
-//
 #include <errno.h>
 #include <limits.h>
 #include <stddef.h>
@@ -64,6 +61,10 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 
 // Call `mun_error_at` with the current stack frame, error id "mun_errno_X", and name "X".
 #define mun_error(id, ...) mun_error_at(mun_errno_##id, #id, MUN_CURRENT_FRAME, __VA_ARGS__)
+
+// No-op macros to make function declarations slightly more descriptive.
+#define mun_throws(...)
+#define mun_nothrow
 
 // Should be used as a suffix to an expression that returns something true-ish if it failed,
 // in which case the current stack frame is marked in its error. Otherwise, 0 is returned.
@@ -154,13 +155,9 @@ static inline void mun_vec_shift_s(size_t s, struct mun_vec *v, size_t start, in
 }
 
 // Resize the vector so that it may contain at least `n` more elements.
-//
-// Errors: `memory` if either ran out of address space, or this vector's underlying
-//         storage is static and cannot be resized.
-//
 #define mun_vec_reserve(v, n) mun_vec_reserve_s(mun_vec_strided(v), n)
 
-static inline int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) {
+static inline mun_throws(memory) int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) {
     size_t cap = v->cap & ~MUN_VEC_STATIC_BIT;
     if (v->size + n <= cap)
         return 0;
@@ -178,9 +175,6 @@ static inline int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) {
 // Extend: insert `n` elements at the end.
 // Insert: insert an element at `i`th position.
 // Append: insert an element at the end.
-//
-// Errors: `memory`; see `mun_vector_reserve`.
-//
 #define mun_vec_splice(v, i, e, n) mun_vec_splice_s(mun_vec_strided(v), i, (const mun_vec_type(v)*){e}, n)
 #define mun_vec_insert(v, i, e)    mun_vec_splice(v, i, e, 1)
 #define mun_vec_extend(v, e, n)    mun_vec_extend_s(mun_vec_strided(v), (const mun_vec_type(v)*){e}, n)

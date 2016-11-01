@@ -3,8 +3,6 @@
 #include <stdatomic.h>
 
 #ifndef MAE_MAX_FRAME_SIZE
-// 1. Refuse to send frames bigger than this.
-// 2. Close the connection upon receiving a frame bigger than this.
 #define MAE_MAX_FRAME_SIZE 65535
 #endif
 
@@ -35,11 +33,6 @@ struct mae_future
 #define I24(x) (x) >> 16, (x) >> 8,  (x)
 #define I32(x) (x) >> 24, (x) >> 16, (x) >> 8, (x)
 
-// A coroutine that drains the write buffer and stops when it's empty. (This is slightly
-// easier than notifying it of new data.)
-//
-// Errors: see write(2).
-//
 static int mae_writer(struct mae *n) {
     ssize_t size = 0;
     while ((size = n->wbuffer.size > 1024 ? 1024 : n->wbuffer.size)) {
@@ -54,33 +47,23 @@ static int mae_writer(struct mae *n) {
     return size < 0 ? -1 : 0;
 }
 
-// Put data into the write buffer and spawn a draining coroutine if one is not yet running.
-//
-// Errors: `memory`.
-//
-static int mae_write(struct mae *n, const uint8_t *data, size_t size) {
+static mun_throws(memory) int mae_write(struct mae *n, const uint8_t *data, size_t size) {
     if (!n->writer && !(n->writer = cone(&mae_writer, n)) MUN_RETHROW)
         return -1;
     return mun_vec_extend(&n->wbuffer, data, size) MUN_RETHROW;
 }
 
 // mae_frame ::= {type : u8} {size : u24} {rqid : u32} {data : u8}[size]
-//
-// Errors:
-//   * `mae_overflow`: frame size limit exceeded;
-//   * `memory`.
-//
-static int mae_write_header(struct mae *n, enum mae_frame_type type, uint32_t rqid, size_t size) {
+static mun_throws(memory, mae_overflow)
+int mae_write_header(struct mae *n, enum mae_frame_type type, uint32_t rqid, size_t size) {
     if (size > MAE_MAX_FRAME_SIZE)
         return mun_error(mae_overflow, "frame too big");
     return mae_write(n, PACK(type, I24(size), I32(rqid)));
 }
 
 // data | type=MAE_FRAME_REQUEST ::= {name : i8}[] '\0' {args : u8}[]
-//
-// Errors: see `mae_write_header`.
-//
-static int mae_write_request(struct mae *n, uint32_t rqid, const char *function, struct siy *args) {
+static mun_throws(memory, mae_overflow)
+int mae_write_request(struct mae *n, uint32_t rqid, const char *function, struct siy *args) {
     uint32_t nlen = strlen(function) + 1;
     if (mae_write_header(n, MAE_FRAME_REQUEST, rqid, nlen + args->size) MUN_RETHROW) return -1;
     if (mae_write(n, (const uint8_t*)function, nlen) MUN_RETHROW) return -1;
@@ -88,19 +71,14 @@ static int mae_write_request(struct mae *n, uint32_t rqid, const char *function,
 }
 
 // data | type=MAE_FRAME_RESPONSE ::= {args : u8}[]
-//
-// Errors: see `mae_write_header`.
-//
-static int mae_write_response(struct mae *n, uint32_t rqid, struct siy *ret) {
+static mun_throws(memory, mae_overflow)
+int mae_write_response(struct mae *n, uint32_t rqid, struct siy *ret) {
     if (mae_write_header(n, MAE_FRAME_RESPONSE, rqid, ret->size) MUN_RETHROW) return -1;
     return mae_write(n, ret->data, ret->size) MUN_RETHROW;
 }
 
 // data | type=MAE_FRAME_RESPONSE_ERROR ::= {code : u32} {name : i8}[] '\0' {text : i8}[] '\0'
-//
-// Errors: see `mae_write_header`.
-//
-static int mae_write_response_error(struct mae *n, uint32_t rqid) {
+static mun_throws(memory, mae_overflow) int mae_write_response_error(struct mae *n, uint32_t rqid) {
     const struct mun_error *err = mun_last_error();
     uint32_t nlen = strlen(err->name) + 1;
     uint32_t tlen = strlen(err->text) + 1;
@@ -113,12 +91,8 @@ static int mae_write_response_error(struct mae *n, uint32_t rqid) {
 }
 
 // Parse data from a MAE_FRAME_RESPONSE_ERROR into a `mun_error`.
-//
-// Errors:
-//   * `mae_remote` (with errno from frame) on success;
-//   * `mae_protocol`: invalid frame format.
-//
-static int mae_restore_error(const uint8_t *data, size_t size, const char *function) {
+static mun_throws(mae_remote, mae_protocol)
+int mae_restore_error(const uint8_t *data, size_t size, const char *function) {
     if (size < 6 || data[size - 1] != 0)
         return mun_error(mae_protocol, "truncated error response");
     uint32_t code = siy_r4(data);
@@ -136,7 +110,8 @@ static int mae_restore_error(const uint8_t *data, size_t size, const char *funct
 //   * `mae_protocol`: invalid frame format or unknown type;
 //   * `mae_overflow`: the local implementation called by a peer generated too much output.
 //
-static int mae_on_frame(struct mae *n, enum mae_frame_type type, uint32_t rqid, const uint8_t *data, size_t size) {
+static mun_throws(memory, mae_overflow, mae_protocol)
+int mae_on_frame(struct mae *n, enum mae_frame_type type, uint32_t rqid, const uint8_t *data, size_t size) {
     if (type == MAE_FRAME_REQUEST) {
         uint8_t *sep = memchr(data, 0, size);
         if (sep == NULL)
@@ -175,17 +150,9 @@ static int mae_on_frame(struct mae *n, enum mae_frame_type type, uint32_t rqid, 
     return mun_error(mae_protocol, "unknown frame type %u", type);
 }
 
-// Call a remote function and wait for a response.
-//
-// Errors:
-//   * any, if returned by peer;
-//   * any siy error if unable to serialize the arguments, see `siy_encode`;
-//   * any siy error if unable to deserialize the return value, see `siy_decode`;
-//   * `cancelled`: the channel was finalized before a response arrived;
-//   * `memory`.
-//
-static int mae_call_wait(struct mae *n, struct mae_future *fut, const char *f,
-                          const char *isign, const void *i, const char *osign, void *o) {
+static mun_throws(memory, cancelled, siy_truncated, siy_sign_syntax)
+int mae_call_wait(struct mae *n, struct mae_future *fut, const char *f,
+                  const char *isign, const void *i, const char *osign, void *o) {
     struct siy enc = {};
     if (siy_encode(&enc, isign, i) MUN_RETHROW)
         return mun_vec_fini(&enc), -1;
@@ -201,7 +168,7 @@ static int mae_call_wait(struct mae *n, struct mae_future *fut, const char *f,
     if (rr == MAE_RETURN_ERROR)
         return mae_restore_error(fut->response.data, fut->response.size, f) MUN_RETHROW;
     if (rr == MAE_RETURN_CANCEL)
-        return cone_cancel(cone);
+        return mun_error(cancelled, "connection closed");
     return mun_error(assert, "invalid mae_return_reason");
 }
 

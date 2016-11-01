@@ -1,7 +1,4 @@
 #pragma once
-//
-// siy // weird serialization protocol
-//
 #include "mun.h"
 
 struct siy mun_vec(uint8_t);
@@ -13,7 +10,7 @@ static inline uint64_t siy_r8(const uint8_t *p) { return (uint64_t)siy_r4(p) << 
 
 enum
 {
-    mun_errno_siy = mun_errno_custom + 7000,
+    mun_errno_siy_truncated = mun_errno_custom + 7000,
     mun_errno_siy_sign_syntax,
 };
 
@@ -30,22 +27,11 @@ struct siy_signinfo
 //    * `f`   - a double-precision floating point number (double);
 //    * `vX`  - a vector of objects described by sign `X` (struct mun_vec(T));
 //    * `(S)` - a naturally-aligned structure with fields described by signature S.
-//
-// Errors:
-//   * `siy_sign_syntax`: the signature is invalid;
-//   * `memory`.
-//
-int siy_encode(struct siy *out, const char *sign, const void *in);
+mun_throws(memory, siy_sign_syntax) int siy_encode(struct siy *out, const char *sign, const void *in);
 
 // Deserialize data into a naturally-aligned structure. See `siy_encode` for a description
 // of the signature. Deserialized data is erased from the input vector.
-//
-// Errors:
-//   * `siy`: ran out of data before decoding everything;
-//   * `siy_sign_syntax`: the signature is invalid;
-//   * `memory`, but only if signature contains `vX`.
-//
-int siy_decode(struct siy *in, const char *sign, void *out);
+mun_throws(memory, siy_truncated, siy_sign_syntax) int siy_decode(struct siy *in, const char *sign, void *out);
 
 // Return the size and alignment of a struct type that has a given signature.
 struct siy_signinfo siy_signinfo(const char *);

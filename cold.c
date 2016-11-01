@@ -1,9 +1,5 @@
-//
-// cold // cone libc definitions
-//
 // Optional unit that shadows some standard library symbols. Originals
 // are loaded with `dlsym`; dynamic linking is required for this to work.
-//
 #include "cone.h"
 #include <time.h>
 #include <dlfcn.h>
