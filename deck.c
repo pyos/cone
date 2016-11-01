@@ -35,10 +35,7 @@ struct deck_request
 
 // If the lock has been acquired and there's a blocked `deck_acquire`, wake it up.
 // No-op if not holding the lock yet.
-//
-// Errors: `memory`.
-//
-static int deck_wake(struct deck *lk) {
+static mun_throws(memory) int deck_wake(struct deck *lk) {
     if (!(lk->state & DECK_REQUESTED) || !deck_acquired(lk))
         return 0;
     lk->state &= ~DECK_REQUESTED;
@@ -53,10 +50,7 @@ static void deck_remote_clock(struct mae *rpc, struct deck *lk, struct deck_requ
 }
 
 // mae endpoint: push a lock acquisition request to our queue.
-//
-// Errors: `memory`.
-//
-static int deck_remote_request(struct mae *rpc, struct deck *lk, struct deck_request *rq, uint32_t *out) {
+static mun_throws(memory) int deck_remote_request(struct mae *rpc, struct deck *lk, struct deck_request *rq, uint32_t *out) {
     deck_remote_clock(rpc, lk, rq, out);
     deck_debug_msg(lk->time, rq->pid, "request");
     unsigned i = mun_vec_bisect(&lk->queue, rq->time < _->time || (rq->time == _->time && rq->pid < _->pid));
@@ -64,10 +58,7 @@ static int deck_remote_request(struct mae *rpc, struct deck *lk, struct deck_req
 }
 
 // mae endpoint: remove a lock acquisition request from the queue. No-op if there was no request.
-//
-// Errors: `memory`.
-//
-static int deck_remote_release(struct mae *rpc, struct deck *lk, struct deck_request *rq, uint32_t *out) {
+static mun_throws(memory) int deck_remote_release(struct mae *rpc, struct deck *lk, struct deck_request *rq, uint32_t *out) {
     deck_remote_clock(rpc, lk, rq, out);
     unsigned i = mun_vec_find(&lk->queue, _->pid == rq->pid);
     if (i == lk->queue.size)
@@ -87,10 +78,7 @@ struct deck_reqptr
 
 // Call a remote method on a single peer, update the local clock from the result.
 // Arguments are packed into a single struct to allow running in a separate coroutine.
-//
-// Errors: `os`, `memory`.
-//
-static int deck_call_one(struct deck_reqptr *rp) {
+static mun_throws(memory) int deck_call_one(struct deck_reqptr *rp) {
     uint32_t time = 0;
     const char *fn = rp->is_release ? rp->m->release : rp->m->request;
     if (mae_call(rp->m->rpc, fn, "u4 u4", &rp->rq, "u4", &time) MUN_RETHROW)
@@ -100,10 +88,7 @@ static int deck_call_one(struct deck_reqptr *rp) {
 }
 
 // Call a remote method on all peers, fail if any of the requests do.
-//
-// Errors: `os`, `memory`.
-//
-static int deck_call_all(struct deck *lk, int is_release, struct deck_request rq) {
+static mun_throws(memory) int deck_call_all(struct deck *lk, int is_release, struct deck_request rq) {
     int fail = 0;
     unsigned i = 0;
     struct cone *tasks[lk->rpcs.size];
