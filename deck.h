@@ -20,14 +20,14 @@ void deck_fini(struct deck *);
 
 // Add another participant in the lock. Behavior is undefined if lock has been requested,
 // but not released yet. `request` and `release` must survive until `deck_del` or `deck_fini`.
-mun_throws(memory) int deck_add(struct deck *, struct mae *, const char *request, const char *release);
+int deck_add(struct deck *, struct mae *, const char *request, const char *release) mun_throws(memory);
 
 // Forget about an RPC channel. No-op if it was never added.
 void deck_del(struct deck *, struct mae *);
 
 // Request the lock and block until it is acquired. Or just block if another coroutine
 // has already sent a request.
-mun_throws(memory) int deck_acquire(struct deck *);
+int deck_acquire(struct deck *) mun_throws(memory);
 
 // Undo one call to `deck_acquire`. The lock is recursive, so will not be released
 // until this function has been called the same number of times as `deck_acquire` has.

@@ -27,7 +27,7 @@ struct siy_sign
 #define UINT_SIZE_SWITCH(s, f) \
     (s == 1 ? f(uint8_t) : s == 2 ? f(uint16_t) : s == 4 ? f(uint32_t) : s == 8 ? f(uint64_t) : 0)
 
-static struct siy_sign siy_sign(const char *sign, int accept_end) {
+static struct siy_sign siy_sign(const char *sign, int accept_end) mun_throws(siy_sign_syntax) {
     while (*sign && *sign == ' ')
         sign++;
     struct siy_sign r = {.sign = *sign++};
@@ -98,7 +98,7 @@ static int siy_encode_uint(struct siy *out, uint64_t in, unsigned width) {
     return mun_vec_extend(out, r, s) MUN_RETHROW;
 }
 
-static int siy_decode_uint(struct siy *in, uint64_t *out, unsigned width) {
+static int siy_decode_uint(struct siy *in, uint64_t *out, unsigned width) mun_throws(siy_truncated) {
     width -= (width == 1);
     uint8_t size = *out = 0;
     const uint8_t *i = in->data;
@@ -138,7 +138,7 @@ static int siy_encode_one(struct siy *out, struct siy_sign s, const void *in) {
     }
 }
 
-static int siy_decode_one(struct siy *in, struct siy_sign s, void *out) {
+static int siy_decode_one(struct siy *in, struct siy_sign s, void *out) mun_throws(siy_truncated) {
     uint64_t u = 0;
     switch (s.sign) {
         case SIY_INT:
