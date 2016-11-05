@@ -34,10 +34,15 @@ int cone_unblock(int fd) {
     return flags == -1 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) MUN_RETHROW_OS;
 }
 
-struct cone_event_schedule mun_vec(struct cone_event_at);
-struct cone_event_at { mun_usec at; struct cone_closure f; };
+struct cone_event_at
+{
+    mun_usec at;
+    struct cone_closure f;
+};
 
-static mun_throws(memory) int cone_event_schedule_add(struct cone_event_schedule *ev, mun_usec at, struct cone_closure f) {
+struct cone_event_schedule mun_vec(struct cone_event_at);
+
+static int cone_event_schedule_add(struct cone_event_schedule *ev, mun_usec at, struct cone_closure f) mun_throws(memory) {
     return mun_vec_insert(ev, mun_vec_bisect(ev, at < _->at), &((struct cone_event_at){at, f}));
 }
 
@@ -103,7 +108,7 @@ static struct cone_event_fd **cone_event_io_bucket(struct cone_event_io *set, in
     return b;
 }
 
-static mun_throws(memory, assert) int cone_event_io_add(struct cone_event_io *set, int fd, int write, struct cone_closure f) {
+static int cone_event_io_add(struct cone_event_io *set, int fd, int write, struct cone_closure f) mun_throws(memory, assert) {
     struct cone_event_fd **b = cone_event_io_bucket(set, fd);
     if (*b == NULL) {
         if ((*b = malloc(sizeof(struct cone_event_fd))) == NULL)
@@ -134,7 +139,7 @@ static void cone_event_io_del(struct cone_event_io *set, int fd, int write, stru
     }
 }
 
-static mun_throws(memory) int cone_event_io_init(struct cone_event_io *set) {
+static int cone_event_io_init(struct cone_event_io *set) mun_throws(memory) {
     set->selfpipe[0] = set->selfpipe[1] = set->epoll = -1;
 #if CONE_EPOLL
     if ((set->epoll = epoll_create1(0)) < 0 MUN_RETHROW)
@@ -200,7 +205,7 @@ static void cone_loop_fini(struct cone_loop *loop) {
     mun_vec_fini(&loop->at);
 }
 
-static mun_throws(memory) int cone_loop_init(struct cone_loop *loop) {
+static int cone_loop_init(struct cone_loop *loop) mun_throws(memory) {
     return cone_event_io_init(&loop->io);
 }
 
@@ -270,7 +275,7 @@ static void cone_switch(struct cone *c) {
 #endif
 }
 
-static mun_nothrow int cone_run(struct cone *c) {
+static int cone_run(struct cone *c) mun_nothrow {
     c->flags &= ~CONE_FLAG_SCHEDULED;
     struct cone* prev = cone;
     cone_switch(cone = c);
@@ -278,7 +283,7 @@ static mun_nothrow int cone_run(struct cone *c) {
     return 0;
 }
 
-static mun_throws(memory) int cone_schedule(struct cone *c) {
+static int cone_schedule(struct cone *c) mun_throws(memory) {
     if (!(c->flags & CONE_FLAG_SCHEDULED))
         if (cone_event_schedule_add(&c->loop->at, mun_usec_monotonic(), cone_bind(&cone_run, c)) MUN_RETHROW)
             return -1;
@@ -286,7 +291,7 @@ static mun_throws(memory) int cone_schedule(struct cone *c) {
     return 0;
 }
 
-static mun_throws(cancelled) int cone_ensure_running(struct cone *c) {
+static int cone_ensure_running(struct cone *c) mun_throws(cancelled) {
     if (c->flags & CONE_FLAG_CANCELLED) {
         c->flags &= ~CONE_FLAG_CANCELLED;
         return errno = ECANCELED, mun_error(cancelled, " ");
@@ -372,7 +377,7 @@ int cone_cancel(struct cone *c) {
     return cone_schedule(c) MUN_RETHROW;
 }
 
-static __attribute__((noreturn)) void cone_body(struct cone *c) {
+static void __attribute__((noreturn)) cone_body(struct cone *c) {
     if (cone_ensure_running(c) || c->body.code(c->body.data)) {
         c->error = *mun_last_error();
         c->flags |= CONE_FLAG_FAILED;
@@ -396,7 +401,10 @@ static void cone_sigstackswitch() {
 }
 #endif
 
-static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct cone_closure body) {
+static struct cone_loop cone_main_loop = {};
+
+struct cone *cone_spawn(size_t size, struct cone_closure body) {
+    struct cone_loop *loop = cone ? cone->loop : &cone_main_loop;
     size &= ~(size_t)15;
     if (size < sizeof(struct cone) + MINSIGSTKSZ)
         size = CONE_DEFAULT_STACK;
@@ -429,14 +437,7 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
 #endif
     if (cone_schedule(c) MUN_RETHROW)
         return cone_decref(c), NULL;
-    return cone_loop_inc(loop), cone_incref(c), c;
-}
-
-struct cone *cone_spawn(size_t size, struct cone_closure body) {
-    return cone_spawn_on(cone->loop, size, body);
-}
-
-static struct cone_loop cone_main_loop = {};
+    return cone_loop_inc(loop), cone_incref(c), c;}
 
 static int cone_main_run(struct cone_loop *loop) {
     if (cone_loop_run(loop))
@@ -447,7 +448,7 @@ static int cone_main_run(struct cone_loop *loop) {
 static void __attribute__((constructor)) cone_main_init(void) {
     if (cone_loop_init(&cone_main_loop) MUN_RETHROW)
         mun_error_show("cone init", NULL), exit(124);
-    struct cone *c = cone_spawn_on(&cone_main_loop, 0, cone_bind(&cone_main_run, &cone_main_loop));
+    struct cone *c = cone(&cone_main_run, &cone_main_loop);
     if (c == NULL MUN_RETHROW)
         mun_error_show("cone init", NULL), exit(124);
     cone_switch(c);

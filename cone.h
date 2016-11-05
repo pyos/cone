@@ -23,7 +23,7 @@ int cone_unblock(int fd);
 // When stack size is 0, an unspecified default value is used. The new coroutine has
 // a reference count of 2; one of the references is owned by the loop and released
 // when the coroutine terminates.
-mun_throws(memory) struct cone *cone_spawn(size_t stack, struct cone_closure);
+struct cone *cone_spawn(size_t stack, struct cone_closure) mun_throws(memory);
 
 // Increment the reference count. The coroutine will not be destroyed until `cone_decref`
 // is called matching number of times.
@@ -41,28 +41,28 @@ int cone_join(struct cone *);
 
 // Sleep until a file descriptor is ready for reading/writing. Behavior is undefined
 // if it already is (call read/write until it returns EAGAIN/EWOULDBLOCK first).
-mun_throws(cancelled, memory) int cone_iowait(int fd, int write);
+int cone_iowait(int fd, int write) mun_throws(cancelled, memory);
 
 // Sleep just because. Unlike normal system calls, does not interact with signals.
-mun_throws(cancelled, memory) int cone_sleep(mun_usec delay);
+int cone_sleep(mun_usec delay) mun_throws(cancelled, memory);
 
 // Wait until the next iteration of the event loop.
-mun_throws(cancelled, memory) int cone_yield(void);
+int cone_yield(void) mun_throws(cancelled, memory);
 
 // If the value at the address is the same as the one passed as an argument, sleep until
 // `cone_wake` is called with the same event. Otherwise, return 1. This compare-and-sleep
 // operation is atomic, but only within a single event loop; if multiple coroutines
 // from different loops touch the same `cone_atom`, behavior is undefined.
-mun_throws(cancelled, memory) int cone_wait(struct cone_event *, cone_atom *, unsigned);
+int cone_wait(struct cone_event *, cone_atom *, unsigned) mun_throws(cancelled, memory);
 
 // Wake up at most N coroutines paused with `cone_wait`.
-mun_throws(memory) int cone_wake(struct cone_event *, size_t);
+int cone_wake(struct cone_event *, size_t) mun_throws(memory);
 
 // Arrange for the coroutine to be woken up with an error, even if the event it was waiting
 // for did not yet occur. No-op if the coroutine has already finished. If it is currently
 // running, it will only receive a cancellation signal upon reaching `cone_wait`,
 // `cone_iowait`, `cone_sleep`, or `cone_yield`; and even then, the error may be ignored.
-mun_throws(memory) int cone_cancel(struct cone *);
+int cone_cancel(struct cone *) mun_throws(memory);
 
 #define cone_bind(f, data) ((struct cone_closure){(int(*)(void*))f, data})
 #define cone(f, arg) cone_spawn(0, cone_bind(f, arg))

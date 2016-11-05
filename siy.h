@@ -27,11 +27,11 @@ struct siy_signinfo
 //    * `f`   - a double-precision floating point number (double);
 //    * `vX`  - a vector of objects described by sign `X` (struct mun_vec(T));
 //    * `(S)` - a naturally-aligned structure with fields described by signature S.
-mun_throws(memory, siy_sign_syntax) int siy_encode(struct siy *out, const char *sign, const void *in);
+int siy_encode(struct siy *out, const char *sign, const void *in) mun_throws(memory, siy_sign_syntax);
 
 // Deserialize data into a naturally-aligned structure. See `siy_encode` for a description
 // of the signature. Deserialized data is erased from the input vector.
-mun_throws(memory, siy_truncated, siy_sign_syntax) int siy_decode(struct siy *in, const char *sign, void *out);
+int siy_decode(struct siy *in, const char *sign, void *out) mun_throws(memory, siy_truncated, siy_sign_syntax);
 
 // Return the size and alignment of a struct type that has a given signature.
-struct siy_signinfo siy_signinfo(const char *);
+struct siy_signinfo siy_signinfo(const char *) mun_throws(siy_sign_syntax);

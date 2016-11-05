@@ -50,10 +50,10 @@ static inline void mae_del(struct mae *m, const char *name) {
 // Wait for incoming messages and handle them in a loop. The channel must not be destroyed
 // while this is running; even after cancelling the coroutine blocked in this function,
 // wait until it terminates first.
-mun_throws(memory, mae_overflow, mae_protocol) int mae_run(struct mae *);
+int mae_run(struct mae *) mun_throws(memory, mae_overflow, mae_protocol);
 
 // Call a remote function, block until a response arrives. `mae_run` must be active
 // in another coroutine. siy object packs are used to pass arguments (isign/i) and
 // return values (osign/o); see `siy_encode` and `siy_decode` for their descriptions.
-mun_throws(memory, siy_truncated, siy_sign_syntax)
-int mae_call(struct mae *, const char *f, const char *isign, const void *i, const char *osign, void *o);
+int mae_call(struct mae *, const char *f, const char *isign, const void *i, const char *osign, void *o)
+    mun_throws(memory, siy_truncated, siy_sign_syntax);

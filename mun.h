@@ -157,7 +157,7 @@ static inline void mun_vec_shift_s(size_t s, struct mun_vec *v, size_t start, in
 // Resize the vector so that it may contain at least `n` more elements.
 #define mun_vec_reserve(v, n) mun_vec_reserve_s(mun_vec_strided(v), n)
 
-static inline mun_throws(memory) int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) {
+static inline int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) mun_throws(memory) {
     size_t cap = v->cap & ~MUN_VEC_STATIC_BIT;
     if (v->size + n <= cap)
         return 0;
