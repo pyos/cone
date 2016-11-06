@@ -50,7 +50,7 @@ static int test_mae_run(int (*af)(struct mae *), int (*bf)(struct mae *)) {
     struct cone *a = cone(af, &an);
     struct cone *b = cone(bf, &bn);
     if (cone_join(a) MUN_RETHROW)
-        return cone_decref(b), mae_fini(&an), mae_fini(&bn), -1;
+        return cone_drop(b), mae_fini(&an), mae_fini(&bn), -1;
     if (cone_join(b) MUN_RETHROW)
         return mae_fini(&an), mae_fini(&bn), -1;
     return mae_fini(&an), mae_fini(&bn), 0;
@@ -59,7 +59,7 @@ static int test_mae_run(int (*af)(struct mae *), int (*bf)(struct mae *)) {
 static int test_mae_client_impl(struct mae *n) {
     struct cone *u = cone(&test_mae_server, n);
     if (test_mae_ok_call(n) MUN_RETHROW)
-        return cone_cancel(u), cone_decref(u), -1;
+        return cone_cancel(u), cone_drop(u), -1;
     cone_yield();
     return cone_cancel(u), cone_join(u);
 }
@@ -91,7 +91,7 @@ static int test_mae_many_clients() {
 static int test_mae_invalid_client(struct mae *n) {
     struct cone *u = cone(&test_mae_server, n);
     if (test_mae_bad_call(n) MUN_RETHROW)
-        return cone_cancel(u), cone_decref(u), -1;
+        return cone_cancel(u), cone_drop(u), -1;
     return cone_cancel(u), cone_join(u);
 }
 
@@ -102,7 +102,7 @@ static int test_mae_invalid_args() {
 static int test_mae_confused_client(struct mae *n) {
     struct cone *u = cone(&test_mae_server, n);
     if (test_mae_nonexistent_call(n) MUN_RETHROW)
-        return cone_cancel(u), cone_decref(u), -1;
+        return cone_cancel(u), cone_drop(u), -1;
     return cone_cancel(u), cone_join(u);
 }
 

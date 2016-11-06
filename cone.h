@@ -20,24 +20,23 @@ extern _Thread_local struct cone * volatile cone;
 int cone_unblock(int fd);
 
 // Create a new coroutine that runs a given function with a single pointer argument.
-// When stack size is 0, an unspecified default value is used. The new coroutine has
-// a reference count of 2; one of the references is owned by the loop and released
-// when the coroutine terminates.
+// When stack size is 0, an unspecified default value is used. The memory will be freed
+// when the coroutine finishes and the returned reference is dropped, no matter the order.
 struct cone *cone_spawn(size_t stack, struct cone_closure) mun_throws(memory);
 
-// Increment the reference count. The coroutine will not be destroyed until `cone_decref`
-// is called matching number of times.
-void cone_incref(struct cone *);
-
-// Decrement the reference count. If it becomes zero, destroy the coroutine; also,
-// if the coroutine has failed with an error, it's printed to stderr (see `mun_error_show`).
-// If argument is NULL, last error is rethrown, allowing `cone_decref(cone(...))` without
-// additional checks. Does not fail otherwise.
-int cone_decref(struct cone *);
+// Drop the reference to a coroutine returned by `cone_spawn`.
+int cone_drop(struct cone *);
 
 // Sleep until a coroutine finishes. If it happens to throw an error in the process,
-// rethrow it into the current coroutine instead of printing. Consumes a single reference.
-int cone_join(struct cone *);
+// rethrow it into the current coroutine instead of printing.
+int cone_cowait(struct cone *);
+
+// Same as `cone_cowait`, but also drop the reference.
+static inline int cone_join(struct cone *c) {
+    int r = cone_cowait(c);
+    cone_drop(c);
+    return r;
+}
 
 // Sleep until a file descriptor is ready for reading/writing. If it already is,
 // equivalent to `cone_yield`.

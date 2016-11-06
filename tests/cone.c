@@ -8,10 +8,10 @@ static int test_concurrent_sleep_for(char *msg, mun_usec us_a, mun_usec us_b, in
     struct cone *a = cone(&test_sleep_for, &us_a);
     struct cone *b = cone(&test_sleep_for, &us_b);
     if (a == NULL || b == NULL MUN_RETHROW)
-        return cone_decref(a), cone_decref(b), -1;
+        return cone_drop(a), cone_drop(b), -1;
     mun_usec start = mun_usec_monotonic();
     if (cone_join(a) || (cancel_b && cone_cancel(b)) MUN_RETHROW)
-        return cone_decref(b), -1;
+        return cone_drop(b), -1;
     if (cone_join(b) MUN_RETHROW)
         if (!cancel_b || mun_last_error()->code != mun_errno_cancelled)
             return -1;

@@ -44,7 +44,7 @@ static int mae_writer(struct mae *m) {
             break;
         mun_vec_erase(&m->wbuffer, 0, size);
     }
-    cone_decref(m->writer);
+    cone_drop(m->writer);
     m->writer = NULL;
     return size < 0 ? -1 : 0;
 }
@@ -160,7 +160,7 @@ void mae_fini(struct mae *m) {
     mun_vec_fini(&m->exported);
     if (m->writer) {
         cone_cancel(m->writer);
-        cone_decref(m->writer);
+        cone_drop(m->writer);
     }
     close(m->fd);
 }

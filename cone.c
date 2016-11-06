@@ -248,17 +248,17 @@ static void cone_loop_dec(struct cone_loop *loop) {
 
 enum
 {
-    CONE_FLAG_SCHEDULED = 0x01,
-    CONE_FLAG_RUNNING   = 0x02,
-    CONE_FLAG_FINISHED  = 0x04,
-    CONE_FLAG_FAILED    = 0x08,
-    CONE_FLAG_CANCELLED = 0x10,
-    CONE_FLAG_JOINED    = 0x20,
+    // lowest bits are either 0x2 (running and not detached) or 0x1 (finished xor detached)
+    CONE_FLAG_SCHEDULED = 0x04,
+    CONE_FLAG_RUNNING   = 0x08,
+    CONE_FLAG_FINISHED  = 0x10,
+    CONE_FLAG_FAILED    = 0x20,
+    CONE_FLAG_CANCELLED = 0x40,
+    CONE_FLAG_JOINED    = 0x80,
 };
 
 struct cone
 {
-    cone_atom refcount;
     cone_atom flags;
     struct cone_loop *loop;
     struct cone_closure body;
@@ -363,12 +363,8 @@ int cone_yield(void) {
     return cone_wait(&cone->loop->io.ping, &cone->loop->io.pinged, 1) MUN_RETHROW;
 }
 
-void cone_incref(struct cone *c) {
-    c->refcount++;
-}
-
-int cone_decref(struct cone *c) {
-    if (c && !--c->refcount) {
+int cone_drop(struct cone *c) {
+    if (c && !(--c->flags & 0x3)) {
         if ((c->flags & (CONE_FLAG_FAILED | CONE_FLAG_JOINED)) == CONE_FLAG_FAILED)
             if (c->error.code != mun_errno_cancelled)
                 mun_error_show("cone destroyed with", &c->error);
@@ -378,15 +374,15 @@ int cone_decref(struct cone *c) {
     return !c MUN_RETHROW;
 }
 
-int cone_join(struct cone *c) {
+int cone_cowait(struct cone *c) {
     for (unsigned f; !((f = c->flags) & CONE_FLAG_FINISHED); )
         if (cone_wait(&c->done, &c->flags, f) < 0 MUN_RETHROW)
-            return cone_decref(c), -1;
+            return -1;
     if ((c->flags |= CONE_FLAG_JOINED) & CONE_FLAG_FAILED) {
         *mun_last_error() = c->error;
-        return cone_decref(c), -1;
+        return -1;
     }
-    return cone_decref(c), 0;
+    return 0;
 }
 
 int cone_cancel(struct cone *c) {
@@ -400,7 +396,7 @@ static void cone_body(struct cone *c) {
         c->flags |= CONE_FLAG_FAILED;
     }
     c->flags |= CONE_FLAG_FINISHED;
-    if (cone_event_schedule_add(&c->loop->at, mun_usec_monotonic(), cone_bind(&cone_decref, c))
+    if (cone_event_schedule_add(&c->loop->at, mun_usec_monotonic(), cone_bind(&cone_drop, c))
      || cone_wake(&c->done, (size_t)-1) MUN_RETHROW)
         mun_error_show("cone fatal", NULL), abort();
     cone_loop_dec(c->loop);
@@ -428,8 +424,7 @@ struct cone *cone_spawn(size_t size, struct cone_closure body) {
     struct cone *c = (struct cone *)malloc(size);
     if (c == NULL)
         return mun_error(memory, "no space for a stack"), NULL;
-    atomic_init(&c->refcount, 1);
-    c->flags = 0;
+    c->flags = 2;
     c->loop = loop;
     c->body = body;
     c->done = (struct cone_event){};
@@ -453,8 +448,9 @@ struct cone *cone_spawn(size_t size, struct cone_closure body) {
     sigaltstack(&old_stk, NULL);
 #endif
     if (cone_schedule(c) MUN_RETHROW)
-        return cone_decref(c), NULL;
-    return cone_loop_inc(loop), cone_incref(c), c;}
+        return cone_drop(c), NULL;
+    return cone_loop_inc(loop), c;
+}
 
 static int cone_main_run(struct cone_loop *loop) {
     if (cone_loop_run(loop))
@@ -477,7 +473,7 @@ static void __attribute__((destructor)) cone_main_fini(void) {
         struct cone_loop *loop = c->loop;
         cone_loop_dec(loop);
         cone_switch(c);
-        cone_decref(c);
+        cone_drop(c);
         if (cone_event_schedule_emit(&loop->at) < 0)
             mun_error_show("cone fini", NULL), exit(124);
         cone_loop_fini(loop);
