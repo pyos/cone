@@ -39,8 +39,8 @@ int cone_decref(struct cone *);
 // rethrow it into the current coroutine instead of printing. Consumes a single reference.
 int cone_join(struct cone *);
 
-// Sleep until a file descriptor is ready for reading/writing. Behavior is undefined
-// if it already is (call read/write until it returns EAGAIN/EWOULDBLOCK first).
+// Sleep until a file descriptor is ready for reading/writing. If it already is,
+// equivalent to `cone_yield`.
 int cone_iowait(int fd, int write) mun_throws(cancelled, memory);
 
 // Sleep just because. Unlike normal system calls, does not interact with signals.

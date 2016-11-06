@@ -115,12 +115,19 @@ static int cone_event_io_add(struct cone_event_io *set, int fd, int write, struc
             return mun_error(memory, "-");
         **b = (struct cone_event_fd){.fd = fd};
     #if CONE_EPOLL
-        struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|EPOLLET|EPOLLIN|EPOLLOUT, {.ptr = *b}};
+        struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|(write ? EPOLLOUT : EPOLLIN), {.ptr = *b}};
         if (epoll_ctl(set->epoll, EPOLL_CTL_ADD, fd, &params) MUN_RETHROW_OS)
             return free(*b), *b = NULL, -1;
     #endif
-    } else if ((*b)->cbs[write].code)
-        return mun_error(assert, "two readers/writers on one file descriptor");
+    } else {
+        if ((*b)->cbs[write].code)
+            return mun_error(assert, "two readers/writers on one file descriptor");
+    #if CONE_EPOLL
+        struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|EPOLLOUT|EPOLLIN, {.ptr = *b}};
+        if (epoll_ctl(set->epoll, EPOLL_CTL_MOD, fd, &params) MUN_RETHROW_OS)
+            return free(*b), *b = NULL, -1;
+    #endif
+    }
     (*b)->cbs[write] = f;
     return 0;
 }
@@ -136,6 +143,11 @@ static void cone_event_io_del(struct cone_event_io *set, int fd, int write, stru
     #endif
         *b = e->link;
         free(e);
+    } else {
+    #if CONE_EPOLL
+        struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|(write ? EPOLLIN : EPOLLOUT), {.ptr = *b}};
+        epoll_ctl(set->epoll, EPOLL_CTL_MOD, fd, &params);
+    #endif
     }
 }
 
