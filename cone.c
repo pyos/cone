@@ -12,10 +12,6 @@
 #define CONE_XCHG_RSP 1
 #endif
 
-#ifndef CONE_DEFAULT_STACK
-#define CONE_DEFAULT_STACK 65536
-#endif
-
 #if CONE_EPOLL
 #include <sys/epoll.h>
 #else
@@ -269,7 +265,7 @@ struct cone
 #else
     jmp_buf ctx[2];
 #endif
-    char stack[];
+    _Alignas(max_align_t) char stack[];
 };
 
 _Thread_local struct cone * volatile cone = NULL;
@@ -407,7 +403,8 @@ static void cone_body(struct cone *c) {
 #if !CONE_XCHG_RSP
 static _Thread_local struct cone *volatile cone_sigctx;
 
-static void cone_sigstackswitch() {
+static void cone_sigtrampoline(int signum) {
+    (void)signum;
     struct cone *c = cone_sigctx;
     if (setjmp(c->ctx[0]))
         cone_body(c);
@@ -417,39 +414,33 @@ static void cone_sigstackswitch() {
 static struct cone_loop cone_main_loop = {};
 
 struct cone *cone_spawn(size_t size, struct cone_closure body) {
-    struct cone_loop *loop = cone ? cone->loop : &cone_main_loop;
-    size &= ~(size_t)15;
-    if (size < sizeof(struct cone) + MINSIGSTKSZ)
-        size = CONE_DEFAULT_STACK;
-    struct cone *c = (struct cone *)malloc(size);
+    size &= ~(size_t)(_Alignof(max_align_t) - 1);
+    struct cone *c = (struct cone *)malloc(sizeof(struct cone) + size);
     if (c == NULL)
         return mun_error(memory, "no space for a stack"), NULL;
     c->flags = 2;
-    c->loop = loop;
+    c->loop = cone ? cone->loop : &cone_main_loop;
     c->body = body;
     c->done = (struct cone_event){};
 #if CONE_XCHG_RSP
-    c->rsp = (void **)(c->stack + size - sizeof(struct cone)) - 4;
+    c->rsp = (void **)&c->stack[size] - 4;
     c->rsp[0] = c;                  // %rdi: first argument
     c->rsp[1] = NULL;               // %rbp: nothing; there's no previous frame yet
     c->rsp[2] = (void*)&cone_body;  // %rip: code to execute;
     c->rsp[3] = NULL;               // return address: nothing; same as for %rbp
 #else
-    stack_t old_stk, new_stk = {.ss_sp = c->stack, .ss_size = size - sizeof(struct cone)};
-    struct sigaction old_act, new_act;
-    new_act.sa_handler = &cone_sigstackswitch;
-    new_act.sa_flags = SA_ONSTACK;
-    sigemptyset(&new_act.sa_mask);
-    sigaltstack(&new_stk, &old_stk);
-    sigaction(SIGUSR1, &new_act, &old_act);
+    stack_t old_stack;
+    struct sigaction old_act;
+    sigaltstack(&(stack_t){.ss_sp = c->stack, .ss_size = size}, &old_stack);
+    sigaction(SIGUSR1, &(struct sigaction){.sa_handler = &cone_sigtrampoline, .sa_flags = SA_ONSTACK}, &old_act);
     cone_sigctx = c;
     raise(SIGUSR1);  // FIXME should block SIGUSR1 until this line
     sigaction(SIGUSR1, &old_act, NULL);
-    sigaltstack(&old_stk, NULL);
+    sigaltstack(&old_stack, NULL);
 #endif
     if (cone_schedule(c) MUN_RETHROW)
         return cone_drop(c), NULL;
-    return cone_loop_inc(loop), c;
+    return cone_loop_inc(c->loop), c;
 }
 
 static int cone_main_run(struct cone_loop *loop) {

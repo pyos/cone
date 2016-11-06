@@ -1,4 +1,8 @@
 #pragma once
+#ifndef CONE_DEFAULT_STACK
+#define CONE_DEFAULT_STACK 65536
+#endif
+
 #include "mun.h"
 
 typedef volatile _Atomic unsigned cone_atom;
@@ -8,6 +12,8 @@ struct cone_closure
     int (*code)(void*);
     void *data;
 };
+
+#define cone_bind(f, data) ((struct cone_closure){(int(*)(void*))f, data})
 
 // A manually triggered event. Zero-initialized; finalized with `mun_vec_fini`;
 // must not be destroyed if there are callbacks attached.
@@ -20,9 +26,11 @@ extern _Thread_local struct cone * volatile cone;
 int cone_unblock(int fd);
 
 // Create a new coroutine that runs a given function with a single pointer argument.
-// When stack size is 0, an unspecified default value is used. The memory will be freed
-// when the coroutine finishes and the returned reference is dropped, no matter the order.
+// The memory will be freed when the coroutine finishes and the returned reference is
+// dropped, no matter the order.
 struct cone *cone_spawn(size_t stack, struct cone_closure) mun_throws(memory);
+
+#define cone(f, arg) cone_spawn(CONE_DEFAULT_STACK, cone_bind(f, arg))
 
 // Drop the reference to a coroutine returned by `cone_spawn`.
 int cone_drop(struct cone *);
@@ -62,6 +70,3 @@ int cone_wake(struct cone_event *, size_t) mun_throws(memory);
 // running, it will only receive a cancellation signal upon reaching `cone_wait`,
 // `cone_iowait`, `cone_sleep`, or `cone_yield`; and even then, the error may be ignored.
 int cone_cancel(struct cone *) mun_throws(memory);
-
-#define cone_bind(f, data) ((struct cone_closure){(int(*)(void*))f, data})
-#define cone(f, arg) cone_spawn(0, cone_bind(f, arg))
