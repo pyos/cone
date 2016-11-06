@@ -40,24 +40,33 @@ struct cone_event_at
     struct cone_closure f;
 };
 
-struct cone_event_schedule mun_vec(struct cone_event_at);
+struct cone_event_schedule
+{
+    struct mun_vec(struct cone_event_at) cs;
+};
+
+static void cone_event_schedule_fini(struct cone_event_schedule *ev) {
+    mun_vec_fini(&ev->cs);
+}
 
 static int cone_event_schedule_add(struct cone_event_schedule *ev, mun_usec at, struct cone_closure f) mun_throws(memory) {
-    return mun_vec_insert(ev, mun_vec_bisect(ev, at < _->at), &((struct cone_event_at){at, f}));
+    return mun_vec_insert(&ev->cs, mun_vec_bisect(&ev->cs, at < _->at), &((struct cone_event_at){at, f}));
 }
 
 static void cone_event_schedule_del(struct cone_event_schedule *ev, mun_usec at, struct cone_closure f) {
-    for (size_t i = mun_vec_bisect(ev, at < _->at); i-- && ev->data[i].at == at; )
-        if (ev->data[i].f.code == f.code && ev->data[i].f.data == f.data)
-            return mun_vec_erase(ev, i, 1);
+    for (size_t i = mun_vec_bisect(&ev->cs, at < _->at); i-- && ev->cs.data[i].at == at; )
+        if (ev->cs.data[i].f.code == f.code && ev->cs.data[i].f.data == f.data)
+            return mun_vec_erase(&ev->cs, i, 1);
 }
 
 static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev) {
-    for (; ev->size; mun_vec_erase(ev, 0, 1)) {
+    while (ev->cs.size) {
         mun_usec now = mun_usec_monotonic();
-        if (ev->data[0].at > now)
-            return ev->data[0].at - now;
-        if (ev->data[0].f.code(ev->data[0].f.data) MUN_RETHROW)
+        struct cone_event_at c = ev->cs.data[0];
+        if (c.at > now)
+            return c.at - now;
+        mun_vec_erase(&ev->cs, 0, 1);
+        if (c.f.code(c.f.data) MUN_RETHROW)
             return -1;
     }
     return MUN_USEC_MAX;
@@ -212,13 +221,13 @@ struct cone_loop
     struct cone_event_schedule at;
 };
 
-static void cone_loop_fini(struct cone_loop *loop) {
-    cone_event_io_fini(&loop->io);
-    mun_vec_fini(&loop->at);
-}
-
 static int cone_loop_init(struct cone_loop *loop) mun_throws(memory) {
     return cone_event_io_init(&loop->io);
+}
+
+static void cone_loop_fini(struct cone_loop *loop) {
+    cone_event_io_fini(&loop->io);
+    cone_event_schedule_fini(&loop->at);
 }
 
 static int cone_loop_run(struct cone_loop *loop) {
@@ -244,7 +253,7 @@ enum
     CONE_FLAG_FINISHED  = 0x04,
     CONE_FLAG_FAILED    = 0x08,
     CONE_FLAG_CANCELLED = 0x10,
-    CONE_FLAG_RETHROWN  = 0x20,
+    CONE_FLAG_JOINED    = 0x20,
 };
 
 struct cone
@@ -266,8 +275,9 @@ struct cone
 _Thread_local struct cone * volatile cone = NULL;
 
 static void cone_switch(struct cone *c) {
-    c->flags ^= CONE_FLAG_RUNNING;
+    unsigned into = !!((c->flags ^= CONE_FLAG_RUNNING) & CONE_FLAG_RUNNING);
 #if CONE_XCHG_RSP
+    (void)into;
     __asm__(" jmp  %=0f       \n"
         "%=1: push %%rbp      \n"
         "     push %%rdi      \n"
@@ -282,13 +292,14 @@ static void cone_switch(struct cone *c) {
         "xmm0",  "xmm1",  "xmm2",  "xmm3",  "xmm4",  "xmm5",  "xmm6",  "xmm7",
         "xmm8",  "xmm9",  "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
 #else
-    if (!setjmp(c->ctx[!!(c->flags & CONE_FLAG_RUNNING)]))
-        longjmp(c->ctx[!(c->flags & CONE_FLAG_RUNNING)], 1);
+    if (!setjmp(c->ctx[into]))
+        longjmp(c->ctx[!into], 1);
 #endif
 }
 
 static int cone_run(struct cone *c) mun_nothrow {
-    c->flags &= ~CONE_FLAG_SCHEDULED;
+    if ((c->flags &= ~CONE_FLAG_SCHEDULED) & CONE_FLAG_FINISHED)
+        return 0;
     struct cone* prev = cone;
     cone_switch(cone = c);
     cone = prev;
@@ -296,30 +307,26 @@ static int cone_run(struct cone *c) mun_nothrow {
 }
 
 static int cone_schedule(struct cone *c) mun_throws(memory) {
-    if (!(c->flags & CONE_FLAG_SCHEDULED))
+    if (!(atomic_fetch_or(&c->flags, CONE_FLAG_SCHEDULED) & CONE_FLAG_SCHEDULED))
         if (cone_event_schedule_add(&c->loop->at, mun_usec_monotonic(), cone_bind(&cone_run, c)) MUN_RETHROW)
             return -1;
-    c->flags |= CONE_FLAG_SCHEDULED;
     return 0;
 }
 
 static int cone_ensure_running(struct cone *c) mun_throws(cancelled) {
-    if (c->flags & CONE_FLAG_CANCELLED) {
-        c->flags &= ~CONE_FLAG_CANCELLED;
+    if (atomic_fetch_and(&c->flags, ~CONE_FLAG_CANCELLED) & CONE_FLAG_CANCELLED)
         return errno = ECANCELED, mun_error(cancelled, " ");
-    }
     return 0;
 }
 
 #define cone_pause(always_unsub, ev_add, ev_del, ...) do { \
-    if (cone_ensure_running(cone) MUN_RETHROW)             \
-        return -1;                                         \
     if (ev_add(__VA_ARGS__) MUN_RETHROW)                   \
         return -1;                                         \
     cone_switch(cone);                                     \
-    if (always_unsub || cone->flags & CONE_FLAG_CANCELLED) \
+    int cancelled = cone_ensure_running(cone);             \
+    if (always_unsub || cancelled)                         \
         ev_del(__VA_ARGS__);                               \
-    return cone_ensure_running(cone);                      \
+    return cancelled;                                      \
 } while (0)
 
 static void cone_unschedule(struct cone_event *ev, struct cone **c) {
@@ -329,6 +336,7 @@ static void cone_unschedule(struct cone_event *ev, struct cone **c) {
 }
 
 int cone_wait(struct cone_event *ev, cone_atom *uptr, unsigned u) {
+    // TODO actual atomicity of this function w.r.t. modifications of `*uptr`.
     if (atomic_load(uptr) != u)
         return 1;
     cone_pause(0, mun_vec_append, cone_unschedule, ev, &(struct cone *){cone});
@@ -356,12 +364,12 @@ int cone_yield(void) {
 }
 
 void cone_incref(struct cone *c) {
-    atomic_fetch_add(&c->refcount, 1);
+    c->refcount++;
 }
 
 int cone_decref(struct cone *c) {
-    if (c && atomic_fetch_sub(&c->refcount, 1) == 1) {
-        if ((c->flags & (CONE_FLAG_FAILED | CONE_FLAG_RETHROWN)) == CONE_FLAG_FAILED)
+    if (c && !--c->refcount) {
+        if ((c->flags & (CONE_FLAG_FAILED | CONE_FLAG_JOINED)) == CONE_FLAG_FAILED)
             if (c->error.code != mun_errno_cancelled)
                 mun_error_show("cone destroyed with", &c->error);
         mun_vec_fini(&c->done);
@@ -371,12 +379,11 @@ int cone_decref(struct cone *c) {
 }
 
 int cone_join(struct cone *c) {
-    for (unsigned f; !((f = atomic_load(&c->flags)) & CONE_FLAG_FINISHED); )
+    for (unsigned f; !((f = c->flags) & CONE_FLAG_FINISHED); )
         if (cone_wait(&c->done, &c->flags, f) < 0 MUN_RETHROW)
             return cone_decref(c), -1;
-    if (c->flags & CONE_FLAG_FAILED) {
+    if ((c->flags |= CONE_FLAG_JOINED) & CONE_FLAG_FAILED) {
         *mun_last_error() = c->error;
-        c->flags |= CONE_FLAG_RETHROWN;
         return cone_decref(c), -1;
     }
     return cone_decref(c), 0;
@@ -384,12 +391,10 @@ int cone_join(struct cone *c) {
 
 int cone_cancel(struct cone *c) {
     c->flags |= CONE_FLAG_CANCELLED;
-    if (c->flags & (CONE_FLAG_RUNNING | CONE_FLAG_FINISHED))
-        return 0;
     return cone_schedule(c) MUN_RETHROW;
 }
 
-static void __attribute__((noreturn)) cone_body(struct cone *c) {
+static void cone_body(struct cone *c) {
     if (cone_ensure_running(c) || c->body.code(c->body.data)) {
         c->error = *mun_last_error();
         c->flags |= CONE_FLAG_FAILED;
