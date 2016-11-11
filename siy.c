@@ -7,6 +7,7 @@ enum siy_signo
     SIY_UINT   = 'u',   // typesign ::= 'u' {octets :: digit}
     SIY_INT    = 'i',   //            | 'i' {octets :: digit}
     SIY_DOUBLE = 'f',   //            | 'f'
+    SIY_PTR    = '*',   //            | '*' {type :: typesign}
     SIY_VEC    = 'v',   //            | 'v' {type :: typesign}
     SIY_STRUCT = '(',   //            | '(' {contents :: signature} ')';
     SIY_END    = ')',
@@ -50,9 +51,14 @@ static struct siy_sign siy_sign(const char *sign, int accept_end) mun_throws(siy
             r.size = sizeof(double);
             r.align = _Alignof(double);
             break;
+        case SIY_PTR:
+            r.size = sizeof(void *);
+            r.align = _Alignof(void *);
+            goto followed_by_sign;
         case SIY_VEC:
             r.size = sizeof(struct mun_vec);
             r.align = _Alignof(struct mun_vec);
+        followed_by_sign:
             r.contents = sign;
             struct siy_sign value = siy_sign(sign, 0);
             if (value.sign == SIY_ERROR)
@@ -120,6 +126,10 @@ static int siy_encode_one(struct siy *out, struct siy_sign s, const void *in) {
                 return -1;
         #undef X
             return 0;
+        case SIY_PTR:
+            if (siy_encode(out, s.contents, *(const void **)in))
+                return -1;
+            return 0;
         case SIY_VEC: {
             struct siy_sign q = siy_sign(s.contents, 0);
             const struct mun_vec *v = in;
@@ -149,6 +159,10 @@ static int siy_decode_one(struct siy *in, struct siy_sign s, void *out) mun_thro
         #define X(t) (*(t*)out = u)
             UINT_SIZE_SWITCH(s.size, X);
         #undef X
+            return 0;
+        case SIY_PTR:
+            if (siy_decode(in, s.contents, *(void **)out))
+                return -1;
             return 0;
         case SIY_VEC: {
             struct siy_sign q = siy_sign(s.contents, 0);
