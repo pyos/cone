@@ -126,10 +126,12 @@ static int siy_encode_one(struct siy *out, struct siy_sign s, const void *in) {
                 return -1;
         #undef X
             return 0;
-        case SIY_PTR:
-            if (siy_encode(out, s.contents, *(const void **)in))
+        case SIY_PTR: {
+            struct siy_sign q = siy_sign(s.contents, 0);
+            if (q.sign == SIY_ERROR || siy_encode_one(out, q, *(const void **)in) MUN_RETHROW)
                 return -1;
             return 0;
+        }
         case SIY_VEC: {
             struct siy_sign q = siy_sign(s.contents, 0);
             const struct mun_vec *v = in;
@@ -140,11 +142,15 @@ static int siy_encode_one(struct siy *out, struct siy_sign s, const void *in) {
                     return -1;
             return 0;
         }
-        case SIY_STRUCT:
-            if (siy_encode(out, s.contents, in) MUN_RETHROW)
-                return -1;
-        default:
+        case SIY_STRUCT: {
+            const char *in_ = in;
+            const char *sgn = s.contents;
+            for (struct siy_sign q; (q = siy_sign(sgn, 1)).size; in_ += q.size, sgn = q.next)
+                if (q.sign == SIY_ERROR || siy_encode_one(out, q, ALIGN(in_, q.align)) MUN_RETHROW)
+                    return -1;
             return 0;
+        }
+        default: return mun_error(assert, "invalid signo");
     }
 }
 
@@ -160,10 +166,12 @@ static int siy_decode_one(struct siy *in, struct siy_sign s, void *out) mun_thro
             UINT_SIZE_SWITCH(s.size, X);
         #undef X
             return 0;
-        case SIY_PTR:
-            if (siy_decode(in, s.contents, *(void **)out))
+        case SIY_PTR: {
+            struct siy_sign q = siy_sign(s.contents, 0);
+            if (q.sign == SIY_ERROR || siy_decode_one(in, q, *(void **)out) MUN_RETHROW)
                 return -1;
             return 0;
+        }
         case SIY_VEC: {
             struct siy_sign q = siy_sign(s.contents, 0);
             struct mun_vec *v = out;
@@ -176,28 +184,24 @@ static int siy_decode_one(struct siy *in, struct siy_sign s, void *out) mun_thro
                     return mun_vec_fini_s(q.size, v), -1;
             return 0;
         }
-        case SIY_STRUCT:
-            if (siy_decode(in, s.contents, out) MUN_RETHROW)
-                return -1;
-        default:
+        case SIY_STRUCT: {
+            char *out_ = out;
+            const char *sgn = s.contents;
+            for (struct siy_sign q; (q = siy_sign(sgn, 1)).size; out_ += q.size, sgn = q.next)
+                if (q.sign == SIY_ERROR || siy_decode_one(in, q, ALIGN(out_, q.align)) MUN_RETHROW)
+                    return -1;
             return 0;
+        }
+        default: return mun_error(assert, "invalid signo %d", s.sign);
     }
 }
 
 int siy_encode(struct siy *out, const char *sign, const void *in) {
-    const char *in_ = in;
-    for (struct siy_sign s; (s = siy_sign(sign, 1)).size; in_ += s.size, sign = s.next)
-        if (s.sign == SIY_ERROR || siy_encode_one(out, s, ALIGN(in_, s.align)) MUN_RETHROW)
-            return -1;
-    return 0;
+    return siy_encode_one(out, (struct siy_sign){.sign = SIY_STRUCT, .contents = sign}, in);
 }
 
 int siy_decode(struct siy *in, const char *sign, void *out) {
-    char *out_ = out;
-    for (struct siy_sign s; (s = siy_sign(sign, 1)).size; out_ += s.size, sign = s.next)
-        if (s.sign == SIY_ERROR || siy_decode_one(in, s, ALIGN(out_, s.align)) MUN_RETHROW)
-            return -1;
-    return 0;
+    return siy_decode_one(in, (struct siy_sign){.sign = SIY_STRUCT, .contents = sign}, out);
 }
 
 struct siy_signinfo siy_signinfo(const char *sign) {

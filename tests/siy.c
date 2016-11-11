@@ -34,19 +34,21 @@ static int test_siy_struct(char *msg) {
     struct T
     {
         uint8_t  a;
-        uint16_t b;
-        uint64_t c;
+        struct {
+            uint16_t b;
+            uint64_t c;
+        };
         uint8_t  d;
-        struct V v;
         struct V *vp;
+        struct V v;
     };
     struct V vx = {7, 8}, vy = {};
-    struct T x = {1, 2, 3, 4, {5, 6}, &vx}, y = {.vp = &vy};
+    struct T x = {1, {2, 3}, 4, &vx, {5, 6}}, y = {.vp = &vy};
     struct siy out = mun_vec_init_static(uint8_t, 64);
-    if (siy_encode(&out, "(u1 u2 u8 u1 (u2 u2) *(u2 u2))", &x) MUN_RETHROW)
+    if (siy_encode(&out, "(u1 (u2 u8) u1 *(u2 u2) (u2 u2))", &x) MUN_RETHROW)
         return -1;
     test_dump(&out, msg);
-    if (siy_decode(&out, "(u1 u2 u8 u1 (u2 u2) *(u2 u2))", &y) MUN_RETHROW)
+    if (siy_decode(&out, "(u1 (u2 u8) u1 *(u2 u2) (u2 u2))", &y) MUN_RETHROW)
         return -1;
     CHECK_FIELD(x, y, a, "%u");
     CHECK_FIELD(x, y, b, "%u");

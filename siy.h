@@ -26,10 +26,9 @@ struct siy_signinfo
 int siy_encode(struct siy *out, const char *sign, const void *in) mun_throws(memory, siy_sign_syntax);
 
 // Deserialize data into a naturally-aligned structure. See `siy_encode` for a description
-// of the signature. Deserialized data is erased from the input vector. If the signature
-// includes `*X`, the field must already point to valid storage for type described by `X`.
-// The field corresponding to `vX` may be pre-initialized with a static vector; otherwise,
-// a new dynamic vector will be created.
+// of the signature. If the signature includes `*X`, the field must already point to valid
+// storage for type described by `X`. The field corresponding to `vX` may be pre-initialized
+// with a static vector; otherwise, a new dynamic vector will be created.
 int siy_decode(struct siy *in, const char *sign, void *out) mun_throws(memory, siy_truncated, siy_sign_syntax);
 
 // Return the size and alignment of a struct type that has a given signature.
