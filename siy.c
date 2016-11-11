@@ -1,9 +1,12 @@
 #include "siy.h"
 
+#ifndef SIY_MAX_SIGNS
+#define SIY_MAX_SIGNS 32
+#endif
+
 enum siy_signo
 {
-    SIY_NONE   = 0,     // signature ::= typesign*
-    SIY_ERROR  = 1,
+    SIY_NONE   = 0x00,  // signature ::= typesign*
     SIY_UINT   = 'u',   // typesign ::= 'u' {octets :: digit}
     SIY_INT    = 'i',   //            | 'i' {octets :: digit}
     SIY_DOUBLE = 'f',   //            | 'f'
@@ -11,87 +14,83 @@ enum siy_signo
     SIY_VEC    = 'v',   //            | 'v' {type :: typesign}
     SIY_STRUCT = '(',   //            | '(' {contents :: signature} ')';
     SIY_END    = ')',
+    SIY_ERROR  = 0xFF,
 };
 
 struct siy_sign
 {
-    enum siy_signo sign;
     unsigned size;
-    unsigned align;
-    const char *contents;
-    const char *next;
+    unsigned short align;
+    unsigned char sign;
+    unsigned char consumes;
 };
 
-#define ALIGN(ptr, i) ((i) && (uintptr_t)(ptr) & ((i) - 1) ? \
-    ((ptr) = (__typeof__(ptr))(((uintptr_t)(ptr) & ~((uintptr_t)(i) - 1)) + (i))) : (ptr))
+#define ALIGN(ptr, i) \
+    ((ptr) = (i) ? (__typeof__(ptr))(((uintptr_t)(ptr) + ((i) - 1)) & ~(uintptr_t)((i) - 1)) : (ptr))
 
-#define UINT_SIZE_SWITCH(s, f) \
-    (s == 1 ? f(uint8_t) : s == 2 ? f(uint16_t) : s == 4 ? f(uint32_t) : s == 8 ? f(uint64_t) : 0)
+#define UINT_SIZE_SWITCH(s, f, default) \
+    ((s) == 1 ? f(uint8_t) : (s) == 2 ? f(uint16_t) : (s) == 4 ? f(uint32_t) : (s) == 8 ? f(uint64_t) : default)
 
-static struct siy_sign siy_sign(const char *sign, int accept_end) mun_throws(siy_sign_syntax) {
-    while (*sign && *sign == ' ')
-        sign++;
-    struct siy_sign r = {.sign = *sign++};
-    switch (r.sign) {
+static int siy_sign(const char **in, struct siy_sign *signs, size_t size) mun_throws(siy_sign_syntax);
+
+static int siy_sign_struct(const char **in, struct siy_sign *signs, size_t size, char end) {
+    *signs = (struct siy_sign){.sign = SIY_STRUCT};
+    for (struct siy_sign *next = &signs[1]; **in != end; next += next->consumes + 1) {
+        if (siy_sign(in, next, size - (next - signs)))
+            return -1;
+        ALIGN(signs->size, next->align);
+        signs->size += next->size;
+        signs->align = signs->align > next->align ? signs->align : next->align;
+        signs->consumes += next->consumes + 1;
+    }
+    ALIGN(signs->size, signs->align);
+    (*in)++;
+    return 0;
+}
+
+static int siy_sign_pointer(const char **in, struct siy_sign *signs, size_t size) {
+    if (siy_sign(in, &signs[1], size - 1))
+        return -1;
+    signs[0].consumes = signs[1].consumes + 1;
+    return 0;
+}
+
+static int siy_sign(const char **in, struct siy_sign *signs, size_t size) {
+    while (**in && **in == ' ')
+        (*in)++;
+    if (size < 1)
+        return mun_error(siy_sign_syntax, "cannot have more than %d signs in total", SIY_MAX_SIGNS);
+    switch ((signs->sign = *(*in)++)) {
+        #define SIY_SIGN_T(T) (struct siy_sign){.sign = signs->sign, .size = sizeof(T), .align = _Alignof(T)}
+        case 0:
         case SIY_END:
-        case SIY_NONE:
-            if (accept_end)
-                break;
-            mun_error(siy_sign_syntax, "unexpected end of struct");
-            goto fail;
+            return mun_error(siy_sign_syntax, "mismatched parenthesis");
         case SIY_INT:
         case SIY_UINT:
-            r.size = (unsigned)*sign++ - '0';
-            r.align = UINT_SIZE_SWITCH(r.size, _Alignof);
-            if (r.align)
-                break;
-            mun_error(siy_sign_syntax, "invalid int size '%c'", sign[-1]);
-            goto fail;
+            signs[0] = UINT_SIZE_SWITCH(**in - '0', SIY_SIGN_T, (struct siy_sign){});
+            if (!signs[0].size)
+                return mun_error(siy_sign_syntax, "invalid integer size '%c'", (*in)[-1]);
+            (*in)++;
+            return 0;
         case SIY_DOUBLE:
-            r.size = sizeof(double);
-            r.align = _Alignof(double);
-            break;
+            signs[0] = SIY_SIGN_T(double);
+            return 0;
         case SIY_PTR:
-            r.size = sizeof(void *);
-            r.align = _Alignof(void *);
-            goto followed_by_sign;
+            signs[0] = SIY_SIGN_T(void *);
+            return siy_sign_pointer(in, signs, size);
         case SIY_VEC:
-            r.size = sizeof(struct mun_vec);
-            r.align = _Alignof(struct mun_vec);
-        followed_by_sign:
-            r.contents = sign;
-            struct siy_sign value = siy_sign(sign, 0);
-            if (value.sign == SIY_ERROR)
-                goto fail;
-            sign = value.next;
-            break;
+            signs[0] = SIY_SIGN_T(struct mun_vec);
+            return siy_sign_pointer(in, signs, size);
         case SIY_STRUCT:
-            r.contents = sign;
-            while (1) {
-                struct siy_sign field = siy_sign(sign, 1);
-                sign = field.next;
-                if (field.sign == SIY_ERROR)
-                    goto fail;
-                if (field.sign == SIY_END)
-                    break;
-                if (field.sign == SIY_NONE) {
-                    mun_error(siy_sign_syntax, "mismatched (");
-                    goto fail;
-                }
-                ALIGN(r.size, field.align);
-                r.size += field.size;
-                r.align = r.align > field.align ? r.align : field.align;
-            }
-            ALIGN(r.size, r.align);
-            break;
+            return siy_sign_struct(in, signs, size, SIY_END);
         default:
-            mun_error(siy_sign_syntax, "invalid sign '%c'", sign[-1]);
-        fail:
-            r.sign = SIY_ERROR;
-            r.size = 1;
+            return mun_error(siy_sign_syntax, "invalid sign '%c'", (*in)[-1]);
+        #undef SIY_SIGN_T
     }
-    r.next = sign;
-    return r;
+}
+
+static int siy_signature(const char *in, struct siy_sign *signs, size_t size) {
+    return siy_sign_struct(&in, signs, size, SIY_NONE);
 }
 
 static int siy_encode_uint(struct siy *out, uint64_t in, unsigned width) {
@@ -111,102 +110,78 @@ static int siy_decode_uint(struct siy *in, uint64_t *out, unsigned width) mun_th
     do {
         if (size == in->size)
             return mun_error(siy_truncated, "could not decode an integer");
-        *out |= (*i & (127ull | (size == width) << 7)) << (7 * size);
+        *out |= (uint64_t)(*i & (127 | (size == width) << 7)) << (7 * size);
     } while (++size <= width && *i++ & 128);
     return mun_vec_erase(in, 0, size), 0;
 }
 
-static int siy_encode_one(struct siy *out, struct siy_sign s, const void *in) {
-    switch (s.sign) {
-        case SIY_PTR: {
-            struct siy_sign q = siy_sign(s.contents, 0);
-            if (q.sign == SIY_ERROR || siy_encode_one(out, q, *(const void **)in) MUN_RETHROW)
-                return -1;
-            return 0;
-        }
+static int siy_encode_one(struct siy *out, struct siy_sign *s, const void *in) {
+    switch (s->sign) {
+        case SIY_PTR:
+            return siy_encode_one(out, &s[1], *(const void **)in);
         case SIY_VEC: {
-            struct siy_sign q = siy_sign(s.contents, 0);
             const struct mun_vec *v = in;
-            if (q.sign == SIY_ERROR || siy_encode_uint(out, v->size, 4) MUN_RETHROW)
+            if (siy_encode_uint(out, v->size, 4) MUN_RETHROW)
                 return -1;
             for (unsigned i = 0; i < v->size; i++)
-                if (siy_encode_one(out, q, &mun_vec_data_s(q.size, v)[i]) MUN_RETHROW)
+                if (siy_encode_one(out, &s[1], &mun_vec_data_s(s[1].size, v)[i]))
                     return -1;
             return 0;
         }
-        case SIY_STRUCT: {
-            const char *in_ = in;
-            const char *sgn = s.contents;
-            for (struct siy_sign q; (q = siy_sign(sgn, 1)).size; in_ += q.size, sgn = q.next)
-                if (q.sign == SIY_ERROR || siy_encode_one(out, q, ALIGN(in_, q.align)) MUN_RETHROW)
+        case SIY_STRUCT:
+            for (size_t i = 0; i < s->consumes; in = (char*)in + s[i + 1].size, i += s[i + 1].consumes + 1)
+                if (siy_encode_one(out, &s[i + 1], ALIGN(in, s[i + 1].align)))
                     return -1;
             return 0;
-        }
         default:
-        #define X(t) *(t*)in
-            if (siy_encode_uint(out, UINT_SIZE_SWITCH(s.size, X), s.size) MUN_RETHROW)
-                return -1;
+        #define X(T) *(T*)in
+            return siy_encode_uint(out, UINT_SIZE_SWITCH(s->size, X, 1), s->size);
         #undef X
-            return 0;
     }
 }
 
-static int siy_decode_one(struct siy *in, struct siy_sign s, void *out) mun_throws(siy_truncated) {
+static int siy_decode_one(struct siy *in, struct siy_sign *s, void *out) mun_throws(siy_truncated) {
     uint64_t u = 0;
-    switch (s.sign) {
-        case SIY_PTR: {
-            struct siy_sign q = siy_sign(s.contents, 0);
-            if (q.sign == SIY_ERROR || siy_decode_one(in, q, *(void **)out) MUN_RETHROW)
-                return -1;
-            return 0;
-        }
+    switch (s->sign) {
+        case SIY_PTR:
+            return siy_decode_one(in, &s[1], *(void **)out);
         case SIY_VEC: {
-            struct siy_sign q = siy_sign(s.contents, 0);
             struct mun_vec *v = out;
-            if (q.sign == SIY_ERROR || siy_decode_uint(in, &u, 4) MUN_RETHROW)
-                return -1;
-            if (mun_vec_reserve_s(q.size, v, u) MUN_RETHROW)
+            if (siy_decode_uint(in, &u, 4) || mun_vec_reserve_s(s[1].size, v, u) MUN_RETHROW)
                 return -1;
             while (u--)
-                if (siy_decode_one(in, q, &mun_vec_data_s(q.size, v)[v->size++]) MUN_RETHROW)
-                    return mun_vec_fini_s(q.size, v), -1;
+                if (siy_decode_one(in, &s[1], &mun_vec_data_s(s[1].size, v)[v->size++]))
+                    return mun_vec_fini_s(s[1].size, v), -1;
             return 0;
         }
-        case SIY_STRUCT: {
-            char *out_ = out;
-            const char *sgn = s.contents;
-            for (struct siy_sign q; (q = siy_sign(sgn, 1)).size; out_ += q.size, sgn = q.next)
-                if (q.sign == SIY_ERROR || siy_decode_one(in, q, ALIGN(out_, q.align)) MUN_RETHROW)
+        case SIY_STRUCT:
+            for (size_t i = 0; i < s->consumes; out = (char*)out + s[i + 1].size, i += s[i + 1].consumes + 1)
+                if (siy_decode_one(in, &s[i + 1], ALIGN(out, s[i + 1].align)))
                     return -1;
             return 0;
-        }
         default:
-            if (siy_decode_uint(in, &u, s.size) MUN_RETHROW)
+            if (siy_decode_uint(in, &u, s->size))
                 return -1;
-        #define X(t) (*(t*)out = u)
-            UINT_SIZE_SWITCH(s.size, X);
+        #define X(T) (*(T*)out = u)
+            UINT_SIZE_SWITCH(s->size, X, 1);
         #undef X
             return 0;
     }
 }
 
 int siy_encode(struct siy *out, const char *sign, const void *in) {
-    return siy_encode_one(out, (struct siy_sign){.sign = SIY_STRUCT, .contents = sign}, in);
+    struct siy_sign signs[SIY_MAX_SIGNS];
+    return siy_signature(sign, signs, SIY_MAX_SIGNS) || siy_encode_one(out, signs, in) MUN_RETHROW;
 }
 
 int siy_decode(struct siy *in, const char *sign, void *out) {
-    return siy_decode_one(in, (struct siy_sign){.sign = SIY_STRUCT, .contents = sign}, out);
+    struct siy_sign signs[SIY_MAX_SIGNS];
+    return siy_signature(sign, signs, SIY_MAX_SIGNS) || siy_decode_one(in, signs, out) MUN_RETHROW;
 }
 
 struct siy_signinfo siy_signinfo(const char *sign) {
-    struct siy_signinfo si = {};
-    for (struct siy_sign s; (s = siy_sign(sign, 1)).sign != SIY_NONE;) {
-        if (s.sign == SIY_ERROR || s.sign == SIY_END)
-            return (struct siy_signinfo){};
-        ALIGN(si.size, s.align);
-        si.size += s.size;
-        si.align = s.align > si.align ? s.align : si.align;
-        sign = s.next;
-    }
-    return si;
+    struct siy_sign signs[SIY_MAX_SIGNS];
+    if (siy_signature(sign, signs, SIY_MAX_SIGNS) MUN_RETHROW)
+        return (struct siy_signinfo){};
+    return (struct siy_signinfo){signs[0].size, signs[0].align};
 }

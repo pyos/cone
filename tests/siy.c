@@ -47,17 +47,30 @@ static int test_siy_struct(char *msg) {
     struct siy out = mun_vec_init_static(uint8_t, 64);
     if (siy_encode(&out, "(u1 (u2 u8) u1 *(u2 u2) (u2 u2))", &x) MUN_RETHROW)
         return -1;
-    test_dump(&out, msg);
+    if (msg)
+        test_dump(&out, msg);
     if (siy_decode(&out, "(u1 (u2 u8) u1 *(u2 u2) (u2 u2))", &y) MUN_RETHROW)
         return -1;
-    CHECK_FIELD(x, y, a, "%u");
-    CHECK_FIELD(x, y, b, "%u");
-    CHECK_FIELD(x, y, c, "%" PRIu64);
-    CHECK_FIELD(x, y, d, "%u");
-    CHECK_FIELD(x, y, v.e, "%u");
-    CHECK_FIELD(x, y, v.f, "%u");
-    CHECK_FIELD(x, y, vp->e, "%u");
-    CHECK_FIELD(x, y, vp->f, "%u");
+    if (msg) {
+        CHECK_FIELD(x, y, a, "%u");
+        CHECK_FIELD(x, y, b, "%u");
+        CHECK_FIELD(x, y, c, "%" PRIu64);
+        CHECK_FIELD(x, y, d, "%u");
+        CHECK_FIELD(x, y, v.e, "%u");
+        CHECK_FIELD(x, y, v.f, "%u");
+        CHECK_FIELD(x, y, vp->e, "%u");
+        CHECK_FIELD(x, y, vp->f, "%u");
+    }
+    return 0;
+}
+
+static int test_siy_struct_timed(char *msg) {
+    mun_usec start = mun_usec_monotonic();
+    for (unsigned i = 0; i < 1000000; i++)
+        if (test_siy_struct(NULL))
+            return -1;
+    mun_usec end = mun_usec_monotonic();
+    sprintf(msg, "%f us/(encode+decode)", (double)(end - start) / 1000);
     return 0;
 }
 
@@ -131,3 +144,4 @@ export { "siy:value", &test_siy_primitive }
      , { "siy:vec[struct]", &test_siy_vec_struct }
      , { "siy:vec[vec[value]]", &test_siy_vec_vec }
      , { "siy:signinfo", &test_siy_signinfo }
+     , { "siy:struct timed", &test_siy_struct_timed }
