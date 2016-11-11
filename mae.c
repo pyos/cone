@@ -35,22 +35,23 @@ struct mae_future
 static inline uint16_t R16(const uint8_t *p) { return (uint16_t)p[0] << 8 | p[1]; }
 static inline uint32_t R32(const uint8_t *p) { return (uint32_t)R16(p) << 16 | R16(p + 2); }
 
+// NOTE: this function assumes single-threaded coroutine model (racy on `m->wbuffer` and `m->writer`).
 static int mae_writer(struct mae *m) {
-    ssize_t size = 0;
-    while ((size = m->wbuffer.size > 1024 ? 1024 : m->wbuffer.size)) {
+    char buf[1024];
+    for (ssize_t size; (size = m->wbuffer.size > sizeof(buf) ? sizeof(buf) : m->wbuffer.size); ) {
         // If `write` yields, some other coroutine may cause `wbuffer` to be reallocated.
-        char buf[size]; memcpy(buf, m->wbuffer.data, size);
+        memcpy(buf, m->wbuffer.data, size);
         if ((size = write(m->fd, buf, size)) < 0 MUN_RETHROW_OS)
-            break;
+            return m->writer = NULL, -1;
         mun_vec_erase(&m->wbuffer, 0, size);
     }
-    cone_drop(m->writer);
-    m->writer = NULL;
-    return size < 0 ? -1 : 0;
+    return m->writer = NULL, 0;
 }
 
+// NOTE: this function assumes single-threaded coroutine model (racy on `m->wbuffer` and may fail
+//       to spawn a writer if the old one is about to terminate).
 static int mae_write(struct mae *m, const uint8_t *data, size_t size) mun_throws(memory) {
-    if (!m->writer && !(m->writer = cone(&mae_writer, m)) MUN_RETHROW)
+    if (!m->writer && cone_drop(m->writer = cone(&mae_writer, m)) MUN_RETHROW)
         return -1;
     return mun_vec_extend(&m->wbuffer, data, size) MUN_RETHROW;
 }
@@ -148,20 +149,19 @@ static int mae_on_frame(struct mae *m, enum mae_frame_type t, uint32_t id, const
     return mun_error(mae_protocol, "unknown frame type %u", t);
 }
 
+// NOTE: this function assumes a single-threaded coroutine model (racy on `m->writer`).
 void mae_fini(struct mae *m) {
     for mun_vec_iter(&m->queued, it) {
         (*it)->rr = MAE_RETURN_CANCEL;
-        if (cone_wake(&(*it)->wake, 1))
+        if (cone_wake(&(*it)->wake, (size_t)-1))
             mun_error_show("could not wake coroutine due to", NULL);
     }
+    if (m->writer)
+        cone_cancel(m->writer);
     mun_vec_fini(&m->rbuffer);
     mun_vec_fini(&m->wbuffer);
     mun_vec_fini(&m->queued);
     mun_vec_fini(&m->exported);
-    if (m->writer) {
-        cone_cancel(m->writer);
-        cone_drop(m->writer);
-    }
     close(m->fd);
 }
 
