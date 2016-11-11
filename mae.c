@@ -122,8 +122,12 @@ static int mae_on_frame(struct mae *m, enum mae_frame_type t, uint32_t id, const
         if (i == m->exported.size)
             return mun_error(mae_not_exported, "%s", function), mae_write_response_error(m, id);
         struct mae_closure *c = &m->exported.data[i];
-        _Alignas(max_align_t) char argbuf[siy_signinfo(c->isign).size];
-        _Alignas(max_align_t) char retbuf[siy_signinfo(c->osign).size];
+        struct siy_sign isign[SIY_MAX_SIGNS];
+        struct siy_sign osign[SIY_MAX_SIGNS];
+        if (siy_signature(c->isign, isign, SIY_MAX_SIGNS) || siy_signature(c->osign, osign, SIY_MAX_SIGNS) MUN_RETHROW)
+            return -1;
+        _Alignas(max_align_t) char argbuf[isign[0].size];
+        _Alignas(max_align_t) char retbuf[osign[0].size];
         if (siy_decode(&(struct siy)mun_vec_init_borrow(sep + 1, size - (sep - data) - 1), c->isign, argbuf))
             return mae_write_response_error(m, id);
         if (c->code(m, c->data, argbuf, retbuf))

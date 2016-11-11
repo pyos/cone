@@ -4,9 +4,35 @@
 #define CHECK_FIELD(src, dst, f, fmt) \
     do if (src.f != dst.f) return mun_error(assert, #f ": expected " fmt ", got " fmt, src.f, dst.f); while (0)
 
-static void test_dump(struct siy *m, char *msg) {
+static char *test_dump(const struct siy *m, char *msg) {
     for (unsigned i = 0; i < m->size; i++)
         msg += sprintf(msg, "%02X ", m->data[i]);
+    return msg;
+}
+
+static char *test_dump_sign(const struct siy_sign *s, char *msg) {
+    msg += sprintf(msg, "0x%X(%u@%u)", s->sign, s->size, s->align);
+    if (s->consumes) {
+        for (size_t i = 0; i < s->consumes; i += s[i + 1].consumes + 1) {
+            *msg++ = i ? ',' : '[';
+            msg = test_dump_sign(&s[i + 1], msg);
+        }
+        *msg++ = ']';
+    }
+    *msg = 0;
+    return msg;
+}
+
+static int test_siy_signature(char *msg) {
+    struct siy_sign si[8];
+    if (siy_signature("u4 (u4 u2) u2", si, sizeof(si) / sizeof(si[0])))
+        return -1;
+    test_dump_sign(si, msg);
+    if (si[0].size != 16)
+        return mun_error(assert, "invalid size %u; expected 8", si[0].size);
+    if (si[0].align != 4)
+        return mun_error(assert, "invalid alignment %u; expected 4", si[0].align);
+    return 0;
 }
 
 static int test_siy_primitive(char *msg) {
@@ -129,19 +155,10 @@ static int test_siy_vec_vec(char *msg) {
     return 0;
 }
 
-static int test_siy_signinfo() {
-    struct siy_signinfo si = siy_signinfo("u4 u4");
-    if (si.size != 8)
-        return mun_error(assert, "invalid size %u; expected 8", si.size);
-    if (si.align != 4)
-        return mun_error(assert, "invalid alignment %u; expected 4", si.align);
-    return 0;
-}
-
-export { "siy:value", &test_siy_primitive }
+export { "siy:signature", &test_siy_signature }
+     , { "siy:value", &test_siy_primitive }
      , { "siy:struct", &test_siy_struct }
      , { "siy:vec[value]", &test_siy_vec }
      , { "siy:vec[struct]", &test_siy_vec_struct }
      , { "siy:vec[vec[value]]", &test_siy_vec_vec }
-     , { "siy:signinfo", &test_siy_signinfo }
      , { "siy:struct timed", &test_siy_struct_timed }
