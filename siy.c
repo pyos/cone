@@ -118,14 +118,6 @@ static int siy_decode_uint(struct siy *in, uint64_t *out, unsigned width) mun_th
 
 static int siy_encode_one(struct siy *out, struct siy_sign s, const void *in) {
     switch (s.sign) {
-        case SIY_INT:
-        case SIY_UINT:
-        case SIY_DOUBLE:
-        #define X(t) *(t*)in
-            if (siy_encode_uint(out, UINT_SIZE_SWITCH(s.size, X), s.size) MUN_RETHROW)
-                return -1;
-        #undef X
-            return 0;
         case SIY_PTR: {
             struct siy_sign q = siy_sign(s.contents, 0);
             if (q.sign == SIY_ERROR || siy_encode_one(out, q, *(const void **)in) MUN_RETHROW)
@@ -150,22 +142,18 @@ static int siy_encode_one(struct siy *out, struct siy_sign s, const void *in) {
                     return -1;
             return 0;
         }
-        default: return mun_error(assert, "invalid signo");
+        default:
+        #define X(t) *(t*)in
+            if (siy_encode_uint(out, UINT_SIZE_SWITCH(s.size, X), s.size) MUN_RETHROW)
+                return -1;
+        #undef X
+            return 0;
     }
 }
 
 static int siy_decode_one(struct siy *in, struct siy_sign s, void *out) mun_throws(siy_truncated) {
     uint64_t u = 0;
     switch (s.sign) {
-        case SIY_INT:
-        case SIY_UINT:
-        case SIY_DOUBLE:
-            if (siy_decode_uint(in, &u, s.size) MUN_RETHROW)
-                return -1;
-        #define X(t) (*(t*)out = u)
-            UINT_SIZE_SWITCH(s.size, X);
-        #undef X
-            return 0;
         case SIY_PTR: {
             struct siy_sign q = siy_sign(s.contents, 0);
             if (q.sign == SIY_ERROR || siy_decode_one(in, q, *(void **)out) MUN_RETHROW)
@@ -192,7 +180,13 @@ static int siy_decode_one(struct siy *in, struct siy_sign s, void *out) mun_thro
                     return -1;
             return 0;
         }
-        default: return mun_error(assert, "invalid signo %d", s.sign);
+        default:
+            if (siy_decode_uint(in, &u, s.size) MUN_RETHROW)
+                return -1;
+        #define X(t) (*(t*)out = u)
+            UINT_SIZE_SWITCH(s.size, X);
+        #undef X
+            return 0;
     }
 }
 
