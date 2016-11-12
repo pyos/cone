@@ -98,7 +98,7 @@ struct mun_vec mun_vec(void);
 // Macros accept pointers to strongly typed vectors; functions with names ending with `_s`
 // accept this pair of arguments instead.
 #define mun_vec_strided(v) sizeof(mun_vec_type(v)), (struct mun_vec*)(v)
-#define mun_vec_data_s(stride, v) ((char (*)[stride])(v)->data)
+#define mun_vec_data_s(stride, v) ((char (*)[(stride)])((const struct mun_vec*){(v)})->data)
 
 // Initializer for a vector that uses on-stack storage for `n` elements of type `T`.
 // The resulting vector is empty, but can be appended to up to `n` times.
