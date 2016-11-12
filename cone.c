@@ -271,7 +271,7 @@ struct cone
 _Thread_local struct cone * volatile cone = NULL;
 
 static void cone_switch(struct cone *c) {
-    unsigned into = !!((c->flags ^= CONE_FLAG_RUNNING) & CONE_FLAG_RUNNING);
+    unsigned into = !(atomic_fetch_xor(&c->flags, CONE_FLAG_RUNNING) & CONE_FLAG_RUNNING);
 #if CONE_XCHG_RSP
     (void)into;
     __asm__(" jmp  %=0f       \n"
@@ -294,7 +294,7 @@ static void cone_switch(struct cone *c) {
 }
 
 static int cone_run(struct cone *c) mun_nothrow {
-    if ((c->flags &= ~CONE_FLAG_SCHEDULED) & CONE_FLAG_FINISHED)
+    if (atomic_fetch_and(&c->flags, ~CONE_FLAG_SCHEDULED) & CONE_FLAG_FINISHED)
         return 0;
     struct cone* prev = cone;
     cone_switch(cone = c);
@@ -374,7 +374,7 @@ int cone_cowait(struct cone *c) {
     for (unsigned f; !((f = c->flags) & CONE_FLAG_FINISHED); )
         if (cone_wait(&c->done, &c->flags, f) < 0 MUN_RETHROW)
             return -1;
-    if ((c->flags |= CONE_FLAG_JOINED) & CONE_FLAG_FAILED) {
+    if (atomic_fetch_or(&c->flags, CONE_FLAG_JOINED) & CONE_FLAG_FAILED) {
         *mun_last_error() = c->error;
         return -1;
     }
