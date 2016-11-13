@@ -75,81 +75,66 @@ int siy_signature(const char *in, struct siy_sign *sgn, size_t n) {
     return siy_sign_struct(&in, sgn, n, '\0');
 }
 
-static unsigned bitcount(uint64_t i) {
-    unsigned r = 0; while (i) i >>= 1, r++; return r;
-}
-
-static int siy_encode_uint(struct siy *out, uint64_t in, unsigned width) {
-    if (width <= 1 || in < 0x80)
-        return mun_vec_extend(out, ((uint8_t[]){in}), 1);
-    uint8_t s = (bitcount(in) + 3) / 8;
-    uint8_t r[9] = {0x80 | (s - 1) << 4 | (in & 15), in >> 4,  in >> 12, in >> 20, in >> 28,
-                                                     in >> 36, in >> 44, in >> 52, in >> 60};
+static int siy_encode_uint(struct siy *out, const void *in, unsigned width) {
+#define X(T) *(const T*)in
+    uint64_t u = UINT_SIZE_SWITCH(width, X, 0);
+#undef X
+    if (width <= 1 || u < 0x80)
+        return mun_vec_extend(out, ((uint8_t[]){u}), 1);
+    uint8_t s = (sizeof(unsigned long long) * CHAR_BIT - __builtin_clzll(u) + 3) / 8;
+    uint8_t r[] = {0x80 | (s - 1) << 4 | (u & 15), u >> 4,  u >> 12, u >> 20, u >> 28,
+                                                   u >> 36, u >> 44, u >> 52, u >> 60};
     return mun_vec_extend(out, r, s + 1) MUN_RETHROW;
 }
 
-static int siy_decode_uint(struct siy *in, uint64_t *out, unsigned width) mun_throws(siy_truncated) {
-    uint8_t s = 0;
-    if (in->size < 1)
-        return mun_error(siy_truncated, "could not decode an integer");
-    *out = in->data[0];
-    if (width > 1 && *out > 0x80 && in->size < (s = (*out >> 4 & 7) + 1))
+static int siy_decode_uint(struct siy *in, void *out, unsigned width) mun_throws(siy_truncated) {
+    uint8_t s = 0, i = 0;
+    uint64_t v = in->size ? *in->data : 0;
+    if (in->size < 1 || (width > 1 && v > 0x7f && in->size < (s = (v >> 4 & 7) + 1)))
         return mun_error(siy_truncated, "could not decode an integer");
     if (s)
-        *out &= 15;
-    for (uint8_t i = 0; i < s; i++)
-        *out |= (uint64_t)in->data[i + 1] << (8 * i + 4);
+        for (v &= 15; i < s; i++)
+            v |= (uint64_t)in->data[i + 1] << (8 * i + 4);
+#define X(T) *(T*)out = v
+    UINT_SIZE_SWITCH(width, X, 0);
+#undef X
     return mun_vec_erase(in, 0, s + 1), 0;
 }
 
 int siy_encode_s(struct siy *out, const struct siy_sign *s, const void *in) {
-    for (; s->sign == SIY_PTR; s++)
-        in = *(const void *const *)in;
-    switch (s->sign) {
-        case SIY_VEC: {
-            const struct mun_vec *v = in;
-            if (siy_encode_uint(out, v->size, 4) MUN_RETHROW)
+    while (s->sign == SIY_PTR)
+        in = *(const void *const *)in, s++;
+    if (s->sign == SIY_VEC) {
+        const struct mun_vec *v = in;
+        if (siy_encode_uint(out, &v->size, 4) MUN_RETHROW)
+            return -1;
+        for (unsigned i = 0; i < v->size; i++)
+            if (siy_encode_s(out, &s[1], &mun_vec_data_s(s[1].size, v)[i]))
                 return -1;
-            for (unsigned i = 0; i < v->size; i++)
-                if (siy_encode_s(out, &s[1], &mun_vec_data_s(s[1].size, v)[i]))
-                    return -1;
-            return 0;
-        }
-        case SIY_STRUCT:
-            for (size_t i = 0; i < s->consumes; in = (const char*)in + s[i + 1].size, i += s[i + 1].consumes + 1)
-                if (siy_encode_s(out, &s[i + 1], ALIGN(in, s[i + 1].align)))
-                    return -1;
-            return 0;
-        default:
-        #define X(T) *(T*)in
-            return siy_encode_uint(out, UINT_SIZE_SWITCH(s->size, X, 1), s->size);
-        #undef X
-    }
+    } else if (s->sign == SIY_STRUCT) {
+        for (size_t i = 0; i < s->consumes; in = (const char*)in + s[i + 1].size, i += s[i + 1].consumes + 1)
+            if (siy_encode_s(out, &s[i + 1], ALIGN(in, s[i + 1].align)))
+                return -1;
+    } else if (siy_encode_uint(out, in, s->size))
+        return -1;
+    return 0;
 }
 
 int siy_decode_s(struct siy *in, const struct siy_sign *s, void *out) {
-    for (; s->sign == SIY_PTR; s++)
-        out = *(void **)out;
-    switch (s->sign) {
-            uint64_t u;
-        case SIY_VEC:
-            if (siy_decode_uint(in, &u, 4) || mun_vec_reserve_s(s[1].size, out, u) MUN_RETHROW)
+    while (s->sign == SIY_PTR)
+        out = *(void **)out, s++;
+    if (s->sign == SIY_VEC) {
+        uint32_t u;
+        if (siy_decode_uint(in, &u, 4) || mun_vec_reserve_s(s[1].size, out, u) MUN_RETHROW)
+            return -1;
+        while (u--)
+            if (siy_decode_s(in, &s[1], &mun_vec_data_s(s[1].size, out)[((struct mun_vec *)out)->size++]))
+                return mun_vec_fini_s(s[1].size, out), -1;
+    } else if (s->sign == SIY_STRUCT) {
+        for (size_t i = 0; i < s->consumes; out = (char*)out + s[i + 1].size, i += s[i + 1].consumes + 1)
+            if (siy_decode_s(in, &s[i + 1], ALIGN(out, s[i + 1].align)))
                 return -1;
-            while (u--)
-                if (siy_decode_s(in, &s[1], &mun_vec_data_s(s[1].size, out)[((struct mun_vec *)out)->size++]))
-                    return mun_vec_fini_s(s[1].size, out), -1;
-            return 0;
-        case SIY_STRUCT:
-            for (size_t i = 0; i < s->consumes; out = (char*)out + s[i + 1].size, i += s[i + 1].consumes + 1)
-                if (siy_decode_s(in, &s[i + 1], ALIGN(out, s[i + 1].align)))
-                    return -1;
-            return 0;
-        default:
-            if (siy_decode_uint(in, &u, s->size))
-                return -1;
-        #define X(T) (*(T*)out = u)
-            UINT_SIZE_SWITCH(s->size, X, 1);
-        #undef X
-            return 0;
-    }
+    } else if (siy_decode_uint(in, out, s->size))
+        return -1;
+    return 0;
 }
