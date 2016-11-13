@@ -45,6 +45,7 @@ struct mun_error *mun_last_error(void) {
 
 int mun_error_at(int n, const char *name, struct mun_stackframe frame, const char *fmt, ...) {
     e = (struct mun_error){.code = n < 0 ? -n : n, .stacklen = 0, .name = name};
+    errno = e.code;
     va_list args;
     va_start(args, fmt);
     // NOTE this requires an XSI, not GNU, version of strerror_r(3). No _GNU_SOURCE allowed!

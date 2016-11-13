@@ -311,7 +311,7 @@ static int cone_schedule(struct cone *c) mun_throws(memory) {
 
 static int cone_ensure_running(struct cone *c) mun_throws(cancelled) {
     if (atomic_fetch_and(&c->flags, ~CONE_FLAG_CANCELLED) & CONE_FLAG_CANCELLED)
-        return errno = ECANCELED, mun_error(cancelled, " ");
+        return mun_error(cancelled, " ");
     return 0;
 }
 
