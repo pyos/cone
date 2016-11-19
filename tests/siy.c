@@ -11,15 +11,17 @@ static char *test_dump(const struct siy *m, char *msg) {
 }
 
 static char *test_dump_sign(const struct siy_sign *s, char *msg) {
-    msg += sprintf(msg, "'%c':%u@%u", s->sign, s->size, s->align);
     if (s->consumes) {
         for (size_t i = 0; i < s->consumes; i += s[i + 1].consumes + 1) {
-            *msg++ = i ? ',' : ' ';
-            *msg++ = i ? ' ' : '{';
+			msg += sprintf(msg, i ? ", " : "{");
             msg = test_dump_sign(&s[i + 1], msg);
         }
         *msg++ = '}';
-    }
+		if (s->sign != '(')
+			*msg++ = s->sign;
+    } else
+		msg += sprintf(msg, "'%c'", s->sign);
+    msg += sprintf(msg, ":%u@%u", s->size, s->align);
     *msg = 0;
     return msg;
 }
