@@ -418,7 +418,7 @@ struct cone *cone_spawn(size_t size, struct cone_closure body) {
     struct cone *c = (struct cone *)malloc(sizeof(struct cone) + size);
     if (c == NULL)
         return mun_error(memory, "no space for a stack"), NULL;
-    c->flags = 2;
+    c->flags = 1;
     c->loop = cone ? cone->loop : &cone_main_loop;
     c->body = body;
     c->done = (struct cone_event){};
@@ -448,6 +448,7 @@ struct cone *cone_spawn(size_t size, struct cone_closure body) {
 #endif
     if (cone_schedule(c) MUN_RETHROW)
         return cone_drop(c), NULL;
+    c->flags++;
     return cone_loop_inc(c->loop), c;
 }
 
