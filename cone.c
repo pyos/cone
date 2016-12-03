@@ -370,15 +370,14 @@ int cone_drop(struct cone *c) {
     return !c MUN_RETHROW;
 }
 
-int cone_cowait(struct cone *c) {
+int cone_cowait(struct cone *c, int flags) {
+    struct mun_error saved = *mun_last_error();
     for (unsigned f; !((f = c->flags) & CONE_FLAG_FINISHED); )
         if (cone_wait(&c->done, &c->flags, f) < 0 MUN_RETHROW)
             return -1;
-    if (atomic_fetch_or(&c->flags, CONE_FLAG_JOINED) & CONE_FLAG_FAILED) {
-        *mun_last_error() = c->error;
-        return -1;
-    }
-    return 0;
+    if (!(flags & CONE_NORETHROW) && atomic_fetch_or(&c->flags, CONE_FLAG_JOINED) & CONE_FLAG_FAILED)
+        return *mun_last_error() = c->error, -1;
+    return *mun_last_error() = saved, 0;
 }
 
 int cone_cancel(struct cone *c) {
