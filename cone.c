@@ -431,12 +431,16 @@ struct cone *cone_spawn(size_t size, struct cone_closure body) {
 #else
     stack_t old_stack;
     struct sigaction old_act;
-    sigaltstack(&(stack_t){.ss_sp = c->stack, .ss_size = size}, &old_stack);
-    sigaction(SIGUSR1, &(struct sigaction){.sa_handler = &cone_sigtrampoline, .sa_flags = SA_ONSTACK}, &old_act);
+    if (sigaltstack(&(stack_t){.ss_sp = c->stack, .ss_size = size}, &old_stack) MUN_RETHROW_OS)
+        return cone_drop(c), NULL;
+    if (sigaction(SIGUSR1, &(struct sigaction){.sa_handler = &cone_sigtrampoline, .sa_flags = SA_ONSTACK}, &old_act) MUN_RETHROW_OS)
+        return cone_drop(c), NULL;
     cone_sigctx = c;
     raise(SIGUSR1);  // FIXME should block SIGUSR1 until this line
-    sigaction(SIGUSR1, &old_act, NULL);
-    sigaltstack(&old_stack, NULL);
+    if (sigaction(SIGUSR1, &old_act, NULL) MUN_RETHROW_OS)
+        return cone_drop(c), NULL;
+    if (sigaltstack(&old_stack, NULL) MUN_RETHROW_OS)
+        return cone_drop(c), NULL;
 #endif
     if (cone_schedule(c) MUN_RETHROW)
         return cone_drop(c), NULL;
