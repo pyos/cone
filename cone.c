@@ -439,6 +439,10 @@ struct cone *cone_spawn(size_t size, struct cone_closure body) {
     raise(SIGUSR1);  // FIXME should block SIGUSR1 until this line
     if (sigaction(SIGUSR1, &old_act, NULL) MUN_RETHROW_OS)
         return cone_drop(c), NULL;
+#if __APPLE__
+    if (old_stack.ss_flags & SS_DISABLE)
+        old_stack.ss_size = MINSIGSTKSZ;
+#endif
     if (sigaltstack(&old_stack, NULL) MUN_RETHROW_OS)
         return cone_drop(c), NULL;
 #endif
