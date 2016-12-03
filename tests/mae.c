@@ -58,6 +58,8 @@ static int test_mae_run(int (*af)(struct mae *), int (*bf)(struct mae *)) {
 
 static int test_mae_client_impl(struct mae *n) {
     struct cone *u = cone(&test_mae_server, n);
+    if (u == NULL MUN_RETHROW)
+        return -1;
     if (test_mae_ok_call(n) MUN_RETHROW)
         return cone_cancel(u), cone_drop(u), -1;
     cone_yield();
@@ -65,7 +67,7 @@ static int test_mae_client_impl(struct mae *n) {
 }
 
 static int test_mae_server_client() {
-    return test_mae_run(&test_mae_server, &test_mae_client_impl);
+    return test_mae_run(&test_mae_client_impl, &test_mae_server);
 }
 
 static int test_mae_client_client() {
