@@ -8,21 +8,14 @@
 #define CONE_EPOLL 1
 #endif
 
-#if !defined(CONE_XCHG_RSP) && (__linux__ || __APPLE__) && __x86_64__
-#define CONE_XCHG_RSP 1
+#if !((__linux__ || __APPLE__) && __x86_64__)
+_Static_assert(0, "stack switching is only supported on x86-64 UNIX");
 #endif
 
 #if CONE_EPOLL
 #include <sys/epoll.h>
 #else
 #include <sys/select.h>
-#endif
-
-#if !CONE_XCHG_RSP
-#include <setjmp.h>
-#ifndef SA_ONSTACK
-#define SA_ONSTACK 0x8000000  // avoid requiring _GNU_SOURCE
-#endif
 #endif
 
 int cone_unblock(int fd) {
@@ -260,20 +253,14 @@ struct cone
     struct cone_closure body;
     struct cone_event done;
     struct mun_error error;
-#if CONE_XCHG_RSP
     void **rsp;
-#else
-    jmp_buf ctx[2];
-#endif
     _Alignas(max_align_t) char stack[];
 };
 
 _Thread_local struct cone * volatile cone = NULL;
 
 static void cone_switch(struct cone *c) {
-    unsigned into = !(atomic_fetch_xor(&c->flags, CONE_FLAG_RUNNING) & CONE_FLAG_RUNNING);
-#if CONE_XCHG_RSP
-    (void)into;
+    c->flags ^= CONE_FLAG_RUNNING;
     __asm__(" jmp  %=0f       \n"
         "%=1: push %%rbp      \n"
         "     push %%rdi      \n"
@@ -287,10 +274,6 @@ static void cone_switch(struct cone *c) {
       : "rbx", "rdx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc",
         "xmm0",  "xmm1",  "xmm2",  "xmm3",  "xmm4",  "xmm5",  "xmm6",  "xmm7",
         "xmm8",  "xmm9",  "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
-#else
-    if (!setjmp(c->ctx[into]))
-        longjmp(c->ctx[!into], 1);
-#endif
 }
 
 static int cone_run(struct cone *c) mun_nothrow {
@@ -399,17 +382,6 @@ static void cone_body(struct cone *c) {
     abort();
 }
 
-#if !CONE_XCHG_RSP
-static _Thread_local struct cone *volatile cone_sigctx;
-
-static void cone_sigtrampoline(int signum) {
-    (void)signum;
-    struct cone *c = cone_sigctx;
-    if (setjmp(c->ctx[0]))
-        cone_body(c);
-}
-#endif
-
 static struct cone_loop cone_main_loop = {};
 
 struct cone *cone_spawn(size_t size, struct cone_closure body) {
@@ -421,30 +393,11 @@ struct cone *cone_spawn(size_t size, struct cone_closure body) {
     c->loop = cone ? cone->loop : &cone_main_loop;
     c->body = body;
     c->done = (struct cone_event){};
-#if CONE_XCHG_RSP
     c->rsp = (void **)&c->stack[size] - 4;
     c->rsp[0] = c;                  // %rdi: first argument
     c->rsp[1] = NULL;               // %rbp: nothing; there's no previous frame yet
     c->rsp[2] = (void*)&cone_body;  // %rip: code to execute;
     c->rsp[3] = NULL;               // return address: nothing; same as for %rbp
-#else
-    stack_t old_stack;
-    struct sigaction old_act;
-    if (sigaltstack(&(stack_t){.ss_sp = c->stack, .ss_size = size}, &old_stack) MUN_RETHROW_OS)
-        return cone_drop(c), NULL;
-    if (sigaction(SIGUSR1, &(struct sigaction){.sa_handler = &cone_sigtrampoline, .sa_flags = SA_ONSTACK}, &old_act) MUN_RETHROW_OS)
-        return cone_drop(c), NULL;
-    cone_sigctx = c;
-    raise(SIGUSR1);  // FIXME should block SIGUSR1 until this line
-    if (sigaction(SIGUSR1, &old_act, NULL) MUN_RETHROW_OS)
-        return cone_drop(c), NULL;
-#if __APPLE__
-    if (old_stack.ss_flags & SS_DISABLE)
-        old_stack.ss_size = MINSIGSTKSZ;
-#endif
-    if (sigaltstack(&old_stack, NULL) MUN_RETHROW_OS)
-        return cone_drop(c), NULL;
-#endif
     if (cone_schedule(c) MUN_RETHROW)
         return cone_drop(c), NULL;
     c->flags++;
