@@ -4,15 +4,15 @@
 #include <unistd.h>
 #include <stdatomic.h>
 
-#if !defined(CONE_EPOLL) && __linux__
-#define CONE_EPOLL 1
+#if !defined(CONE_EVNOTIFIER) && __linux__
+#define CONE_EVNOTIFIER 1  // epoll
 #endif
 
 #if !((__linux__ || __APPLE__) && __x86_64__)
 _Static_assert(0, "stack switching is only supported on x86-64 UNIX");
 #endif
 
-#if CONE_EPOLL
+#if CONE_EVNOTIFIER == 1
 #include <sys/epoll.h>
 #else
 #include <sys/select.h>
@@ -23,14 +23,12 @@ int cone_unblock(int fd) {
     return flags == -1 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) MUN_RETHROW_OS;
 }
 
-struct cone_event_at
-{
+struct cone_event_at {
     mun_usec at;
     struct cone_closure f;
 };
 
-struct cone_event_schedule
-{
+struct cone_event_schedule {
     struct mun_vec(struct cone_event_at) cs;
 };
 
@@ -61,15 +59,13 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev) {
     return MUN_USEC_MAX;
 }
 
-struct cone_event_fd
-{
+struct cone_event_fd {
     int fd;
     struct cone_closure cbs[2];
     struct cone_event_fd *link;
 };
 
-struct cone_event_io
-{
+struct cone_event_io {
     int epoll;
     int selfpipe[2];
     cone_atom pinged;
@@ -112,19 +108,19 @@ static int cone_event_io_add(struct cone_event_io *set, int fd, int write, struc
         if ((*b = malloc(sizeof(struct cone_event_fd))) == NULL)
             return mun_error(memory, "-");
         **b = (struct cone_event_fd){.fd = fd};
-    #if CONE_EPOLL
-        struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|(write ? EPOLLOUT : EPOLLIN), {.ptr = *b}};
-        if (epoll_ctl(set->epoll, EPOLL_CTL_ADD, fd, &params) MUN_RETHROW_OS)
-            return free(*b), *b = NULL, -1;
-    #endif
+        #if CONE_EVNOTIFIER == 1
+            struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|(write ? EPOLLOUT : EPOLLIN), {.ptr = *b}};
+            if (epoll_ctl(set->epoll, EPOLL_CTL_ADD, fd, &params) MUN_RETHROW_OS)
+                return free(*b), *b = NULL, -1;
+        #endif
     } else {
         if ((*b)->cbs[write].code)
             return mun_error(assert, "two readers/writers on one file descriptor");
-    #if CONE_EPOLL
-        struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|EPOLLOUT|EPOLLIN, {.ptr = *b}};
-        if (epoll_ctl(set->epoll, EPOLL_CTL_MOD, fd, &params) MUN_RETHROW_OS)
-            return free(*b), *b = NULL, -1;
-    #endif
+        #if CONE_EVNOTIFIER == 1
+            struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|EPOLLOUT|EPOLLIN, {.ptr = *b}};
+            if (epoll_ctl(set->epoll, EPOLL_CTL_MOD, fd, &params) MUN_RETHROW_OS)
+                return free(*b), *b = NULL, -1;
+        #endif
     }
     (*b)->cbs[write] = f;
     return 0;
@@ -136,25 +132,25 @@ static void cone_event_io_del(struct cone_event_io *set, int fd, int write, stru
         return;
     e->cbs[write] = (struct cone_closure){};
     if (e->cbs[!write].code == NULL) {
-    #if CONE_EPOLL
-        epoll_ctl(set->epoll, EPOLL_CTL_DEL, fd, NULL);
-    #endif
+        #if CONE_EVNOTIFIER == 1
+            epoll_ctl(set->epoll, EPOLL_CTL_DEL, fd, NULL);
+        #endif
         *b = e->link;
         free(e);
     } else {
-    #if CONE_EPOLL
-        struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|(write ? EPOLLIN : EPOLLOUT), {.ptr = *b}};
-        epoll_ctl(set->epoll, EPOLL_CTL_MOD, fd, &params);
-    #endif
+        #if CONE_EVNOTIFIER == 1
+            struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|(write ? EPOLLIN : EPOLLOUT), {.ptr = *b}};
+            epoll_ctl(set->epoll, EPOLL_CTL_MOD, fd, &params);
+        #endif
     }
 }
 
 static int cone_event_io_init(struct cone_event_io *set) mun_throws(memory) {
     set->selfpipe[0] = set->selfpipe[1] = set->epoll = -1;
-#if CONE_EPOLL
-    if ((set->epoll = epoll_create1(0)) < 0 MUN_RETHROW)
-        return -1;
-#endif
+    #if CONE_EVNOTIFIER == 1
+        if ((set->epoll = epoll_create1(0)) < 0 MUN_RETHROW)
+            return -1;
+    #endif
     if (pipe(set->selfpipe) || cone_event_io_add(set, set->selfpipe[0], 0, cone_bind(&cone_event_io_on_ping, set)) MUN_RETHROW_OS)
         return cone_event_io_fini(set), -1;
     return 0;
@@ -165,46 +161,45 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
         return -1;
     if (timeout > 60000000ll)
         timeout = 60000000ll;
-#if CONE_EPOLL
-    struct epoll_event evs[32];
-    int got = epoll_wait(set->epoll, evs, 32, timeout / 1000ul);
-    if (got < 0)
-        return errno != EINTR MUN_RETHROW_OS;
-    for (int i = 0; i < got; i++) {
-        struct cone_event_fd *e = evs[i].data.ptr;
-        if (evs[i].events & (EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLHUP))
-            if (e->cbs[0].code && e->cbs[0].code(e->cbs[0].data) MUN_RETHROW)
-                return -1;
-        if (evs[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP))
-            if (e->cbs[1].code && e->cbs[1].code(e->cbs[1].data) MUN_RETHROW)
-                return -1;
-    }
-#else
-    fd_set fds[2] = {};
-    int max_fd = 0;
-    for (size_t i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++) {
-        for (struct cone_event_fd *e = set->fds[i]; e; e = e->link) {
-            if (max_fd <= e->fd)
-                max_fd = e->fd + 1;
-            for (int i = 0; i < 2; i++)
-                if (e->cbs[i].code)
-                    FD_SET(e->fd, &fds[i]);
-        }
-    }
-    struct timeval us = {timeout / 1000000ull, timeout % 1000000ull};
-    if (select(max_fd, &fds[0], &fds[1], NULL, &us) < 0)
-        return errno != EINTR MUN_RETHROW_OS;
-    for (size_t i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++)
-        for (struct cone_event_fd *e = set->fds[i]; e; e = e->link)
-            for (int i = 0; i < 2; i++)
-                if (FD_ISSET(e->fd, &fds[i]) && e->cbs[i].code && e->cbs[i].code(e->cbs[i].data) MUN_RETHROW)
+    #if CONE_EVNOFIFIER == 1
+        struct epoll_event evs[32];
+        int got = epoll_wait(set->epoll, evs, 32, timeout / 1000ul);
+        if (got < 0)
+            return errno != EINTR MUN_RETHROW_OS;
+        for (int i = 0; i < got; i++) {
+            struct cone_event_fd *e = evs[i].data.ptr;
+            if (evs[i].events & (EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLHUP))
+                if (e->cbs[0].code && e->cbs[0].code(e->cbs[0].data) MUN_RETHROW)
                     return -1;
-#endif
+            if (evs[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP))
+                if (e->cbs[1].code && e->cbs[1].code(e->cbs[1].data) MUN_RETHROW)
+                    return -1;
+        }
+    #else
+        fd_set fds[2] = {};
+        int max_fd = 0;
+        for (size_t i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++) {
+            for (struct cone_event_fd *e = set->fds[i]; e; e = e->link) {
+                if (max_fd <= e->fd)
+                    max_fd = e->fd + 1;
+                for (int i = 0; i < 2; i++)
+                    if (e->cbs[i].code)
+                        FD_SET(e->fd, &fds[i]);
+            }
+        }
+        struct timeval us = {timeout / 1000000ull, timeout % 1000000ull};
+        if (select(max_fd, &fds[0], &fds[1], NULL, &us) < 0)
+            return errno != EINTR MUN_RETHROW_OS;
+        for (size_t i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++)
+            for (struct cone_event_fd *e = set->fds[i]; e; e = e->link)
+                for (int i = 0; i < 2; i++)
+                    if (FD_ISSET(e->fd, &fds[i]) && e->cbs[i].code && e->cbs[i].code(e->cbs[i].data) MUN_RETHROW)
+                        return -1;
+    #endif
     return 0;
 }
 
-struct cone_loop
-{
+struct cone_loop {
     cone_atom active;
     struct cone_event_io io;
     struct cone_event_schedule at;
@@ -235,8 +230,7 @@ static void cone_loop_dec(struct cone_loop *loop) {
         cone_event_io_ping(&loop->io);
 }
 
-enum
-{
+enum {
     // lowest bits are either 0x2 (running and not detached) or 0x1 (finished xor detached)
     CONE_FLAG_SCHEDULED = 0x04,
     CONE_FLAG_RUNNING   = 0x08,
@@ -246,8 +240,7 @@ enum
     CONE_FLAG_JOINED    = 0x80,
 };
 
-struct cone
-{
+struct cone {
     cone_atom flags;
     struct cone_loop *loop;
     struct cone_closure body;
