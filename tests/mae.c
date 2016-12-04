@@ -50,10 +50,10 @@ static int test_mae_run(int (*af)(struct mae *), int (*bf)(struct mae *)) {
     struct cone *a = cone(af, &an);
     struct cone *b = cone(bf, &bn);
     if (cone_join(a, 0) MUN_RETHROW)
-        return cone_cancel(b), cone_join(b, CONE_NORETHROW), mae_fini(&an), mae_fini(&bn), -1;
+        return cone_cancel(b), cone_join(b, CONE_NORETHROW), -1;
     if (cone_join(b, 0) MUN_RETHROW)
-        return mae_fini(&an), mae_fini(&bn), -1;
-    return mae_fini(&an), mae_fini(&bn), 0;
+        return -1;
+    return 0;
 }
 
 static int test_mae_client_impl(struct mae *n) {
