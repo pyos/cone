@@ -74,6 +74,9 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 // sets `errno` and does not call `mun_error_at`.
 #define MUN_RETHROW_OS ? mun_error_at(-errno, "errno", MUN_CURRENT_FRAME, "OS error") : 0
 
+// Abort if the expression is false.
+#define mun_assert(e) do if (!(e) MUN_RETHROW) mun_error_show("panic", NULL), abort(); while (0)
+
 // Type-unsafe, but still pretty generic, dynamic vector. Zero-initialized, or with one
 // of the `mun_vec_init_*` macros; finalized with `mun_vec_fini`.
 //

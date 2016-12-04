@@ -89,13 +89,12 @@ static void cone_event_io_fini(struct cone_event_io *set) {
 }
 
 static void cone_event_io_ping(struct cone_event_io *set) {
-    unsigned expect = 0;
-    if (atomic_compare_exchange_strong(&set->pinged, &expect, 1))
+    if (atomic_compare_exchange_strong(&set->pinged, &(unsigned){0}, 1))
         write(set->selfpipe[1], "", 1);
 }
 
 static int cone_event_io_on_ping(struct cone_event_io *set) {
-    ssize_t rd = read(set->selfpipe[0], &rd, sizeof(rd));  // never yields
+    read(set->selfpipe[0], &(char[32]){}, 32);  // never yields
     atomic_store_explicit(&set->pinged, 0, memory_order_release);
     return cone_wake(&set->ping, (size_t)-1) MUN_RETHROW;
 }
@@ -159,12 +158,11 @@ static void cone_event_io_del(struct cone_event_io *set, int fd, int write, stru
         return;
     e->cbs[write] = (struct cone_closure){};
     if (e->cbs[!write].code == NULL) {
-        if (cone_event_io_del_native(set, fd, 1, write, *b))
-            mun_error_show("io_del", NULL), abort();
+        mun_assert(!cone_event_io_del_native(set, fd, 1, write, e));
         *b = e->link;
         free(e);
-    } else if (cone_event_io_del_native(set, fd, 0, write, *b))
-        mun_error_show("io_del", NULL), abort();
+    } else
+        mun_assert(!cone_event_io_del_native(set, fd, 0, write, e));
 }
 
 static int cone_event_io_init(struct cone_event_io *set) mun_throws(memory) {
@@ -407,9 +405,8 @@ static void cone_body(struct cone *c) {
         c->flags |= CONE_FLAG_FAILED;
     }
     c->flags |= CONE_FLAG_FINISHED;
-    if (cone_event_schedule_add(&c->loop->at, mun_usec_monotonic(), cone_bind(&cone_drop, c))
-     || cone_wake(&c->done, (size_t)-1) MUN_RETHROW)
-        mun_error_show("cone fatal", NULL), abort();
+    mun_assert(!cone_event_schedule_add(&c->loop->at, mun_usec_monotonic(), cone_bind(&cone_drop, c)));
+    mun_assert(!cone_wake(&c->done, (size_t)-1));
     cone_loop_dec(c->loop);
     cone_switch(c);
     abort();
@@ -438,17 +435,14 @@ struct cone *cone_spawn(size_t size, struct cone_closure body) {
 }
 
 static int cone_main_run(struct cone_loop *loop) {
-    if (cone_loop_run(loop))
-        mun_error_show("main loop", NULL), exit(124);
+    mun_assert(!cone_loop_run(loop));
     return 0;
 }
 
 static void __attribute__((constructor)) cone_main_init(void) {
-    if (cone_loop_init(&cone_main_loop) MUN_RETHROW)
-        mun_error_show("cone init", NULL), exit(124);
+    mun_assert(!cone_loop_init(&cone_main_loop));
     struct cone *c = cone(&cone_main_run, &cone_main_loop);
-    if (c == NULL MUN_RETHROW)
-        mun_error_show("cone init", NULL), exit(124);
+    mun_assert(c != NULL);
     cone_switch(c);
 }
 
@@ -459,8 +453,7 @@ static void __attribute__((destructor)) cone_main_fini(void) {
         cone_loop_dec(loop);
         cone_switch(c);
         cone_drop(c);
-        if (cone_event_schedule_emit(&loop->at) < 0)
-            mun_error_show("cone fini", NULL), exit(124);
+        mun_assert(cone_event_schedule_emit(&loop->at) >= 0);
         cone_loop_fini(loop);
     }
 }
