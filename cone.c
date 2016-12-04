@@ -6,6 +6,8 @@
 
 #if !defined(CONE_EVNOTIFIER) && __linux__
 #define CONE_EVNOTIFIER 1  // epoll
+#elif !defined(CONE_EVNOTIFIER) && __APPLE__
+#define CONE_EVNOTIFIER 2  // kqueue
 #endif
 
 #if !((__linux__ || __APPLE__) && __x86_64__)
@@ -14,6 +16,8 @@ _Static_assert(0, "stack switching is only supported on x86-64 UNIX");
 
 #if CONE_EVNOTIFIER == 1
 #include <sys/epoll.h>
+#elif CONE_EVNOTIFIER == 2
+#include <sys/event.h>
 #else
 #include <sys/select.h>
 #endif
@@ -66,7 +70,7 @@ struct cone_event_fd {
 };
 
 struct cone_event_io {
-    int epoll;
+    int poller;
     int selfpipe[2];
     cone_atom pinged;
     struct cone_event ping;
@@ -78,8 +82,8 @@ static void cone_event_io_fini(struct cone_event_io *set) {
     for (size_t i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++)
         for (struct cone_event_fd *c; (c = set->fds[i]) != NULL; free(c))
             set->fds[i] = c->link;
-    if (set->epoll >= 0)
-        close(set->epoll);
+    if (set->poller >= 0)
+        close(set->poller);
     if (set->selfpipe[0] >= 0)
         close(set->selfpipe[0]), close(set->selfpipe[1]);
 }
@@ -102,25 +106,48 @@ static struct cone_event_fd **cone_event_io_bucket(struct cone_event_io *set, in
     return b;
 }
 
+#if CONE_EVNOTIFIER
+static int cone_event_io_add_native(struct cone_event_io *set, int fd, int first, int write, void *data) {
+    #if CONE_EVNOTIFIER == 1
+        int flags = !first ? EPOLLIN|EPOLLOUT : write ? EPOLLOUT : EPOLLIN;
+        struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|flags, {.ptr = data}};
+        return epoll_ctl((set)->poller, EPOLL_CTL_ADD, fd, &params) MUN_RETHROW_OS;
+    #elif CONE_EVNOTIFIER == 2
+        (void)first;
+        struct kevent ev = {fd, write ? EVFILT_WRITE : EVFILT_READ, EV_ADD, 0, 0, data};
+        return kevent(set->poller, &ev, 1, NULL, 0, NULL) MUN_RETHROW_OS;
+    #endif
+}
+
+static int cone_event_io_del_native(struct cone_event_io *set, int fd, int last, int write, void *data) {
+    #if CONE_EVNOTIFIER == 1
+        if (!last)
+            return cone_event_io_add_native(set, fd, 1, !write, data);
+        return epoll_ctl(set->poller, EPOLL_CTL_DEL, fd, NULL) MUN_RETHROW_OS;
+    #elif CONE_EVNOTIFIER == 2
+        (void)last;
+        struct kevent ev = {fd, write ? EVFILT_WRITE : EVFILT_READ, EV_DELETE, 0, 0, data};
+        return kevent(set->poller, &ev, 1, NULL, 0, NULL) MUN_RETHROW_OS;
+    #endif
+}
+#else
+#define cone_event_io_add_native(...) 0
+#define cone_event_io_del_native(...) 0
+#endif
+
 static int cone_event_io_add(struct cone_event_io *set, int fd, int write, struct cone_closure f) mun_throws(memory, assert) {
     struct cone_event_fd **b = cone_event_io_bucket(set, fd);
     if (*b == NULL) {
         if ((*b = malloc(sizeof(struct cone_event_fd))) == NULL)
             return mun_error(memory, "-");
         **b = (struct cone_event_fd){.fd = fd};
-        #if CONE_EVNOTIFIER == 1
-            struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|(write ? EPOLLOUT : EPOLLIN), {.ptr = *b}};
-            if (epoll_ctl(set->epoll, EPOLL_CTL_ADD, fd, &params) MUN_RETHROW_OS)
-                return free(*b), *b = NULL, -1;
-        #endif
+        if (cone_event_io_add_native(set, fd, 1, write, *b))
+            return free(*b), *b = NULL, -1;
     } else {
         if ((*b)->cbs[write].code)
             return mun_error(assert, "two readers/writers on one file descriptor");
-        #if CONE_EVNOTIFIER == 1
-            struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|EPOLLOUT|EPOLLIN, {.ptr = *b}};
-            if (epoll_ctl(set->epoll, EPOLL_CTL_MOD, fd, &params) MUN_RETHROW_OS)
-                return free(*b), *b = NULL, -1;
-        #endif
+        if (cone_event_io_add_native(set, fd, 0, write, *b))
+            return -1;
     }
     (*b)->cbs[write] = f;
     return 0;
@@ -132,23 +159,21 @@ static void cone_event_io_del(struct cone_event_io *set, int fd, int write, stru
         return;
     e->cbs[write] = (struct cone_closure){};
     if (e->cbs[!write].code == NULL) {
-        #if CONE_EVNOTIFIER == 1
-            epoll_ctl(set->epoll, EPOLL_CTL_DEL, fd, NULL);
-        #endif
+        if (cone_event_io_del_native(set, fd, 1, write, *b))
+            mun_error_show("io_del", NULL), abort();
         *b = e->link;
         free(e);
-    } else {
-        #if CONE_EVNOTIFIER == 1
-            struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|(write ? EPOLLIN : EPOLLOUT), {.ptr = *b}};
-            epoll_ctl(set->epoll, EPOLL_CTL_MOD, fd, &params);
-        #endif
-    }
+    } else if (cone_event_io_del_native(set, fd, 0, write, *b))
+        mun_error_show("io_del", NULL), abort();
 }
 
 static int cone_event_io_init(struct cone_event_io *set) mun_throws(memory) {
-    set->selfpipe[0] = set->selfpipe[1] = set->epoll = -1;
+    set->selfpipe[0] = set->selfpipe[1] = set->poller = -1;
     #if CONE_EVNOTIFIER == 1
-        if ((set->epoll = epoll_create1(0)) < 0 MUN_RETHROW)
+        if ((set->poller = epoll_create1(0)) < 0 MUN_RETHROW_OS)
+            return -1;
+    #elif CONE_EVNOTIFIER == 2
+        if ((set->poller = kqueue()) < 0 MUN_RETHROW_OS)
             return -1;
     #endif
     if (pipe(set->selfpipe) || cone_event_io_add(set, set->selfpipe[0], 0, cone_bind(&cone_event_io_on_ping, set)) MUN_RETHROW_OS)
@@ -161,9 +186,9 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
         return -1;
     if (timeout > 60000000ll)
         timeout = 60000000ll;
-    #if CONE_EVNOFIFIER == 1
+    #if CONE_EVNOTIFIER == 1
         struct epoll_event evs[32];
-        int got = epoll_wait(set->epoll, evs, 32, timeout / 1000ul);
+        int got = epoll_wait(set->poller, evs, 32, timeout / 1000ul);
         if (got < 0)
             return errno != EINTR MUN_RETHROW_OS;
         for (int i = 0; i < got; i++) {
@@ -172,6 +197,21 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
                 if (e->cbs[0].code && e->cbs[0].code(e->cbs[0].data) MUN_RETHROW)
                     return -1;
             if (evs[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP))
+                if (e->cbs[1].code && e->cbs[1].code(e->cbs[1].data) MUN_RETHROW)
+                    return -1;
+        }
+    #elif CONE_EVNOTIFIER == 2
+        struct kevent evs[32];
+        struct timespec ns = {timeout / 1000000ull, timeout % 1000000ull * 1000};
+        int got = kevent(set->poller, NULL, 0, evs, 32, &ns);
+        if (got < 0)
+            return errno != EINTR MUN_RETHROW_OS;
+        for (int i = 0; i < got; i++) {
+            struct cone_event_fd *e = evs[i].udata;
+            if (evs[i].filter == EVFILT_READ)
+                if (e->cbs[0].code && e->cbs[0].code(e->cbs[0].data) MUN_RETHROW)
+                    return -1;
+            if (evs[i].filter == EVFILT_WRITE)
                 if (e->cbs[1].code && e->cbs[1].code(e->cbs[1].data) MUN_RETHROW)
                     return -1;
         }
