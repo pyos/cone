@@ -10,9 +10,9 @@ static int test_concurrent_sleep_for(char *msg, mun_usec us_a, mun_usec us_b, in
     if (a == NULL || b == NULL MUN_RETHROW)
         return cone_drop(a), cone_drop(b), -1;
     mun_usec start = mun_usec_monotonic();
-    if (cone_join(a) || (cancel_b && cone_cancel(b)) MUN_RETHROW)
+    if (cone_join(a, 0) || (cancel_b && cone_cancel(b)) MUN_RETHROW)
         return cone_drop(b), -1;
-    if (cone_join(b) MUN_RETHROW)
+    if (cone_join(b, 0) MUN_RETHROW)
         if (!cancel_b || mun_last_error()->code != mun_errno_cancelled)
             return -1;
     mun_usec end = mun_usec_monotonic();
@@ -48,7 +48,7 @@ static int test_spawn(char *msg) {
     mun_usec a = mun_usec_monotonic();
     struct cone *c;
     for (unsigned i = 0; i < N; i++)
-        if ((c = cone(&test_nop, NULL)) == NULL || cone_join(c) MUN_RETHROW)
+        if ((c = cone(&test_nop, NULL)) == NULL || cone_join(c, 0) MUN_RETHROW)
             return -1;
     mun_usec b = mun_usec_monotonic();
     sprintf(msg, "%f us/cone", (double)(b - a) / N);
@@ -87,7 +87,7 @@ static int test_rdwr() {
     struct args aw = { 100000, fds[1], "Hello, World! Hello, World! Hello, World! Hello, World!", 55 };
     struct cone *r = cone(reader, &ar);
     struct cone *w = cone(writer, &aw);
-    if (cone_join(r) || cone_join(w) MUN_RETHROW)
+    if (cone_join(r, 0) || cone_join(w, 0) MUN_RETHROW)
         return close(fds[0]), close(fds[1]), -1;
     return close(fds[0]), close(fds[1]), 0;
 }
