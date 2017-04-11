@@ -4,21 +4,6 @@
 #include <stdarg.h>
 #include <unistd.h>
 #include <sys/time.h>
-#if __APPLE__ && __MACH__
-#include <mach/clock.h>
-#include <mach/mach.h>
-
-// Doesn't even have `clock_gettime`. "Certified UNIX" my ass.
-static clock_serv_t mun_mach_clock;
-
-static void __attribute__((constructor)) mun_mach_clock_init(void) {
-    host_get_clock_service(mach_host_self(), SYSTEM_CLOCK, &mun_mach_clock);
-}
-
-static void __attribute__((destructor)) mun_mach_clock_fini(void) {
-    mach_port_deallocate(mach_task_self(), mun_mach_clock);
-}
-#endif
 
 mun_usec mun_usec_now(void) {
     struct timeval val;
@@ -27,13 +12,8 @@ mun_usec mun_usec_now(void) {
 }
 
 mun_usec mun_usec_monotonic(void) {
-#if __APPLE__ && __MACH__
-    mach_timespec_t val;
-    clock_get_time(mun_mach_clock, &val);
-#else
     struct timespec val;
     clock_gettime(CLOCK_MONOTONIC, &val);
-#endif
     return (mun_usec)val.tv_sec * 1000000ull + val.tv_nsec / 1000;
 }
 
