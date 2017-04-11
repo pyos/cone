@@ -5,7 +5,7 @@
 
 #include "mun.h"
 
-typedef volatile _Atomic unsigned cone_atom;
+typedef volatile _Atomic(unsigned) cone_atom;
 
 struct cone_closure
 {
@@ -15,12 +15,18 @@ struct cone_closure
 
 #define cone_bind(f, data) ((struct cone_closure){(int(*)(void*))f, data})
 
+// The coroutine in which the code is currently executing.
+extern
+#if __cplusplus
+    thread_local
+#else
+    _Thread_local
+#endif
+    struct cone * volatile cone;
+
 // A manually triggered event. Zero-initialized; finalized with `mun_vec_fini`;
 // must not be destroyed if there are callbacks attached.
 struct cone_event mun_vec(struct cone *);
-
-// The coroutine in which the code is currently executing.
-extern _Thread_local struct cone * volatile cone;
 
 // Switch a file descriptor into non-blocking mode. See fcntl(2) for error codes.
 int cone_unblock(int fd);
