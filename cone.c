@@ -317,7 +317,7 @@ static int cone_run(struct cone *c) mun_nothrow {
 }
 
 static int cone_schedule(struct cone *c) mun_throws(memory) {
-    if (!(atomic_fetch_or(&c->flags, CONE_FLAG_SCHEDULED) & CONE_FLAG_SCHEDULED))
+    if (!(atomic_fetch_or(&c->flags, CONE_FLAG_SCHEDULED) & (CONE_FLAG_SCHEDULED | CONE_FLAG_FINISHED)))
         if (cone_event_schedule_add(&c->loop->at, mun_usec_monotonic(), cone_bind(&cone_run, c)) MUN_RETHROW)
             return -1;
     return 0;
