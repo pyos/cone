@@ -412,15 +412,13 @@ static void cone_body(struct cone *c) {
     abort();
 }
 
-static struct cone_loop cone_main_loop = {};
-
-struct cone *cone_spawn(size_t size, struct cone_closure body) {
+struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct cone_closure body) {
     size &= ~(size_t)(_Alignof(max_align_t) - 1);
     struct cone *c = (struct cone *)malloc(sizeof(struct cone) + size);
     if (c == NULL)
         return mun_error(memory, "no space for a stack"), NULL;
     c->flags = 1;
-    c->loop = cone ? cone->loop : &cone_main_loop;
+    c->loop = loop;
     c->body = body;
     c->done = (struct cone_event){};
     c->rsp = (void **)&c->stack[size] - 4;
@@ -432,6 +430,22 @@ struct cone *cone_spawn(size_t size, struct cone_closure body) {
         return cone_drop(c), NULL;
     c->flags++;
     return cone_loop_inc(c->loop), c;
+}
+
+static struct cone_loop cone_main_loop = {};
+
+struct cone *cone_spawn(size_t size, struct cone_closure body) {
+    return cone_spawn_on(cone ? cone->loop : &cone_main_loop, size, body);
+}
+
+int cone_loop(size_t size, struct cone_closure body) {
+    struct cone_loop loop = {};
+    if (cone_loop_init(&loop) MUN_RETHROW)
+        return -1;
+    struct cone *c = cone_spawn_on(&loop, size, body);
+    if (c == NULL || cone_loop_run(&loop) MUN_RETHROW)
+        return cone_drop(c), cone_loop_fini(&loop), -1;
+    return cone_loop_fini(&loop), cone_join(c, 0) MUN_RETHROW;
 }
 
 static int cone_main_run(struct cone_loop *loop) {

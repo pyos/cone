@@ -81,3 +81,8 @@ int cone_wake(struct cone_event *, size_t) mun_throws(memory);
 // running, it will only receive a cancellation signal upon reaching `cone_wait`,
 // `cone_iowait`, `cone_sleep`, or `cone_yield`; and even then, the error may be ignored.
 int cone_cancel(struct cone *) mun_throws(memory);
+
+// Create a coroutine on a new event loop, then block until all coroutines on it complete.
+// Note that `main()` is already running within an event loop; this is only useful
+// in newly created threads.
+int cone_loop(size_t stack, struct cone_closure) mun_throws(memory);
