@@ -17,7 +17,7 @@ struct cone_closure
 
 // The coroutine in which the code is currently executing.
 extern
-#if __cplusplus
+#if __cplusplus && !__clang__
     thread_local
 #else
     _Thread_local
