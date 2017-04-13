@@ -71,7 +71,7 @@ int cone_yield(void) mun_throws(cancelled, memory);
 // `cone_wake` is called with the same event. Otherwise, return 1. This compare-and-sleep
 // operation is atomic, but only within a single event loop; if multiple coroutines
 // from different loops touch the same `cone_atom`, behavior is undefined.
-int cone_wait(struct cone_event *, cone_atom *, unsigned) mun_throws(cancelled, memory);
+int cone_wait(struct cone_event *, const cone_atom *, unsigned) mun_throws(cancelled, memory);
 
 // Wake up at most N coroutines paused with `cone_wait`.
 int cone_wake(struct cone_event *, size_t) mun_throws(memory);

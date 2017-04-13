@@ -345,7 +345,7 @@ static void cone_unschedule(struct cone_event *ev, struct cone **c) {
         mun_vec_erase(ev, i, 1);
 }
 
-int cone_wait(struct cone_event *ev, cone_atom *uptr, unsigned u) {
+int cone_wait(struct cone_event *ev, const cone_atom *uptr, unsigned u) {
     // TODO actual atomicity of this function w.r.t. modifications of `*uptr`.
     if (atomic_load(uptr) != u)
         return 1;
