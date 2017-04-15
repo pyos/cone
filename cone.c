@@ -385,6 +385,8 @@ int cone_drop(struct cone *c) {
 }
 
 int cone_cowait(struct cone *c, int flags) {
+    if (c == cone)
+        return mun_error(deadlock, "coroutine waiting on itself");
     struct mun_error saved = *mun_last_error();
     for (unsigned f; !((f = c->flags) & CONE_FLAG_FINISHED); )
         if (cone_wait(&c->done, &c->flags, f) < 0 MUN_RETHROW)
