@@ -44,8 +44,8 @@ int mun_error_up(struct mun_stackframe frame) {
 static const char
     *mun_error_fmt_head[2] = {" # mun: %s error %d (%s): %s\n",
                               "\033[1;31m # mun:\033[0m %s error \033[1;31m%d\033[0m \033[3m(%s)\033[0m: %s\n"},
-    *mun_error_fmt_line[2] = {"   %3u. %s() (%s:%u)\n",
-                              "\033[1;33m   %3u.\033[0m %s() \033[3m(%s:%u)\033[0m\n"};
+    *mun_error_fmt_line[2] = {"   %3u. %s:%u (%s)\n",
+                              "\033[1;33m   %3u.\033[0m %s:%u \033[3m(%s)\033[0m\n"};
 
 void mun_error_show(const char *prefix, const struct mun_error *err) {
     const char *term = getenv("TERM");
@@ -54,5 +54,5 @@ void mun_error_show(const char *prefix, const struct mun_error *err) {
         err = &e;
     fprintf(stderr, mun_error_fmt_head[ansi], prefix, err->code, err->name, err->text);
     for (unsigned i = 0; i < err->stacklen; i++)
-        fprintf(stderr, mun_error_fmt_line[ansi], i + 1, err->stack[i].func, err->stack[i].file, err->stack[i].line);
+        fprintf(stderr, mun_error_fmt_line[ansi], i + 1, err->stack[i].file, err->stack[i].line, err->stack[i].func);
 }
