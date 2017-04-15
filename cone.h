@@ -43,7 +43,7 @@ int cone_drop(struct cone *);
 
 enum CONE_COWAIT_FLAGS
 {
-    CONE_NORETHROW,
+    CONE_NORETHROW = 1,
 };
 
 // Sleep until a coroutine finishes. If it happens to throw an error in the process,
