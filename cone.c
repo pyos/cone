@@ -392,7 +392,7 @@ int cone_cowait(struct cone *c, int flags) {
         if (cone_wait(&c->done, &c->flags, f) < 0 MUN_RETHROW)
             return -1;
     if (!(flags & CONE_NORETHROW) && atomic_fetch_or(&c->flags, CONE_FLAG_JOINED) & CONE_FLAG_FAILED)
-        return *mun_last_error() = c->error, -1;
+        return *mun_last_error() = c->error, mun_error_up(MUN_CURRENT_FRAME);
     return *mun_last_error() = saved, 0;
 }
 
