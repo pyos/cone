@@ -347,7 +347,8 @@ static void cone_unschedule(struct cone_event *ev, struct cone **c) {
 
 int cone_wait(struct cone_event *ev, const cone_atom *uptr, unsigned u) {
     // TODO actual atomicity of this function w.r.t. modifications of `*uptr`.
-    if (atomic_load(uptr) != u)
+    // NOTE clang complains on a const atomic load
+    if (atomic_load((cone_atom*)uptr) != u)
         return 1;
     cone_pause(0, mun_vec_append, cone_unschedule, ev, &(struct cone *){cone});
 }
