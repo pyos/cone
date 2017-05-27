@@ -8,9 +8,12 @@ tests/%: obj/tests/%
 
 CCMD = $(CC) -std=c11 -I. -Wall -Wextra -Wpointer-arith -fPIC $(CFLAGS) -D_POSIX_C_SOURCE=200809L
 
-obj/tests/%: tests/%.c tests/base.c obj/mun.o obj/cone.o obj/cold.o obj/siy.o obj/mae.o
+obj/tests/%: tests/%.c tests/base.c obj/libcone.a
 	@mkdir -p $(dir $@)
-	$(CCMD) -DSRC=$< $(filter-out $<,$^) -o $@ -ldl
+	$(CCMD) -DSRC=$< tests/base.c -o $@ -Lobj -lcone -ldl
+
+obj/libcone.a: obj/cone.o obj/cold.o obj/mun.o obj/siy.o obj/mae.o
+	ar rcs $@ $^
 
 obj/%.o: %.c cone.h mun.h siy.h mae.h
 	@mkdir -p $(dir $@)
