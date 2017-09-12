@@ -1,6 +1,10 @@
 #pragma once
 #include "mun.h"
 
+#ifndef SIY_MAX_SIGNS
+#define SIY_MAX_SIGNS 32
+#endif
+
 struct siy mun_vec(uint8_t);
 
 enum
@@ -9,24 +13,42 @@ enum
     mun_errno_siy_sign_syntax,
 };
 
-struct siy_signinfo
+struct siy_sign
 {
     unsigned size;
-    unsigned align;
+    unsigned short align;
+    unsigned char sign;
+    unsigned char consumes;
 };
 
-// Serialize a naturally-aligned structure. The signature is a sequence of optionally
-// space-separated signs that describe its fields:
+// Parse a signature, which is a sequence of at most `n-1` (optionally space-separated)
+// signs that describe a naturally-aligned structure's layout:
 //    * `uN`  - an N-byte unsigned integer (uintB_t, where B = 8N);
 //    * `iN`  - an N-byte signed integer (intB_t);
 //    * `f`   - a double-precision floating point number (double);
+//    * `*X`  - a pointer to a naturally-aligned structure described by sign `X` (T*);
 //    * `vX`  - a vector of objects described by sign `X` (struct mun_vec(T));
 //    * `(S)` - a naturally-aligned structure with fields described by signature S.
-int siy_encode(struct siy *out, const char *sign, const void *in) mun_throws(memory, siy_sign_syntax);
+// The zeroth sign is reserved for the implicit structure wrapping the whole signature.
+int siy_signature(const char *, struct siy_sign *, size_t n) mun_throws(siy_sign_syntax);
 
-// Deserialize data into a naturally-aligned structure. See `siy_encode` for a description
-// of the signature. Deserialized data is erased from the input vector.
-int siy_decode(struct siy *in, const char *sign, void *out) mun_throws(memory, siy_truncated, siy_sign_syntax);
+// Serialize a naturally-aligned structure that conforms to a signature.
+int siy_encode_s(struct siy *out, const struct siy_sign *, const void *in) mun_throws(memory);
 
-// Return the size and alignment of a struct type that has a given signature.
-struct siy_signinfo siy_signinfo(const char *) mun_throws(siy_sign_syntax);
+// Deserialize data into a naturally-aligned structure. Deserialied data is erased
+// from the input vector. If the signature includes `*X`, the field must already point
+// to valid storage for type described by `X`. The field corresponding to `vX` may be
+// pre-initialized with a static vector; otherwise, a new dynamic vector will be created.
+int siy_decode_s(struct siy *in, const struct siy_sign *, void *out) mun_throws(memory, siy_truncated);
+
+// Parse a signature and serialize a structure that conforms to it.
+static inline int siy_encode(struct siy *out, const char *sign, const void *in) mun_throws(memory, siy_sign_syntax) {
+    struct siy_sign s[SIY_MAX_SIGNS];
+    return siy_signature(sign, s, SIY_MAX_SIGNS) || siy_encode_s(out, s, in) MUN_RETHROW;
+}
+
+// Parse a signature and deserialize a structure that conforms to it.
+static inline int siy_decode(struct siy *in, const char *sign, void *out) mun_throws(memory, siy_truncated, siy_sign_syntax) {
+    struct siy_sign s[SIY_MAX_SIGNS];
+    return siy_signature(sign, s, SIY_MAX_SIGNS) || siy_decode_s(in, s, out) MUN_RETHROW;
+}

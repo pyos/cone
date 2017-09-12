@@ -99,9 +99,9 @@ static int deck_call_all(struct deck *lk, int is_release, struct deck_request rq
     }
     while (i--)
         if (!fail)
-            fail = cone_join(tasks[i]) MUN_RETHROW;
+            fail = cone_join(tasks[i], 0) MUN_RETHROW;
         else if (tasks[i] != NULL)
-            cone_cancel(tasks[i]), cone_decref(tasks[i]);
+            cone_cancel(tasks[i]), cone_drop(tasks[i]);
     return fail;
 }
 

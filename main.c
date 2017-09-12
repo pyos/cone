@@ -204,7 +204,7 @@ failall:
     for (int i = known + 1; i--;) {
         if (children[i]) {
             cone_cancel(children[i]);
-            if (cone_join(children[i]) && mun_last_error()->code != mun_errno_cancelled)
+            if (cone_join(children[i], 0) && mun_last_error()->code != mun_errno_cancelled)
                 mun_error_show("main caught", NULL), ret = 1;
         }
     }

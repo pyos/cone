@@ -19,6 +19,7 @@ enum
     mun_errno_assert          = EINVAL,
     mun_errno_memory          = ENOMEM,
     mun_errno_not_implemented = ENOSYS,
+    mun_errno_deadlock        = EDEADLK,
     // Define your own `mun_errno_X` values as `mun_errno_custom + N` to make `mun_error(X)` valid.
     mun_errno_custom          = 100000,
 };
@@ -74,6 +75,9 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 // sets `errno` and does not call `mun_error_at`.
 #define MUN_RETHROW_OS ? mun_error_at(-errno, "errno", MUN_CURRENT_FRAME, "OS error") : 0
 
+// Abort if the expression is false.
+#define mun_assert(e) do if (!(e) MUN_RETHROW) mun_error_show("panic", NULL), abort(); while (0)
+
 // Type-unsafe, but still pretty generic, dynamic vector. Zero-initialized, or with one
 // of the `mun_vec_init_*` macros; finalized with `mun_vec_fini`.
 //
@@ -98,7 +102,7 @@ struct mun_vec mun_vec(void);
 // Macros accept pointers to strongly typed vectors; functions with names ending with `_s`
 // accept this pair of arguments instead.
 #define mun_vec_strided(v) sizeof(mun_vec_type(v)), (struct mun_vec*)(v)
-#define mun_vec_data_s(stride, v) ((char (*)[stride])(v)->data)
+#define mun_vec_data_s(stride, v) ((char (*)[(stride)])((const struct mun_vec*){(v)})->data)
 
 // Initializer for a vector that uses on-stack storage for `n` elements of type `T`.
 // The resulting vector is empty, but can be appended to up to `n` times.

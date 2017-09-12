@@ -4,9 +4,39 @@
 #define CHECK_FIELD(src, dst, f, fmt) \
     do if (src.f != dst.f) return mun_error(assert, #f ": expected " fmt ", got " fmt, src.f, dst.f); while (0)
 
-static void test_dump(struct siy *m, char *msg) {
+static char *test_dump(const struct siy *m, char *msg) {
     for (unsigned i = 0; i < m->size; i++)
         msg += sprintf(msg, "%02X ", m->data[i]);
+    return msg;
+}
+
+static char *test_dump_sign(const struct siy_sign *s, char *msg) {
+    if (s->consumes) {
+        for (size_t i = 0; i < s->consumes; i += s[i + 1].consumes + 1) {
+			msg += sprintf(msg, i ? ", " : "{");
+            msg = test_dump_sign(&s[i + 1], msg);
+        }
+        *msg++ = '}';
+		if (s->sign != '(')
+			*msg++ = s->sign;
+    } else
+		msg += sprintf(msg, "'%c'", s->sign);
+    msg += sprintf(msg, ":%u@%u", s->size, s->align);
+    *msg = 0;
+    return msg;
+}
+
+static int test_siy_signature(char *msg) {
+    struct T { uint32_t x; struct { uint32_t y; uint16_t z; }; void *w; };
+    struct siy_sign si[8];
+    if (siy_signature("u4 (u4 i2) *vf", si, sizeof(si) / sizeof(si[0])))
+        return -1;
+    test_dump_sign(si, msg);
+    if (si[0].size != sizeof(struct T))
+        return mun_error(assert, "invalid size %u; expected %zu", si[0].size, sizeof(struct T));
+    if (si[0].align != _Alignof(struct T))
+        return mun_error(assert, "invalid alignment %u; expected %zu", si[0].align, _Alignof(struct T));
+    return 0;
 }
 
 static int test_siy_primitive(char *msg) {
@@ -27,31 +57,40 @@ static int test_siy_primitive(char *msg) {
 }
 
 static int test_siy_struct(char *msg) {
+    struct V {
+        uint16_t e;
+        uint16_t f;
+    };
     struct T
     {
         uint8_t  a;
-        uint16_t b;
-        uint64_t c;
-        uint8_t  d;
         struct {
-            uint16_t e;
-            uint16_t f;
+            uint16_t b;
+            uint64_t c;
         };
+        uint8_t  d;
+        struct V *vp;
+        struct V v;
     };
-    struct T x = {1, 2, 3, 4, {5, 6}};
-    struct T y = {};
+    struct V vx = {7, 8}, vy = {};
+    struct T x = {128, {2123, 323452345}, 4, &vx, {51726, 6}}, y = {.vp = &vy};
     struct siy out = mun_vec_init_static(uint8_t, 64);
-    if (siy_encode(&out, "(u1 u2 u8 u1 (u2 u2))", &x) MUN_RETHROW)
+    if (siy_encode(&out, "(u1 (u2 u8) u1 *(u2 u2) (u2 u2))", &x) MUN_RETHROW)
         return -1;
-    test_dump(&out, msg);
-    if (siy_decode(&out, "(u1 u2 u8 u1 (u2 u2))", &y) MUN_RETHROW)
+    if (msg)
+        test_dump(&out, msg);
+    if (siy_decode(&out, "(u1 (u2 u8) u1 *(u2 u2) (u2 u2))", &y) MUN_RETHROW)
         return -1;
-    CHECK_FIELD(x, y, a, "%u");
-    CHECK_FIELD(x, y, b, "%u");
-    CHECK_FIELD(x, y, c, "%" PRIu64);
-    CHECK_FIELD(x, y, d, "%u");
-    CHECK_FIELD(x, y, e, "%u");
-    CHECK_FIELD(x, y, f, "%u");
+    if (msg) {
+        CHECK_FIELD(x, y, a, "%u");
+        CHECK_FIELD(x, y, b, "%u");
+        CHECK_FIELD(x, y, c, "%" PRIu64);
+        CHECK_FIELD(x, y, d, "%u");
+        CHECK_FIELD(x, y, v.e, "%u");
+        CHECK_FIELD(x, y, v.f, "%u");
+        CHECK_FIELD(x, y, vp->e, "%u");
+        CHECK_FIELD(x, y, vp->f, "%u");
+    }
     return 0;
 }
 
@@ -100,28 +139,33 @@ static int test_siy_vec_vec(char *msg) {
     struct siy out = mun_vec_init_static(uint8_t, 32);
     if (siy_encode(&out, "v(vi1)", &x) MUN_RETHROW)
         return -1;
-    test_dump(&out, msg);
+    if (msg)
+        test_dump(&out, msg);
     if (siy_decode(&out, "v(vi1)", &y) MUN_RETHROW)
         return -1;
-    CHECK_FIELD(x, y, size, "%zu");
-    for (unsigned i = 0; i < y.size; i++)
-        if (x.data[i].size != y.data[i].size || memcmp(x.data[i].data, y.data[i].data, y.data[i].size))
-            return mun_error(assert, "inner vectors differ");
+    if (msg) {
+        CHECK_FIELD(x, y, size, "%zu");
+        for (unsigned i = 0; i < y.size; i++)
+            if (x.data[i].size != y.data[i].size || memcmp(x.data[i].data, y.data[i].data, y.data[i].size))
+                return mun_error(assert, "inner vectors differ");
+    }
     return 0;
 }
 
-static int test_siy_signinfo() {
-    struct siy_signinfo si = siy_signinfo("u4 u4");
-    if (si.size != 8)
-        return mun_error(assert, "invalid size %u; expected 8", si.size);
-    if (si.align != 4)
-        return mun_error(assert, "invalid alignment %u; expected 4", si.align);
+static int test_siy_perf(char *msg) {
+    mun_usec start = mun_usec_monotonic();
+    for (unsigned i = 0; i < 1000000; i++)
+        if (test_siy_struct(NULL) || test_siy_vec_vec(NULL) MUN_RETHROW)
+            return -1;
+    mun_usec end = mun_usec_monotonic();
+    sprintf(msg, "%f us/(struct + vec[vec[value]])", (double)(end - start) / 1000);
     return 0;
 }
 
-export { "siy:value", &test_siy_primitive }
+export { "siy:signature", &test_siy_signature }
+     , { "siy:value", &test_siy_primitive }
      , { "siy:struct", &test_siy_struct }
      , { "siy:vec[value]", &test_siy_vec }
      , { "siy:vec[struct]", &test_siy_vec_struct }
      , { "siy:vec[vec[value]]", &test_siy_vec_vec }
-     , { "siy:signinfo", &test_siy_signinfo }
+     , { "siy:perf on struct & vec[vec[value]]", &test_siy_perf }
