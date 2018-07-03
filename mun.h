@@ -6,6 +6,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if __cplusplus
+extern "C" {
+#endif
+
 // A microsecond-resolution clock. That's good enough; epoll_wait(2) can't handle
 // less than millisecond resolution anyway.
 typedef int64_t mun_usec;
@@ -227,3 +231,7 @@ static inline void mun_vec_erase_s(size_t s, struct mun_vec *v, size_t i, size_t
     }                                                               \
     __L;                                                            \
 })
+
+#if __cplusplus
+} // extern "C"
+#endif

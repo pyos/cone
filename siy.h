@@ -5,6 +5,10 @@
 #define SIY_MAX_SIGNS 32
 #endif
 
+#if __cplusplus
+extern "C" {
+#endif
+
 struct siy mun_vec(uint8_t);
 
 enum
@@ -52,3 +56,7 @@ static inline int siy_decode(struct siy *in, const char *sign, void *out) mun_th
     struct siy_sign s[SIY_MAX_SIGNS];
     return siy_signature(sign, s, SIY_MAX_SIGNS) || siy_decode_s(in, s, out) MUN_RETHROW;
 }
+
+#if __cplusplus
+} // extern "C"
+#endif

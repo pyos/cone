@@ -3,6 +3,10 @@
 #include "cone.h"
 #include "siy.h"
 
+#if __cplusplus
+extern "C" {
+#endif
+
 enum
 {
     mun_errno_mae_overflow = mun_errno_custom + 13000,
@@ -57,3 +61,7 @@ int mae_run(struct mae *) mun_throws(memory, mae_overflow, mae_protocol);
 // return values (osign/o); see `siy_encode` and `siy_decode` for their descriptions.
 int mae_call(struct mae *, const char *f, const char *isign, const void *i, const char *osign, void *o)
     mun_throws(memory, siy_truncated, siy_sign_syntax);
+
+#if __cplusplus
+}
+#endif
