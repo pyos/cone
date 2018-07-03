@@ -4,6 +4,11 @@
 #include <unistd.h>
 #include <stdatomic.h>
 
+#if defined(_asan_enabled_)
+void __sanitizer_start_switch_fiber(void** fake_stack_save, const void* bottom, size_t size);
+void __sanitizer_finish_switch_fiber(void* fake_stack_save, const void** old_bottom, size_t* old_size);
+#endif
+
 #if !defined(CONE_EVNOTIFIER) && __linux__
 #define CONE_EVNOTIFIER 1  // epoll
 #elif !defined(CONE_EVNOTIFIER) && __APPLE__
@@ -284,6 +289,10 @@ struct cone {
     struct cone_closure body;
     struct cone_event done;
     struct mun_error error;
+    #if defined(_asan_enabled_)
+        void *fake_stack_save;
+        size_t stack_size;
+    #endif
     void **rsp;
     _Alignas(max_align_t) char stack[];
 };
@@ -292,6 +301,9 @@ _Thread_local struct cone * volatile cone = NULL;
 
 static void cone_switch(struct cone *c) {
     c->flags ^= CONE_FLAG_RUNNING;
+    #if defined(_asan_enabled_)
+        __sanitizer_start_switch_fiber(c->flags & CONE_FLAG_FINISHED ? nullptr : &c->fake_stack_save, c->start, c->stack_size);
+    #endif
     __asm__(" jmp  %=0f       \n"
         "%=1: push %%rbp      \n"
         "     push %%rdi      \n"
@@ -305,6 +317,9 @@ static void cone_switch(struct cone *c) {
       : "rbx", "rdx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc",
         "xmm0",  "xmm1",  "xmm2",  "xmm3",  "xmm4",  "xmm5",  "xmm6",  "xmm7",
         "xmm8",  "xmm9",  "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
+    #if defined(_asan_enabled_)
+        __sanitizer_finish_switch_fiber(c->fake_stack_save, nullptr, nullptr);
+    #endif
 }
 
 static int cone_run(struct cone *c) mun_nothrow {
@@ -424,6 +439,10 @@ struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct cone_clos
     c->loop = loop;
     c->body = body;
     c->done = (struct cone_event){};
+    #if defined(_asan_enabled_)
+        c->fake_stack_save = NULL;
+        c->stack_size = size;
+    #endif
     c->rsp = (void **)&c->stack[size] - 4;
     c->rsp[0] = c;                  // %rdi: first argument
     c->rsp[1] = NULL;               // %rbp: nothing; there's no previous frame yet
