@@ -344,14 +344,14 @@ static int cone_ensure_running(struct cone *c) mun_throws(cancelled) {
     return 0;
 }
 
-#define cone_pause(always_unsub, ev_add, ev_del, ...) do { \
-    if (ev_add(__VA_ARGS__) MUN_RETHROW)                   \
-        return -1;                                         \
-    cone_switch(cone);                                     \
-    int cancelled = cone_ensure_running(cone);             \
-    if (always_unsub || cancelled)                         \
-        ev_del(__VA_ARGS__);                               \
-    return cancelled;                                      \
+#define cone_pause(always_unsub, ev_add, ev_del, ...) do {            \
+    if (cone_ensure_running(cone) || ev_add(__VA_ARGS__) MUN_RETHROW) \
+        return -1;                                                    \
+    cone_switch(cone);                                                \
+    int cancelled = cone_ensure_running(cone);                        \
+    if (always_unsub || cancelled)                                    \
+        ev_del(__VA_ARGS__);                                          \
+    return cancelled;                                                 \
 } while (0)
 
 static void cone_unschedule(struct cone_event *ev, struct cone **c) {
