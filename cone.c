@@ -418,7 +418,7 @@ int cone_cancel(struct cone *c) {
 }
 
 static void cone_body(struct cone *c) {
-    if (cone_ensure_running(c) || c->body.code(c->body.data)) {
+    if (c->body.code(c->body.data)) {
         c->error = *mun_last_error();
         c->flags |= CONE_FLAG_FAILED;
     }
