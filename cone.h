@@ -87,7 +87,7 @@ int cone_wake(struct cone_event *, size_t) mun_throws(memory);
 
 // Arrange for the coroutine to be woken up with an error, even if the event it was waiting
 // for did not yet occur. No-op if the coroutine has already finished. If it is currently
-// running, it will only receive a cancellation signal upon reaching `cone_wait`,
+// running or has just started, it will only receive a cancellation signal upon reaching `cone_wait`,
 // `cone_iowait`, `cone_sleep`, or `cone_yield`; and even then, the error may be ignored.
 int cone_cancel(struct cone *) mun_throws(memory);
 
