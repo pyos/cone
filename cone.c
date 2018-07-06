@@ -116,7 +116,8 @@ static void cone_event_io_ping(struct cone_event_io *set) {
 }
 
 static int cone_event_io_on_ping(struct cone_event_io *set) {
-    read(set->selfpipe[0], &(char[32]){}, 32);  // never yields
+    char buf[32];
+    read(set->selfpipe[0], buf, 32);  // never yields
     atomic_store_explicit(&set->pinged, 0, memory_order_release);
     return cone_wake(&set->ping, (size_t)-1) MUN_RETHROW;
 }
