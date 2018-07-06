@@ -4,6 +4,16 @@
 #include <unistd.h>
 #include <stdatomic.h>
 
+#if __clang__
+#if __has_feature(address_sanitizer)
+#define CONE_ASAN 1
+#endif
+#else
+#if defined(address_sanitizer_enabled) || defined(__SANITIZE_ADDRESS__)
+#define CONE_ASAN 1
+#endif
+#endif
+
 #if CONE_CXX
 #include <alloca.h>
 extern const size_t cone_cxa_globals_size;
@@ -11,7 +21,7 @@ void cone_cxa_globals_save(void *);
 void cone_cxa_globals_load(void *);
 #endif
 
-#if defined(_asan_enabled_)
+#if CONE_ASAN
 void __sanitizer_start_switch_fiber(void** fake_stack_save, const void* bottom, size_t size);
 void __sanitizer_finish_switch_fiber(void* fake_stack_save, const void** old_bottom, size_t* old_size);
 #endif
@@ -296,9 +306,9 @@ struct cone {
     struct cone_closure body;
     struct cone_event done;
     struct mun_error error;
-    #if defined(_asan_enabled_)
-        void *fake_stack_save;
-        size_t stack_size;
+    #if CONE_ASAN
+        const void * target_stack;
+        size_t target_stack_size;
     #endif
     void **rsp;
     _Alignas(max_align_t) char stack[];
@@ -308,8 +318,9 @@ _Thread_local struct cone * volatile cone = NULL;
 
 static void cone_switch(struct cone *c) {
     c->flags ^= CONE_FLAG_RUNNING;
-    #if defined(_asan_enabled_)
-        __sanitizer_start_switch_fiber(c->flags & CONE_FLAG_FINISHED ? nullptr : &c->fake_stack_save, c->start, c->stack_size);
+    #if CONE_ASAN
+        void * fake_stack = NULL;
+        __sanitizer_start_switch_fiber(c->flags & CONE_FLAG_FINISHED ? NULL : &fake_stack, c->target_stack, c->target_stack_size);
     #endif
     #if CONE_CXX
         void * cxa_globals = alloca(cone_cxa_globals_size);
@@ -333,8 +344,8 @@ static void cone_switch(struct cone *c) {
     #if CONE_CXX
         cone_cxa_globals_load(cxa_globals);
     #endif
-    #if defined(_asan_enabled_)
-        __sanitizer_finish_switch_fiber(c->fake_stack_save, nullptr, nullptr);
+    #if CONE_ASAN
+        __sanitizer_finish_switch_fiber(fake_stack, &c->target_stack, &c->target_stack_size);
     #endif
 }
 
@@ -434,9 +445,8 @@ int cone_cancel(struct cone *c) {
 }
 
 static void cone_body(struct cone *c) {
-    #if defined(_asan_enabled_)
-        // have to end what `cone_switch` has started (but can't finish; see comment in that function)
-        __sanitizer_finish_switch_fiber(c->fake_stack_save, nullptr, nullptr);
+    #if CONE_ASAN
+        __sanitizer_finish_switch_fiber(NULL, &c->target_stack, &c->target_stack_size);
     #endif
     if (c->body.code(c->body.data)) {
         c->error = *mun_last_error();
@@ -459,9 +469,9 @@ struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct cone_clos
     c->loop = loop;
     c->body = body;
     c->done = (struct cone_event){};
-    #if defined(_asan_enabled_)
-        c->fake_stack_save = NULL;
-        c->stack_size = size;
+    #if CONE_ASAN
+        c->target_stack = c->stack;
+        c->target_stack_size = size;
     #endif
     c->rsp = (void **)&c->stack[size] - 4;
     c->rsp[0] = c;                  // %rdi: first argument
