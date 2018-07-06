@@ -320,7 +320,13 @@ _Thread_local struct cone * volatile cone = NULL;
 static void cone_switch(struct cone *c) {
     c->flags ^= CONE_FLAG_RUNNING;
     #if CONE_CXX
-        void * cxa_globals = alloca(cone_cxa_globals_size);
+        #if CONE_ASAN && __clang__
+            // XXX a bug in LLVM causes it to ignore the clobbering of %rbx, which is used as a stack pointer
+            //     instead of %rsp when asan is enabled and there is an alloca.
+            char cxa_globals[64];
+        #else
+            void * cxa_globals = alloca(cone_cxa_globals_size);
+        #endif
         cone_cxa_globals_save(cxa_globals);
     #endif
     #if CONE_ASAN
