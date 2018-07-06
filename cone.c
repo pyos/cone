@@ -328,7 +328,8 @@ static void cone_switch(struct cone *c) {
       : "rbx", "rdx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc",
         "xmm0",  "xmm1",  "xmm2",  "xmm3",  "xmm4",  "xmm5",  "xmm6",  "xmm7",
         "xmm8",  "xmm9",  "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
-    // code from here on only runs when switching back into the event loop or an already running coroutine:
+    // code from here on only runs when switching back into the event loop or an already running coroutine
+    // (when switching into a coroutine for the first time, `ret` jumps right into `cone_body`.)
     #if CONE_CXX
         cone_cxa_globals_load(cxa_globals);
     #endif
