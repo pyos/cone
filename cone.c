@@ -4,6 +4,13 @@
 #include <unistd.h>
 #include <stdatomic.h>
 
+#if CONE_CXX
+#include <alloca.h>
+extern const size_t cone_cxa_globals_size;
+void cone_cxa_globals_save(void *);
+void cone_cxa_globals_load(void *);
+#endif
+
 #if defined(_asan_enabled_)
 void __sanitizer_start_switch_fiber(void** fake_stack_save, const void* bottom, size_t size);
 void __sanitizer_finish_switch_fiber(void* fake_stack_save, const void** old_bottom, size_t* old_size);
@@ -304,6 +311,10 @@ static void cone_switch(struct cone *c) {
     #if defined(_asan_enabled_)
         __sanitizer_start_switch_fiber(c->flags & CONE_FLAG_FINISHED ? nullptr : &c->fake_stack_save, c->start, c->stack_size);
     #endif
+    #if CONE_CXX
+        void * cxa_globals = alloca(cone_cxa_globals_size);
+        cone_cxa_globals_save(cxa_globals);
+    #endif
     __asm__(" jmp  %=0f       \n"
         "%=1: push %%rbp      \n"
         "     push %%rdi      \n"
@@ -317,6 +328,9 @@ static void cone_switch(struct cone *c) {
       : "rbx", "rdx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc",
         "xmm0",  "xmm1",  "xmm2",  "xmm3",  "xmm4",  "xmm5",  "xmm6",  "xmm7",
         "xmm8",  "xmm9",  "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
+    #if CONE_CXX
+        cone_cxa_globals_load(cxa_globals);
+    #endif
     #if defined(_asan_enabled_)
         __sanitizer_finish_switch_fiber(c->fake_stack_save, nullptr, nullptr);
     #endif
