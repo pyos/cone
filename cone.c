@@ -319,13 +319,13 @@ _Thread_local struct cone * volatile cone = NULL;
 
 static void cone_switch(struct cone *c) {
     c->flags ^= CONE_FLAG_RUNNING;
-    #if CONE_ASAN
-        void * fake_stack = NULL;
-        __sanitizer_start_switch_fiber(c->flags & CONE_FLAG_FINISHED ? NULL : &fake_stack, c->target_stack, c->target_stack_size);
-    #endif
     #if CONE_CXX
         void * cxa_globals = alloca(cone_cxa_globals_size);
         cone_cxa_globals_save(cxa_globals);
+    #endif
+    #if CONE_ASAN
+        void * fake_stack = NULL;
+        __sanitizer_start_switch_fiber(c->flags & CONE_FLAG_FINISHED ? NULL : &fake_stack, c->target_stack, c->target_stack_size);
     #endif
     __asm__(" jmp  %=0f       \n"
         "%=1: push %%rbp      \n"
@@ -342,11 +342,11 @@ static void cone_switch(struct cone *c) {
         "xmm8",  "xmm9",  "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
     // code from here on only runs when switching back into the event loop or an already running coroutine
     // (when switching into a coroutine for the first time, `ret` jumps right into `cone_body`.)
-    #if CONE_CXX
-        cone_cxa_globals_load(cxa_globals);
-    #endif
     #if CONE_ASAN
         __sanitizer_finish_switch_fiber(fake_stack, &c->target_stack, &c->target_stack_size);
+    #endif
+    #if CONE_CXX
+        cone_cxa_globals_load(cxa_globals);
     #endif
 }
 
@@ -448,6 +448,9 @@ int cone_cancel(struct cone *c) {
 static void cone_body(struct cone *c) {
     #if CONE_ASAN
         __sanitizer_finish_switch_fiber(NULL, &c->target_stack, &c->target_stack_size);
+    #endif
+    #if CONE_CXX
+        cone_cxa_globals_load(NULL);
     #endif
     if (c->body.code(c->body.data)) {
         c->error = *mun_last_error();

@@ -12,7 +12,10 @@ void cone_cxa_globals_save(void *s)
 
 void cone_cxa_globals_load(void *s)
 {
-    memcpy(__cxxabiv1::__cxa_get_globals(), s, sizeof(__cxxabiv1::__cxa_eh_globals));
+    if (s)
+        memcpy(__cxxabiv1::__cxa_get_globals(), s, sizeof(__cxxabiv1::__cxa_eh_globals));
+    else
+        memset(__cxxabiv1::__cxa_get_globals(), 0, sizeof(__cxxabiv1::__cxa_eh_globals));
 }
 
 }
