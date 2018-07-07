@@ -11,7 +11,7 @@ extern "C" {
 #endif
 
 #if __cplusplus
-typedef volatile std::atomic<unsigned> cone_atom;
+typedef std::atomic<unsigned> cone_atom;
 #else
 typedef volatile _Atomic(unsigned) cone_atom;
 #endif
@@ -95,6 +95,9 @@ int cone_cancel(struct cone *) mun_throws(memory);
 // Note that `main()` is already running within an event loop; this is only useful
 // in newly created threads.
 int cone_loop(size_t stack, struct cone_closure) mun_throws(memory);
+
+// Return the number of coroutines active in the running coroutine's loop.
+const cone_atom * cone_count();
 
 #if __cplusplus
 } // extern "C"

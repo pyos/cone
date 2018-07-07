@@ -515,6 +515,10 @@ static int cone_main_run(struct cone_loop *loop) {
     return 0;
 }
 
+const cone_atom * cone_count() {
+    return cone ? &cone->loop->active : NULL;
+}
+
 static void __attribute__((constructor)) cone_main_init(void) {
     mun_assert(!cone_loop_init(&cone_main_loop));
     struct cone *c = cone(&cone_main_run, &cone_main_loop);
