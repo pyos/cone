@@ -72,8 +72,8 @@ static void cone_event_schedule_del(struct cone_event_schedule *ev, mun_usec at,
             return mun_vec_erase(&ev->cs, i, 1);
 }
 
-static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev) {
-    for (size_t limit = ev->cs.size; ev->cs.size;) {
+static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev, size_t limit) {
+    while (ev->cs.size) {
         mun_usec now = mun_usec_monotonic();
         struct cone_event_at c = ev->cs.data[0];
         if (c.at > now)
@@ -279,7 +279,7 @@ static void cone_loop_fini(struct cone_loop *loop) {
 
 static int cone_loop_run(struct cone_loop *loop) {
     while (atomic_load_explicit(&loop->active, memory_order_acquire))
-        if (cone_event_io_emit(&loop->io, cone_event_schedule_emit(&loop->at)) MUN_RETHROW)
+        if (cone_event_io_emit(&loop->io, cone_event_schedule_emit(&loop->at, 256)) MUN_RETHROW)
             return -1;
     return 0;
 }
@@ -535,7 +535,7 @@ static void __attribute__((destructor)) cone_main_fini(void) {
         cone_loop_dec(loop);
         cone_switch(c);
         cone_drop(c);
-        mun_assert(cone_event_schedule_emit(&loop->at) >= 0);
+        mun_assert(cone_event_schedule_emit(&loop->at, (size_t)-1) >= 0);
         cone_loop_fini(loop);
     }
 }
