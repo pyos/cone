@@ -73,11 +73,13 @@ static void cone_event_schedule_del(struct cone_event_schedule *ev, mun_usec at,
 }
 
 static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev) {
-    while (ev->cs.size) {
+    for (size_t limit = ev->cs.size; ev->cs.size;) {
         mun_usec now = mun_usec_monotonic();
         struct cone_event_at c = ev->cs.data[0];
         if (c.at > now)
             return c.at - now;
+        if (!limit--)
+            return 0;
         mun_vec_erase(&ev->cs, 0, 1);
         if (c.f.code(c.f.data) MUN_RETHROW)
             return -1;

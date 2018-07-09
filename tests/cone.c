@@ -92,8 +92,49 @@ static int test_rdwr() {
     return close(fds[0]), close(fds[1]), 0;
 }
 
+struct io_starvation_state {
+    int stop;
+    struct cone_event a;
+    struct cone_event b;
+};
+
+static int test_io_starvation_a(struct io_starvation_state *st) {
+    cone_atom a = 0;
+    while (!st->stop)
+        if (cone_wake(&st->b, -1) || cone_wait(&st->a, &a, 0) MUN_RETHROW)
+            return -1;
+    return 0;
+};
+
+static int test_io_starvation_b(struct io_starvation_state *st) {
+    cone_atom a = 0;
+    while (!st->stop)
+        if (cone_wake(&st->a, -1) || cone_wait(&st->b, &a, 0) MUN_RETHROW)
+            return -1;
+    return 0;
+};
+
+static int test_io_starvation_c(struct io_starvation_state *st) {
+    if (cone_yield() MUN_RETHROW)
+        return -1;
+    st->stop = 1;
+    if (cone_wake(&st->a, -1) || cone_wake(&st->b, -1) MUN_RETHROW)
+        return -1;
+    return 0;
+}
+
+static int test_io_starvation() {
+    struct io_starvation_state st = {};
+    struct cone *a = cone(test_io_starvation_a, &st);
+    struct cone *b = cone(test_io_starvation_b, &st);
+    struct cone *c = cone(test_io_starvation_c, &st);
+    sleep(1);
+    return cone_cancel(c) || cone_cancel(a) || cone_cancel(b) || cone_join(c, 0) || cone_join(a, 0) || cone_join(b, 0) MUN_RETHROW;
+}
+
 export { "cone:sleep (0.5s concurrent with 1s)", &test_concurrent_sleep }
      , { "cone:sleep (0.1s concurrent with 1s cancelled after 0.1s)", &test_cancelled_sleep }
      , { "cone:yield", &test_yield }
      , { "cone:spawn", &test_spawn }
      , { "cone:reader + writer", &test_rdwr }
+     , { "cone:io starvation", &test_io_starvation }
