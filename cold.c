@@ -47,7 +47,7 @@ cold_def(int, accept4, int fd, struct sockaddr *addr, socklen_t *addrlen, int fl
     cold_iocall(fd, 0, libc_accept4()(fd, addr, addrlen, cone ? flags | SOCK_NONBLOCK : flags))
 #endif
 
-// man {read,recv,recvfrom,recvmsg,write,send,sendto,sendmsg} 2
+// man {read,recv,recvfrom,recvmsg,write,send,sendto,sendmsg,connect} 2
 // Coroutine-blocking versions.
 cold_def(ssize_t, read, int fd, void *buf, size_t count)
     cold_iocall(fd, 0, libc_read()(fd, buf, count))
@@ -72,6 +72,19 @@ cold_def(ssize_t, sendto, int fd, const void *buf, size_t len, int flags, const 
 
 cold_def(ssize_t, sendmsg, int fd, const struct msghdr *msg, int flags)
     cold_iocall(fd, 1, libc_sendmsg()(fd, msg, flags))
+
+cold_def(int, connect, int fd, const struct sockaddr *addr, socklen_t addrlen) {
+    int result = libc_connect()(fd, addr, addrlen);
+    if (result >= 0 || errno != EINPROGRESS || !cone)
+        return result;
+    socklen_t optlen = sizeof(int);
+    if (cone_iowait(fd, 1) || getsockopt(fd, SOL_SOCKET, SO_ERROR, &result, &optlen) < 0)
+        return -1;
+    if (result == 0)
+        return 0;
+    errno = result;
+    return -1;
+}
 
 // man sleep 3
 // Coroutine-blocking; does not interact with signals (but can be interrupted by
