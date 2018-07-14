@@ -465,8 +465,8 @@ static void cone_body(struct cone *c) {
         c->flags |= CONE_FLAG_FAILED;
     }
     c->flags |= CONE_FLAG_FINISHED;
-    mun_assert(!cone_event_schedule_add(&c->loop->at, mun_usec_monotonic(), cone_bind(&cone_drop, c)));
     mun_assert(!cone_wake(&c->done, (size_t)-1));
+    mun_assert(!cone_event_schedule_add(&c->loop->at, mun_usec_monotonic(), cone_bind(&cone_drop, c)));
     cone_loop_dec(c->loop);
     cone_switch(c);
     abort();
