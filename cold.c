@@ -25,29 +25,31 @@
 #define cold_iocall(fd, write, expr) \
     { __typeof__(expr) __r; cold_iowait(fd, write, __r = expr); return __r; }
 
-// man listen 2
 // `fd` is automatically switched to non-blocking mode.
 cold_def(int, listen, int fd, int backlog) {
     return cone && cone_unblock(fd) ? -1 : libc_listen()(fd, backlog);
 }
 
-// man accept 2
+#ifdef __linux__
+// SOCK_NONBLOCK is always on.
+cold_def(int, accept4, int fd, struct sockaddr *addr, socklen_t *addrlen, int flags)
+    cold_iocall(fd, 0, libc_accept4()(fd, addr, addrlen, cone ? flags | SOCK_NONBLOCK : flags))
+#endif
+
 // Returned socket is non-blocking. Error codes of `fcntl` apply.
+#ifdef __linux__
+int accept(int fd, struct sockaddr *addr, socklen_t *addrlen) {
+    return accept4(fd, addr, addrlen, 0);
+}
+#else
 cold_def(int, accept, int fd, struct sockaddr *addr, socklen_t *addrlen) {
     int client; cold_iowait(fd, 0, client = libc_accept()(fd, addr, addrlen));
     if (client >= 0 && cone_unblock(client))
         return close(client), -1;
     return client;
 }
-
-#ifdef __linux__
-// man accept 2
-// SOCK_NONBLOCK is always on.
-cold_def(int, accept4, int fd, struct sockaddr *addr, socklen_t *addrlen, int flags)
-    cold_iocall(fd, 0, libc_accept4()(fd, addr, addrlen, cone ? flags | SOCK_NONBLOCK : flags))
 #endif
 
-// man connect 2
 // Coroutine-blocking version. The socket is automatically switched into non-blocking mode.
 cold_def(int, connect, int fd, const struct sockaddr *addr, socklen_t addrlen) {
     if (cone && cone_unblock(fd))
@@ -64,7 +66,6 @@ cold_def(int, connect, int fd, const struct sockaddr *addr, socklen_t addrlen) {
     return -1;
 }
 
-// man {read,recv,recvfrom,recvmsg,write,send,sendto,sendmsg} 2
 // Coroutine-blocking versions.
 cold_def(ssize_t, read, int fd, void *buf, size_t count)
     cold_iocall(fd, 0, libc_read()(fd, buf, count))
@@ -90,14 +91,12 @@ cold_def(ssize_t, sendto, int fd, const void *buf, size_t len, int flags, const 
 cold_def(ssize_t, sendmsg, int fd, const struct msghdr *msg, int flags)
     cold_iocall(fd, 1, libc_sendmsg()(fd, msg, flags))
 
-// man sleep 3
 // Coroutine-blocking; does not interact with signals (but can be interrupted by
 // `cone_cancel`); always returns the argument on error, even if slept for some time.
 cold_def(unsigned, sleep, unsigned sec) {
     return cone ? cone_sleep((mun_usec)sec * 1000000ul) ? sec : 0 : libc_sleep()(sec);
 }
 
-// man nanosleep 2
 // Coroutine-blocking; does not interact with signals; does not fill `rem`.
 cold_def(int, nanosleep, const struct timespec *req, struct timespec *rem) {
     return cone ? cone_sleep((mun_usec)req->tv_sec*1000000ull + req->tv_nsec/1000) : libc_nanosleep()(req, rem);
