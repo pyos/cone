@@ -55,6 +55,9 @@ int mun_error_at(int, const char *name, struct mun_stackframe, const char *fmt, 
 // Add a stack frame to the last error, if there's space for it. Always "fails".
 int mun_error_up(struct mun_stackframe);
 
+// Add a stack frame to the last error an a prefix to its text. Always "fails".
+int mun_error_up_ctx(struct mun_stackframe, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+
 // Print an error to stderr, possibly with pretty colored highlighting. If `err` is NULL,
 // `mun_last_error()` is used. The first line looks something like "{prefix} error {code}:
 // {message}", so, for example, `mun_error_show("oh no, it's the", NULL)` will display
@@ -74,6 +77,9 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 // Should be used as a suffix to an expression that returns something true-ish if it failed,
 // in which case the current stack frame is marked in its error. Otherwise, 0 is returned.
 #define MUN_RETHROW ? mun_error_up(MUN_CURRENT_FRAME) : 0
+
+// Same as `MUN_RETHROW`, but adds a prefix to the text.
+#define MUN_RETHROW_CTX(fmt, ...) ? mun_error_up_ctx(MUN_CURRENT_FRAME, fmt, __VA_ARGS__) : 0
 
 // Same as `MUN_RETHROW`, but assumes the expression is a standard library function that
 // sets `errno` and does not call `mun_error_at`.

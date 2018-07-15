@@ -28,17 +28,29 @@ struct mun_error *mun_last_error(void) {
     return &e;
 }
 
+static void mun_error_fmt(const char *fmt, va_list args) {
+    char tmp[sizeof(e.text)];
+    int r = vsnprintf(tmp, sizeof(tmp), fmt, args);
+    if (e.text[0] && r >= 0 && (size_t)r + 2 < sizeof(e.text)) {
+        memmove(e.text + r + 2, e.text, sizeof(e.text) - r - 2);
+        memmove(e.text + r, ": ", 2);
+        memmove(e.text, tmp, r);
+        e.text[sizeof(e.text) - 1] = 0;
+    } else {
+        memmove(e.text, tmp, sizeof(e.text));
+    }
+}
+
 int mun_error_at(int n, const char *name, struct mun_stackframe frame, const char *fmt, ...) {
     errno = e.code = n < 0 ? -n : n;
     e.stacklen = 0;
     e.name = name;
+    if (n >= 0 || strerror_r(-n, e.text, sizeof(e.text)))
+        e.text[0] = 0;
     va_list args;
     va_start(args, fmt);
-    int r = vsnprintf(e.text, sizeof(e.text), fmt, args);
+    mun_error_fmt(fmt, args);
     va_end(args);
-    if (n < 0 && r >= 0 && (size_t)r + 2 < sizeof(e.text))
-        if (!strerror_r(-n, e.text + r + 2, sizeof(e.text) - r - 2))
-            memcpy(e.text + r, ": ", 2);
     return mun_error_up(frame);
 }
 
@@ -46,6 +58,14 @@ int mun_error_up(struct mun_stackframe frame) {
     if (e.stacklen < sizeof(e.stack) / sizeof(frame))
         e.stack[e.stacklen++] = frame;
     return -1;
+}
+
+int mun_error_up_ctx(struct mun_stackframe frame, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    mun_error_fmt(fmt, args);
+    va_end(args);
+    return mun_error_up(frame);
 }
 
 static const char
