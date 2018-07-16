@@ -24,6 +24,7 @@ enum
     mun_errno_memory          = ENOMEM,
     mun_errno_not_implemented = ENOSYS,
     mun_errno_deadlock        = EDEADLK,
+    mun_errno_timeout         = ETIMEDOUT,
     // Define your own `mun_errno_X` values as `mun_errno_custom + N` to make `mun_error(X)` valid.
     mun_errno_custom          = 100000,
 };

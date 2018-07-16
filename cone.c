@@ -294,12 +294,13 @@ static void cone_loop_dec(struct cone_loop *loop) {
 }
 
 enum {
-    // lowest bits are either 0x2 (running and not detached) or 0x1 (finished xor detached)
-    CONE_FLAG_SCHEDULED = 0x04,
-    CONE_FLAG_RUNNING   = 0x08,
-    CONE_FLAG_FINISHED  = 0x10,
-    CONE_FLAG_FAILED    = 0x20,
-    CONE_FLAG_CANCELLED = 0x40,
+    CONE_FLAG_LAST_REF  = 0x01,
+    CONE_FLAG_SCHEDULED = 0x02,
+    CONE_FLAG_RUNNING   = 0x04,
+    CONE_FLAG_FINISHED  = 0x08,
+    CONE_FLAG_FAILED    = 0x10,
+    CONE_FLAG_CANCELLED = 0x20,
+    CONE_FLAG_TIMED_OUT = 0x40,
     CONE_FLAG_JOINED    = 0x80,
 };
 
@@ -375,9 +376,9 @@ static int cone_schedule(struct cone *c) mun_throws(memory) {
 }
 
 static int cone_ensure_running(struct cone *c) mun_throws(cancelled) {
-    if (atomic_fetch_and(&c->flags, ~CONE_FLAG_CANCELLED) & CONE_FLAG_CANCELLED)
-        return mun_error(cancelled, " ");
-    return 0;
+    int state = atomic_fetch_and(&c->flags, ~CONE_FLAG_CANCELLED & ~CONE_FLAG_TIMED_OUT);
+    return state & CONE_FLAG_CANCELLED ? mun_error(cancelled, " ")
+         : state & CONE_FLAG_TIMED_OUT ? mun_error(timeout, " ") : 0;
 }
 
 #define cone_pause(always_unsub, ev_add, ev_del, ...) do {            \
@@ -426,7 +427,7 @@ int cone_yield(void) {
 }
 
 int cone_drop(struct cone *c) {
-    if (c && !(--c->flags & 0x3)) {
+    if (c && (atomic_fetch_xor(&c->flags, CONE_FLAG_LAST_REF) & CONE_FLAG_LAST_REF)) {
         if ((c->flags & (CONE_FLAG_FAILED | CONE_FLAG_JOINED)) == CONE_FLAG_FAILED)
             if (c->error.code != mun_errno_cancelled)
                 mun_error_show("cone destroyed with", &c->error);
@@ -453,6 +454,21 @@ int cone_cancel(struct cone *c) {
     return cone_schedule(c) MUN_RETHROW;
 }
 
+static int cone_timeout(struct cone *c) {
+    c->flags |= CONE_FLAG_TIMED_OUT;
+    return cone_schedule(c) MUN_RETHROW;
+}
+
+int cone_deadline(mun_usec t) {
+    struct cone *c = cone;
+    return cone_event_schedule_add(&c->loop->at, t, cone_bind(&cone_timeout, c)) MUN_RETHROW;
+}
+
+void cone_success(mun_usec t) {
+    struct cone *c = cone;
+    cone_event_schedule_del(&c->loop->at, t, cone_bind(&cone_timeout, c));
+}
+
 static void cone_body(struct cone *c) {
     #if CONE_ASAN
         __sanitizer_finish_switch_fiber(NULL, &c->target_stack, &c->target_stack_size);
@@ -477,7 +493,7 @@ struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct cone_clos
     struct cone *c = (struct cone *)malloc(sizeof(struct cone) + size);
     if (c == NULL)
         return mun_error(memory, "no space for a stack"), NULL;
-    c->flags = 1;
+    c->flags = CONE_FLAG_LAST_REF;
     c->loop = loop;
     c->body = body;
     c->done = (struct cone_event){};
@@ -492,7 +508,7 @@ struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct cone_clos
     c->rsp[3] = NULL;               // return address: nothing; same as for %rbp
     if (cone_schedule(c) MUN_RETHROW)
         return cone_drop(c), NULL;
-    c->flags++;
+    c->flags ^= CONE_FLAG_LAST_REF;
     return cone_loop_inc(c->loop), c;
 }
 
