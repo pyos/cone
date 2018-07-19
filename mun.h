@@ -169,16 +169,19 @@ static inline void mun_vec_shift_s(size_t s, struct mun_vec *v, size_t start, in
     v->size += offset;
 }
 
-// Resize the vector so that it may contain at least `n` more elements.
+// Resize the vector so that it may contain at least `n` elements.
 #define mun_vec_reserve(v, n) mun_vec_reserve_s(mun_vec_strided(v), n)
 
 static inline int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) mun_throws(memory) {
     size_t cap = v->cap & ~MUN_VEC_STATIC_BIT;
-    if (v->size + n <= cap)
+    if (n <= cap)
         return 0;
     if (v->cap & MUN_VEC_STATIC_BIT)
-        return mun_error(memory, "static vector of %zu cannot fit %zu", cap, v->size + n);
-    void *r = realloc(v->data, (cap += n > cap ? n : cap) * s);
+        return mun_error(memory, "static vector of %zu cannot fit %zu", cap, n);
+    cap *= 1.5;
+    if (cap < n + 4)
+        cap = n + 4;
+    void *r = realloc(v->data, cap * s);
     if (r == NULL)
         return mun_error(memory, "%zu * %zu bytes", cap, s);
     v->data = r;
@@ -198,7 +201,7 @@ static inline int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) mun_t
 static inline int mun_vec_splice_s(size_t s, struct mun_vec *v, size_t i, const void *e, size_t n) {
     if (!n)
         return 0;
-    if (mun_vec_reserve_s(s, v, n))
+    if (mun_vec_reserve_s(s, v, v->size + n))
         return -1;
     mun_vec_shift_s(s, v, i, n);
     memcpy(&mun_vec_data_s(s, v)[i], e, n * s);

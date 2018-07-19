@@ -125,7 +125,7 @@ int siy_decode_s(struct siy *in, const struct siy_sign *s, void *out) {
         out = *(void **)out, s++;
     if (s->sign == SIY_VEC) {
         uint32_t u;
-        if (siy_decode_uint(in, &u, 4) || mun_vec_reserve_s(s[1].size, out, u) MUN_RETHROW)
+        if (siy_decode_uint(in, &u, 4) || mun_vec_reserve_s(s[1].size, out, ((struct mun_vec *)out)->size + u) MUN_RETHROW)
             return -1;
         while (u--)
             if (siy_decode_s(in, &s[1], &mun_vec_data_s(s[1].size, out)[((struct mun_vec *)out)->size++]))
