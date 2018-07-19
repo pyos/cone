@@ -41,7 +41,7 @@ struct mun_error
     int code;  // Either `mun_errno_X`, or an actual `errno`.
     unsigned stacklen;
     const char *name;
-    char text[128];
+    char text[256];
     // Stack at the time of the error, starting from innermost frame (where `mun_error_at` was called).
     struct mun_stackframe stack[16];
 };
