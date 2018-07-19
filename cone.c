@@ -459,13 +459,11 @@ static int cone_timeout(struct cone *c) {
     return cone_schedule(c) MUN_RETHROW;
 }
 
-int cone_deadline(mun_usec t) {
-    struct cone *c = cone;
+int cone_deadline(struct cone *c, mun_usec t) {
     return cone_event_schedule_add(&c->loop->at, t, cone_bind(&cone_timeout, c)) MUN_RETHROW;
 }
 
-void cone_success(mun_usec t) {
-    struct cone *c = cone;
+void cone_complete(struct cone *c, mun_usec t) {
     cone_event_schedule_del(&c->loop->at, t, cone_bind(&cone_timeout, c));
 }
 

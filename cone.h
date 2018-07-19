@@ -93,12 +93,12 @@ int cone_cancel(struct cone *) mun_throws(memory);
 
 // When the time comes, force the next yielding call (see `cone_cancel` above) return ETIMEDOUT.
 // The time is given by the monotonic clock (see `mun_usec_monotonic`). Calling this function
-// several times results in several deadlines. A matching number of calls to `cone_success`
+// several times results in several deadlines. A matching number of calls to `cone_complete`
 // is required to erase them. If cancellation and a deadline coincide, that deadline is ignored.
-int cone_deadline(mun_usec) mun_throws(memory);
+int cone_deadline(struct cone *, mun_usec) mun_throws(memory);
 
 // Cancel one previous call to `cone_deadline` *with the same argument*.
-void cone_success(mun_usec);
+void cone_complete(struct cone *, mun_usec);
 
 // Create a coroutine on a new event loop, then block until all coroutines on it complete.
 // Note that `main()` is already running within an event loop; this is only useful
