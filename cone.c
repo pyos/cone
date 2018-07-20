@@ -362,8 +362,11 @@ static void cone_switch(struct cone *c) {
 static int cone_run(struct cone *c) mun_nothrow {
     if (atomic_fetch_and(&c->flags, ~CONE_FLAG_SCHEDULED) & CONE_FLAG_FINISHED)
         return 0;
-    struct cone* prev = cone;
+    struct mun_error *ep = mun_last_error();
+    struct cone *prev = cone;
+    mun_set_error_storage(&c->error);
     cone_switch(cone = c);
+    mun_set_error_storage(ep);
     cone = prev;
     return 0;
 }
@@ -440,13 +443,12 @@ int cone_drop(struct cone *c) {
 int cone_cowait(struct cone *c, int flags) {
     if (c == cone)
         return mun_error(deadlock, "coroutine waiting on itself");
-    struct mun_error saved = *mun_last_error();
     for (unsigned f; !((f = c->flags) & CONE_FLAG_FINISHED); )
         if (cone_wait(&c->done, &c->flags, f) < 0 MUN_RETHROW)
             return -1;
     if (!(flags & CONE_NORETHROW) && atomic_fetch_or(&c->flags, CONE_FLAG_JOINED) & CONE_FLAG_FAILED)
         return *mun_last_error() = c->error, mun_error_up(MUN_CURRENT_FRAME);
-    return *mun_last_error() = saved, 0;
+    return 0;
 }
 
 int cone_cancel(struct cone *c) {
@@ -474,10 +476,8 @@ static void cone_body(struct cone *c) {
     #if CONE_CXX
         cone_cxa_globals_load(NULL);
     #endif
-    if (c->body.code(c->body.data)) {
-        c->error = *mun_last_error();
+    if (c->body.code(c->body.data))
         c->flags |= CONE_FLAG_FAILED;
-    }
     c->flags |= CONE_FLAG_FINISHED;
     mun_assert(!cone_wake(&c->done, (size_t)-1));
     mun_assert(!cone_event_schedule_add(&c->loop->at, mun_usec_monotonic(), cone_bind(&cone_drop, c)));

@@ -50,6 +50,9 @@ struct mun_error
 // so this information may be outdated. Only valid until the next call to `mun_error_at`.
 struct mun_error *mun_last_error(void);
 
+// Make `mun_last_error` point to a different location.
+void mun_set_error_storage(struct mun_error *);
+
 // Overwrite the last error with a new one, with a `printf`-style message. Always "fails".
 int mun_error_at(int, const char *name, struct mun_stackframe, const char *fmt, ...) __attribute__((format(printf, 4, 5)));
 
