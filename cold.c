@@ -14,13 +14,19 @@
     static _Thread_local __typeof__(f) *libc_##f = NULL; \
     if (!libc_##f) libc_##f = dlsym(RTLD_NEXT, #f);
 
-#define cold_iocall(fd, write, f, ...) {          \
-    cold_def(f);                                  \
-    __typeof__(f(__VA_ARGS__)) __r;               \
-    while ((__r = libc_##f(__VA_ARGS__)) < 0      \
-     && (errno == EWOULDBLOCK || errno == EAGAIN) \
-     && cone && !cone_iowait(fd, write)) {}       \
-    return __r;                                   \
+#if __APPLE__
+#define cold_retryable(e, w) ((e) == EWOULDBLOCK || (e) == EAGAIN || ((w) && errno == EPROTOTYPE))
+#else
+#define cold_retryable(e, w) ((e) == EWOULDBLOCK || (e) == EAGAIN)
+#endif
+
+#define cold_iocall(fd, write, f, ...) {     \
+    cold_def(f);                             \
+    __typeof__(f(__VA_ARGS__)) __r;          \
+    while ((__r = libc_##f(__VA_ARGS__)) < 0 \
+     && cold_retryable(errno, write)         \
+     && cone && !cone_iowait(fd, write)) {}  \
+    return __r;                              \
 }
 
 // `fd` is automatically switched to non-blocking mode.
