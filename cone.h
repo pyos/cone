@@ -106,7 +106,7 @@ void cone_complete(struct cone *, mun_usec);
 int cone_loop(size_t stack, struct cone_closure) mun_throws(memory);
 
 // Return the number of coroutines active in the running coroutine's loop.
-const cone_atom * cone_count();
+const cone_atom * cone_count(void);
 
 #if __cplusplus
 } // extern "C"

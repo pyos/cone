@@ -531,7 +531,7 @@ static int cone_main_run(struct cone_loop *loop) {
     return 0;
 }
 
-const cone_atom * cone_count() {
+const cone_atom * cone_count(void) {
     return cone ? &cone->loop->active : NULL;
 }
 
