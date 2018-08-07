@@ -384,31 +384,31 @@ static int cone_ensure_running(struct cone *c) mun_throws(cancelled) {
          : state & CONE_FLAG_TIMED_OUT ? mun_error(timeout, " ") : 0;
 }
 
-#define cone_pause(always_unsub, ev_add, ev_del, ...) do {            \
+#define cone_pause(ev_add, ev_del, ...) do {                          \
     if (cone_ensure_running(cone) || ev_add(__VA_ARGS__) MUN_RETHROW) \
         return -1;                                                    \
     cone_switch(cone);                                                \
     int cancelled = cone_ensure_running(cone);                        \
-    if (always_unsub || cancelled)                                    \
-        ev_del(__VA_ARGS__);                                          \
+    ev_del(__VA_ARGS__);                                              \
     return cancelled;                                                 \
 } while (0)
 
-static void cone_unschedule(struct cone_event *ev, struct cone **c) {
+static void cone_event_unsub(struct cone_event *ev, struct cone **c) {
     size_t i = mun_vec_find(ev, *_ == *c);
     if (i != ev->size)
         mun_vec_erase(ev, i, 1);
 }
 
 int cone_wait(struct cone_event *ev, const cone_atom *uptr, unsigned u) {
-    // TODO actual atomicity of this function w.r.t. modifications of `*uptr`.
+    // TODO thread-safety
     // NOTE clang complains on a const atomic load
     if (atomic_load((cone_atom*)uptr) != u)
-        return 1;
-    cone_pause(0, mun_vec_append, cone_unschedule, ev, &(struct cone *){cone});
+        return mun_error(retry, " ");
+    cone_pause(mun_vec_append, cone_event_unsub, ev, &(struct cone *){cone});
 }
 
 int cone_wake(struct cone_event *ev, size_t n) {
+    // TODO thread-safety
     for (; n-- && ev->size; mun_vec_erase(ev, 0, 1))
         if (cone_schedule(ev->data[0]) MUN_RETHROW)
             return -1;
@@ -416,12 +416,12 @@ int cone_wake(struct cone_event *ev, size_t n) {
 }
 
 int cone_iowait(int fd, int write) {
-    cone_pause(1, cone_event_io_add, cone_event_io_del, &cone->loop->io, fd, write, cone_bind(&cone_schedule, cone));
+    cone_pause(cone_event_io_add, cone_event_io_del, &cone->loop->io, fd, write, cone_bind(&cone_schedule, cone));
 }
 
 int cone_sleep(mun_usec delay) {
     mun_usec at = mun_usec_monotonic() + delay;
-    cone_pause(0, cone_event_schedule_add, cone_event_schedule_del, &cone->loop->at, at, cone_bind(&cone_schedule, cone));
+    cone_pause(cone_event_schedule_add, cone_event_schedule_del, &cone->loop->at, at, cone_bind(&cone_schedule, cone));
 }
 
 int cone_yield(void) {
@@ -444,7 +444,7 @@ int cone_cowait(struct cone *c, int flags) {
     if (c == cone)
         return mun_error(deadlock, "coroutine waiting on itself");
     for (unsigned f; !((f = c->flags) & CONE_FLAG_FINISHED); )
-        if (cone_wait(&c->done, &c->flags, f) < 0 MUN_RETHROW)
+        if (cone_wait(&c->done, &c->flags, f) < 0 && mun_last_error()->code != mun_errno_retry MUN_RETHROW)
             return -1;
     if (!(flags & CONE_NORETHROW) && atomic_fetch_or(&c->flags, CONE_FLAG_JOINED) & CONE_FLAG_FAILED)
         return *mun_last_error() = c->error, mun_error_up(MUN_CURRENT_FRAME);
