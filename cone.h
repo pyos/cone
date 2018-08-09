@@ -70,10 +70,18 @@ static inline int cone_join(struct cone *c, int flags) {
 // equivalent to `cone_yield`.
 int cone_iowait(int fd, int write) mun_throws(cancelled, memory);
 
-// Sleep just because. Unlike normal system calls, does not interact with signals.
-int cone_sleep(mun_usec delay) mun_throws(cancelled, memory);
+// Sleep until at least the specified time, given by the monotonic clock (see
+// `mun_usec_monotonic`). Unlike normal system calls, does not interact with signals.
+int cone_sleep_until(mun_usec) mun_throws(cancelled, memory);
 
-// Wait until the next iteration of the event loop.
+// Sleep for at least the specified time, or 0 if it is negative.
+static inline int cone_sleep(mun_usec t) {
+    return cone_sleep_until(mun_usec_monotonic() + t);
+}
+
+// Wait until the next iteration of the event loop. Unlike `cone_sleep`, if this
+// call isn't cancelled, pending I/O events are guaranteed to be consumed before
+// it returns. (`cone_sleep` may or may not poll for I/O).
 int cone_yield(void) mun_throws(cancelled, memory);
 
 // If the value at the address is the same as the one passed as an argument, sleep until
@@ -83,19 +91,17 @@ int cone_wait(struct cone_event *, const cone_atom *, unsigned) mun_throws(cance
 // Wake up at most N coroutines paused with `cone_wait`.
 int cone_wake(struct cone_event *, size_t) mun_throws(memory);
 
-// Arrange for the coroutine to be woken up with an error, even if the event it was waiting
-// for did not yet occur. No-op if the coroutine has already finished. If it is currently
-// running or has just started, it will only receive a cancellation signal upon reaching `cone_wait`,
-// `cone_iowait`, `cone_sleep`, or `cone_yield`; and even then, the error may be ignored.
+// Make the next (or current, if any) call to `cone_wait`, `cone_iowait`, `cone_sleep_until`,
+// `cone_sleep`, or `cone_yield` from the specified coroutine fail with ECANCELED.
+// No-op if the coroutine has already finished.
 int cone_cancel(struct cone *) mun_throws(memory);
 
-// When the time comes, force the next yielding call (see `cone_cancel` above) return ETIMEDOUT.
-// The time is given by the monotonic clock (see `mun_usec_monotonic`). Calling this function
-// several times results in several deadlines. A matching number of calls to `cone_complete`
-// is required to erase them. If cancellation and a deadline coincide, that deadline is ignored.
+// See `cone_cancel`, but replace "ECANCELED" with "ETIMEDOUT" and "next"
+// with "next after the specified point in time (according to the monotonic clock)".
+// If one call would fail with both ECANCELED and ETIMEDOUT, the former takes priority.
 int cone_deadline(struct cone *, mun_usec) mun_throws(memory);
 
-// Cancel one previous call to `cone_deadline` *with the same argument*.
+// Undo *one* previous call to `cone_deadline` with the same arguments.
 void cone_complete(struct cone *, mun_usec);
 
 // Create a coroutine on a new event loop, then block until all coroutines on it complete.

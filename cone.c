@@ -346,9 +346,7 @@ static void cone_switch(struct cone *c) {
         "     ret             \n"
         "%=0: call %=1b       \n" :
       : "a"(&c->rsp), "c"(c->rsp)
-      : "rbx", "rdx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc",
-        "xmm0",  "xmm1",  "xmm2",  "xmm3",  "xmm4",  "xmm5",  "xmm6",  "xmm7",
-        "xmm8",  "xmm9",  "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
+      : "rdx", "rbx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc", "memory");
     // code from here on only runs when switching back into the event loop or an already running coroutine
     // (when switching into a coroutine for the first time, `ret` jumps right into `cone_body`.)
     #if CONE_ASAN
@@ -388,7 +386,7 @@ static int cone_ensure_running(struct cone *c) mun_throws(cancelled) {
     if (cone_ensure_running(cone) || ev_add(__VA_ARGS__) MUN_RETHROW) \
         return -1;                                                    \
     cone_switch(cone);                                                \
-    int cancelled = cone_ensure_running(cone);                        \
+    int cancelled = cone_ensure_running(cone) MUN_RETHROW;            \
     ev_del(__VA_ARGS__);                                              \
     return cancelled;                                                 \
 } while (0)
@@ -401,8 +399,7 @@ static void cone_event_unsub(struct cone_event *ev, struct cone **c) {
 
 int cone_wait(struct cone_event *ev, const cone_atom *uptr, unsigned u) {
     // TODO thread-safety
-    // NOTE clang complains on a const atomic load
-    if (atomic_load((cone_atom*)uptr) != u)
+    if (*uptr != u)
         return mun_error(retry, " ");
     cone_pause(mun_vec_append, cone_event_unsub, ev, &(struct cone *){cone});
 }
@@ -419,9 +416,8 @@ int cone_iowait(int fd, int write) {
     cone_pause(cone_event_io_add, cone_event_io_del, &cone->loop->io, fd, write, cone_bind(&cone_schedule, cone));
 }
 
-int cone_sleep(mun_usec delay) {
-    mun_usec at = mun_usec_monotonic() + delay;
-    cone_pause(cone_event_schedule_add, cone_event_schedule_del, &cone->loop->at, at, cone_bind(&cone_schedule, cone));
+int cone_sleep_until(mun_usec t) {
+    cone_pause(cone_event_schedule_add, cone_event_schedule_del, &cone->loop->at, t, cone_bind(&cone_schedule, cone));
 }
 
 int cone_yield(void) {
