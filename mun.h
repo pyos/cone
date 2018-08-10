@@ -106,7 +106,7 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 //
 // Note: all of the below functions and macros take vectors by pointers.
 //
-#define mun_vec(T) { __typeof__(T)* data; size_t size, cap; }
+#define mun_vec(T) { __typeof__(T)* data; size_t size, cap, off; }
 #define mun_vec_type(v) __typeof__(*(v)->data)
 
 // Weakly typed vector. Loses information about the contents, but allows any strongly
@@ -124,8 +124,8 @@ struct mun_vec mun_vec(void);
 //
 //     struct mun_vec(char) xs = mun_vec_init_static(char, 128);
 //
-#define MUN_VEC_STATIC_BIT ((size_t)1 << (CHAR_BIT * sizeof(size_t) - 1))
-#define mun_vec_init_static(T, n) {(T[n]){}, 0, (n) | MUN_VEC_STATIC_BIT}
+#define MUN_VEC_STATIC_BIT ((size_t)-1 ^ ((size_t)-1 >> 1))
+#define mun_vec_init_static(T, n) {(T[n]){}, 0, (n) | MUN_VEC_STATIC_BIT, 0}
 
 // Initializer for a vector that shares storage with some other pointer. It is assumed
 // that the storage is pre-initialized, i.e. initial size is the same as capacity.
@@ -134,7 +134,7 @@ struct mun_vec mun_vec(void);
 //     struct mun_vec(uint32_t) ys = mun_vec_init_borrow(calloc(4, 16), 16);
 //     free(ys.data);
 //
-#define mun_vec_init_borrow(p, n) {p, n, (n) | MUN_VEC_STATIC_BIT}
+#define mun_vec_init_borrow(p, n) {p, n, (n) | MUN_VEC_STATIC_BIT, 0}
 
 // Initializer for a vector that uses an array for underlying storage. DO NOT confuse
 // arrays with pointers they decay to!
@@ -157,11 +157,10 @@ struct mun_vec mun_vec(void);
 #define mun_vec_fini(v) mun_vec_fini_s(mun_vec_strided(v))
 
 static inline void mun_vec_fini_s(size_t s, struct mun_vec *v) {
-    (void)s;
     if (v->cap & MUN_VEC_STATIC_BIT)
         v->size = 0;
     else
-        free(v->data), *v = (struct mun_vec){};
+        free(mun_vec_data_s(s, v) - v->off), *v = (struct mun_vec){};
 }
 
 // Move the tail of a vector and change the size accordingly.
@@ -180,17 +179,21 @@ static inline int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) mun_t
     size_t cap = v->cap & ~MUN_VEC_STATIC_BIT;
     if (n <= cap)
         return 0;
+    void *start = mun_vec_data_s(s, v) - v->off;
+    if (v->off) {
+        cap += v->off;
+        if (n <= cap)
+            return *v = (struct mun_vec){memmove(start, v->data, v->size * s), v->size, v->cap + v->off, 0}, 0;
+    }
     if (v->cap & MUN_VEC_STATIC_BIT)
         return mun_error(memory, "static vector of %zu cannot fit %zu", cap, n);
     cap *= 1.5;
     if (cap < n + 4)
         cap = n + 4;
-    void *r = realloc(v->data, cap * s);
+    void *r = realloc(start, cap * s);
     if (r == NULL)
         return mun_error(memory, "%zu * %zu bytes", cap, s);
-    v->data = r;
-    v->cap = cap;
-    return 0;
+    return *v = (struct mun_vec){r, v->size, cap, 0}, 0;
 }
 
 // Splice: insert `n` elements at `i`th position.
@@ -213,14 +216,17 @@ static inline int mun_vec_splice_s(size_t s, struct mun_vec *v, size_t i, const 
 }
 
 static inline int mun_vec_extend_s(size_t s, struct mun_vec *v, const void *e, size_t n) {
-    return mun_vec_splice_s(s, v, v->size, e, n);
+    return mun_vec_splice_s(s, v, v->size, e, n); // not a macro to avoid evaluating `v` twice
 }
 
 // Remove `n` elements from the vector, starting with `i`th.
 #define mun_vec_erase(v, i, n) mun_vec_erase_s(mun_vec_strided(v), i, n)
 
 static inline void mun_vec_erase_s(size_t s, struct mun_vec *v, size_t i, size_t n) {
-    mun_vec_shift_s(s, v, i + n, -(int)n);
+    if (i == 0)
+        *v = (struct mun_vec){mun_vec_data_s(s, v) + n, v->size - n, v->cap - n, v->off + n};
+    else
+        mun_vec_shift_s(s, v, i + n, -(int)n);
 }
 
 // When used as `for mun_vec_iter(v, it) ...`, iterate over all elements of a vector `v`,
