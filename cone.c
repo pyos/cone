@@ -130,51 +130,32 @@ static struct cone_event_fd **cone_event_io_bucket(struct cone_event_io *set, in
     return b;
 }
 
-#if CONE_EVNOTIFIER
-static int cone_event_io_add_native(struct cone_event_io *set, int fd, int first, int write, void *data) {
-    #if CONE_EVNOTIFIER == 1
-        int flags = !first ? EPOLLIN|EPOLLOUT : write ? EPOLLOUT : EPOLLIN;
-        struct epoll_event params = {EPOLLRDHUP|EPOLLHUP|flags, {.ptr = data}};
-        return epoll_ctl((set)->poller, EPOLL_CTL_ADD, fd, &params) MUN_RETHROW_OS;
-    #elif CONE_EVNOTIFIER == 2
-        (void)first;
-        struct kevent ev = {fd, write ? EVFILT_WRITE : EVFILT_READ, EV_ADD, 0, 0, data};
-        return kevent(set->poller, &ev, 1, NULL, 0, NULL) MUN_RETHROW_OS;
-    #endif
-}
-
-static int cone_event_io_del_native(struct cone_event_io *set, int fd, int last, int write, void *data) {
-    #if CONE_EVNOTIFIER == 1
-        if (!last)
-            return cone_event_io_add_native(set, fd, 1, !write, data);
-        return epoll_ctl(set->poller, EPOLL_CTL_DEL, fd, NULL) MUN_RETHROW_OS;
-    #elif CONE_EVNOTIFIER == 2
-        (void)last;
-        struct kevent ev = {fd, write ? EVFILT_WRITE : EVFILT_READ, EV_DELETE, 0, 0, data};
-        return kevent(set->poller, &ev, 1, NULL, 0, NULL) MUN_RETHROW_OS;
-    #endif
-}
-#else
-#define cone_event_io_add_native(...) 0
-#define cone_event_io_del_native(...) 0
-#endif
-
 static int cone_event_io_add(struct cone_event_io *set, int fd, int write, struct cone_closure f) mun_throws(memory, assert) {
     struct cone_event_fd **b = cone_event_io_bucket(set, fd);
-    if (*b == NULL) {
+    int first = *b == NULL;
+    if (first) {
         if ((*b = malloc(sizeof(struct cone_event_fd))) == NULL)
             return mun_error(memory, "-");
         **b = (struct cone_event_fd){.fd = fd};
-        if (cone_event_io_add_native(set, fd, 1, write, *b))
-            return free(*b), *b = NULL, -1;
-    } else {
-        if ((*b)->cbs[write].code)
-            return mun_error(assert, "two readers/writers on one file descriptor");
-        if (cone_event_io_add_native(set, fd, 0, write, *b))
-            return -1;
+    } else if ((*b)->cbs[write].code) {
+        return mun_error(assert, "fd %d is already monitored for %s", fd, write ? "writing" : "reading");
     }
+    #if CONE_EVNOTIFIER == 1
+        int flags = (first && write ? 0 : EPOLLRDHUP|EPOLLIN) | (first && !write ? 0 : EPOLLOUT);
+        struct epoll_event ev = {flags, {.ptr = *b}};
+        if (epoll_ctl(set->poller, first ? EPOLL_CTL_ADD : EPOLL_CTL_MOD, fd, &ev) MUN_RETHROW_OS)
+            goto fail;
+    #elif CONE_EVNOTIFIER == 2
+        struct kevent ev = {fd, write ? EVFILT_WRITE : EVFILT_READ, EV_ADD, 0, 0, *b};
+        if (kevent(set->poller, &ev, 1, NULL, 0, NULL) MUN_RETHROW_OS)
+            goto fail;
+    #endif
     (*b)->cbs[write] = f;
     return 0;
+fail:
+    if (first)
+        free(*b), *b = NULL;
+    return -1;
 }
 
 static void cone_event_io_del(struct cone_event_io *set, int fd, int write, struct cone_closure f) {
@@ -182,12 +163,16 @@ static void cone_event_io_del(struct cone_event_io *set, int fd, int write, stru
     if (e == NULL || e->cbs[write].code != f.code || e->cbs[write].data != f.data)
         return;
     e->cbs[write] = (struct cone_closure){};
-    if (e->cbs[!write].code == NULL) {
-        mun_assert(!cone_event_io_del_native(set, fd, 1, write, e));
-        *b = e->link;
-        free(e);
-    } else
-        mun_assert(!cone_event_io_del_native(set, fd, 0, write, e));
+    int last = e->cbs[!write].code == NULL;
+    #if CONE_EVNOTIFIER == 1
+        struct epoll_event ev = {write ? EPOLLRDHUP|EPOLLIN : EPOLLOUT, {.ptr = e}};
+        mun_assert(!(epoll_ctl(set->poller, last ? EPOLL_CTL_DEL : EPOLL_CTL_MOD, fd, &ev) MUN_RETHROW_OS));
+    #elif CONE_EVNOTIFIER == 2
+        struct kevent ev = {fd, write ? EVFILT_WRITE : EVFILT_READ, EV_DELETE, 0, 0, e};
+        mun_assert(!(kevent(set->poller, &ev, 1, NULL, 0, NULL) MUN_RETHROW_OS));
+    #endif
+    if (last)
+        *b = e->link, free(e);
 }
 
 static int cone_event_io_init(struct cone_event_io *set) mun_throws(memory) {
