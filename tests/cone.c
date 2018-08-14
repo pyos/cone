@@ -1,4 +1,5 @@
 #include <unistd.h>
+#include <sys/socket.h>
 
 static int test_sleep_for(mun_usec *us) {
     return cone_sleep(*us);
@@ -132,9 +133,58 @@ static int test_io_starvation() {
     return cone_cancel(c) || cone_cancel(a) || cone_cancel(b) || cone_join(c, 0) || cone_join(a, 0) || cone_join(b, 0) MUN_RETHROW;
 }
 
+struct concurrent_rw_state {
+    int fds[2];
+    int result;
+};
+
+static int test_concurrent_rw_r(struct concurrent_rw_state *st) {
+    if (cone_iowait(st->fds[0], 0) MUN_RETHROW)
+        return -1;
+    st->result |= 1;
+    return 0;
+}
+
+static int test_concurrent_rw_w(struct concurrent_rw_state *st) {
+    if (cone_iowait(st->fds[0], 1) MUN_RETHROW)
+        return -1;
+    st->result |= 2;
+    return 0;
+}
+
+static int test_concurrent_rw() {
+    struct concurrent_rw_state st = {};
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, st.fds) MUN_RETHROW_OS)
+        return -1;
+    struct cone *a = cone(test_concurrent_rw_r, &st);
+    struct cone *b = cone(test_concurrent_rw_w, &st);
+    struct cone *c = cone(test_concurrent_rw_r, &st);
+    if (cone_join(b, 0) MUN_RETHROW)
+        goto fail;
+    if (!cone_join(c, 0) && mun_error(assert, "second reader should've failed"))
+        goto fail;
+    if (st.result != 2 && mun_error(assert, "reader also finished, but data hasn't been written yet"))
+        goto fail;
+    if (write(st.fds[1], "x", 1) < 0 MUN_RETHROW_OS)
+        goto fail;
+    if (cone_join(a, 0) MUN_RETHROW || (st.result != 3 && mun_error(assert, "wut")))
+        goto fail2;
+    close(st.fds[0]);
+    close(st.fds[1]);
+    return 0;
+fail:
+    cone_cancel(a);
+    cone_join(a, CONE_NORETHROW);
+fail2:
+    close(st.fds[0]);
+    close(st.fds[1]);
+    return -1;
+}
+
 export { "cone:sleep (0.5s concurrent with 1s)", &test_concurrent_sleep }
      , { "cone:sleep (0.1s concurrent with 1s cancelled after 0.1s)", &test_cancelled_sleep }
+     , { "cone:reader + writer", &test_rdwr }
+     , { "cone:reader + writer on one fd", &test_concurrent_rw }
+     , { "cone:io starvation", &test_io_starvation }
      , { "cone:yield", &test_yield }
      , { "cone:spawn", &test_spawn }
-     , { "cone:reader + writer", &test_rdwr }
-     , { "cone:io starvation", &test_io_starvation }
