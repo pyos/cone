@@ -161,14 +161,14 @@ static int test_concurrent_rw() {
     struct cone *c = cone(test_concurrent_rw_r, &st);
     if (cone_join(b, 0) MUN_RETHROW)
         goto fail;
-    if (!cone_join(c, 0) && mun_error(assert, "second reader should've failed"))
-        goto fail;
     if (st.result != 2 && mun_error(assert, "reader also finished, but data hasn't been written yet"))
         goto fail;
     if (write(st.fds[1], "x", 1) < 0 MUN_RETHROW_OS)
         goto fail;
     if (cone_join(a, 0) MUN_RETHROW || (st.result != 3 && mun_error(assert, "wut")))
         goto fail2;
+    if (cone_join(c, 0) MUN_RETHROW)
+        goto fail3;
     close(st.fds[0]);
     close(st.fds[1]);
     return 0;
@@ -176,6 +176,9 @@ fail:
     cone_cancel(a);
     cone_join(a, CONE_NORETHROW);
 fail2:
+    cone_cancel(c);
+    cone_join(c, CONE_NORETHROW);
+fail3:
     close(st.fds[0]);
     close(st.fds[1]);
     return -1;
