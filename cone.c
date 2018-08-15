@@ -189,8 +189,8 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
     if (timeout > 60000000ll)
         timeout = 60000000ll;
     #if CONE_EVNOTIFIER == 1
-        struct epoll_event evs[32];
-        int got = epoll_wait(set->poller, evs, 32, timeout / 1000ul);
+        struct epoll_event evs[64];
+        int got = epoll_wait(set->poller, evs, 64, timeout / 1000ul);
         if (got < 0)
             return errno != EINTR MUN_RETHROW_OS;
         for (int i = 0; i < got; i++) {
@@ -201,9 +201,9 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
             }
         }
     #elif CONE_EVNOTIFIER == 2
-        struct kevent evs[32];
+        struct kevent evs[64];
         struct timespec ns = {timeout / 1000000ull, timeout % 1000000ull * 1000};
-        int got = kevent(set->poller, NULL, 0, evs, 32, &ns);
+        int got = kevent(set->poller, NULL, 0, evs, 64, &ns);
         if (got < 0)
             return errno != EINTR MUN_RETHROW_OS;
         for (int i = 0; i < got; i++) {
