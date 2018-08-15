@@ -51,40 +51,51 @@ int cone_unblock(int fd) {
 
 struct cone_event_at {
     mun_usec at;
-    struct cone_closure f;
+    struct cone_closure f; // XXX this can be packed into 1 pointer by abusing alignment to store function id
 };
 
 struct cone_event_schedule {
-    struct mun_vec(struct cone_event_at) cs;
+    struct mun_vec(struct cone_event_at) now;
+    struct mun_vec(struct cone_event_at) later;
 };
 
 static void cone_event_schedule_fini(struct cone_event_schedule *ev) {
-    mun_vec_fini(&ev->cs);
+    mun_vec_fini(&ev->now);
+    mun_vec_fini(&ev->later);
 }
 
 static int cone_event_schedule_add(struct cone_event_schedule *ev, mun_usec at, struct cone_closure f) mun_throws(memory) {
-    return mun_vec_insert(&ev->cs, mun_vec_bisect(&ev->cs, at < _->at), &((struct cone_event_at){at, f}));
+    if (at == 0)
+        return mun_vec_append(&ev->now, &((struct cone_event_at){0, f}));
+    return mun_vec_insert(&ev->later, mun_vec_bisect(&ev->later, at < _->at), &((struct cone_event_at){at, f}));
 }
 
 static void cone_event_schedule_del(struct cone_event_schedule *ev, mun_usec at, struct cone_closure f) {
-    for (size_t i = mun_vec_bisect(&ev->cs, at < _->at); i-- && ev->cs.data[i].at == at; )
-        if (ev->cs.data[i].f.code == f.code && ev->cs.data[i].f.data == f.data)
-            return mun_vec_erase(&ev->cs, i, 1);
+    for (size_t i = mun_vec_bisect(&ev->later, at < _->at); i-- && ev->later.data[i].at == at; )
+        if (ev->later.data[i].f.code == f.code && ev->later.data[i].f.data == f.data)
+            return mun_vec_erase(&ev->later, i, 1);
 }
 
 static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev, size_t limit) {
-    while (ev->cs.size) {
+    while (1) {
         mun_usec now = mun_usec_monotonic();
-        struct cone_event_at c = ev->cs.data[0];
-        if (c.at > now)
-            return c.at - now;
-        if (!limit--)
-            return 0;
-        mun_vec_erase(&ev->cs, 0, 1);
-        if (c.f.code(c.f.data) MUN_RETHROW)
+        size_t more = 0;
+        while (more < ev->later.size && ev->later.data[more].at <= now)
+            more++;
+        if (mun_vec_extend(&ev->now, ev->later.data, more) MUN_RETHROW)
             return -1;
+        mun_vec_erase(&ev->later, 0, more);
+        if (!ev->now.size)
+            return ev->later.size ? ev->later.data->at - now : MUN_USEC_MAX;
+        do {
+            if (!limit--)
+                return 0;
+            struct cone_closure f = ev->now.data[0].f;
+            mun_vec_erase(&ev->now, 0, 1);
+            if (f.code(f.data) MUN_RETHROW)
+                return -1;
+        } while (ev->now.size);
     }
-    return MUN_USEC_MAX;
 }
 
 struct cone_event_fd {
@@ -340,10 +351,9 @@ static int cone_run(struct cone *c) mun_nothrow {
 }
 
 static int cone_schedule(struct cone *c) mun_throws(memory) {
-    if (!(atomic_fetch_or(&c->flags, CONE_FLAG_SCHEDULED) & (CONE_FLAG_SCHEDULED | CONE_FLAG_FINISHED)))
-        if (cone_event_schedule_add(&c->loop->at, mun_usec_monotonic(), cone_bind(&cone_run, c)) MUN_RETHROW)
-            return -1;
-    return 0;
+    if (atomic_fetch_or(&c->flags, CONE_FLAG_SCHEDULED) & (CONE_FLAG_SCHEDULED | CONE_FLAG_FINISHED))
+        return 0;
+    return cone_event_schedule_add(&c->loop->at, 0, cone_bind(&cone_run, c)) MUN_RETHROW;
 }
 
 static int cone_ensure_running(struct cone *c) mun_throws(cancelled) {
@@ -447,7 +457,7 @@ static void cone_body(struct cone *c) {
         c->flags |= CONE_FLAG_FAILED;
     c->flags |= CONE_FLAG_FINISHED;
     mun_assert(!cone_wake(&c->done, (size_t)-1));
-    mun_assert(!cone_event_schedule_add(&c->loop->at, mun_usec_monotonic(), cone_bind(&cone_drop, c)));
+    mun_assert(!cone_event_schedule_add(&c->loop->at, 0, cone_bind(&cone_drop, c)));
     cone_loop_dec(c->loop);
     cone_switch(c);
     abort();
