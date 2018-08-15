@@ -182,17 +182,19 @@ static inline int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) mun_t
     void *start = mun_vec_data_s(s, v) - v->off;
     if (v->off) {
         cap += v->off;
-        if (n <= cap)
+        if (v->cap & MUN_VEC_STATIC_BIT ? n <= cap : n + n/5 <= cap)
             return *v = (struct mun_vec){memmove(start, v->data, v->size * s), v->size, v->cap + v->off, 0}, 0;
     }
     if (v->cap & MUN_VEC_STATIC_BIT)
         return mun_error(memory, "static vector of %zu cannot fit %zu", cap, n);
-    cap *= 1.5;
+    cap += cap/2;
     if (cap < n + 4)
         cap = n + 4;
-    void *r = realloc(start, cap * s);
+    void *r = malloc(cap * s);
     if (r == NULL)
         return mun_error(memory, "%zu * %zu bytes", cap, s);
+    memmove(r, v->data, v->size * s);
+    free(start);
     return *v = (struct mun_vec){r, v->size, cap, 0}, 0;
 }
 
