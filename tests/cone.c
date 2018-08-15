@@ -56,6 +56,32 @@ static int test_spawn(char *msg) {
     return 0;
 }
 
+static int test_spawn_many(char *msg) {
+    const unsigned N = 1000000;
+    struct mun_vec(struct cone *) spawned = {};
+    if (mun_vec_reserve(&spawned, N) MUN_RETHROW)
+        return -1;
+    mun_usec a = mun_usec_monotonic();
+    struct cone *c;
+    for (unsigned i = 0; i < N; i++) {
+        if ((c = cone(&test_nop, NULL)) == NULL MUN_RETHROW)
+            goto fail;
+        if (mun_vec_append(&spawned, &c) MUN_RETHROW) {
+            cone_drop(c);
+            goto fail;
+        }
+    }
+    mun_usec b = mun_usec_monotonic();
+    for mun_vec_iter(&spawned, it)
+        cone_drop(*it);
+    sprintf(msg, "%f us/cone", (double)(b - a) / N);
+    return 0;
+fail:
+    for mun_vec_iter(&spawned, it)
+        cone_drop(*it);
+    return -1;
+}
+
 struct args { unsigned N; int fd; const char *data; size_t size; };
 
 static int writer(struct args *aptr) {
@@ -191,3 +217,4 @@ export { "cone:sleep (0.5s concurrent with 1s)", &test_concurrent_sleep }
      , { "cone:io starvation", &test_io_starvation }
      , { "cone:yield", &test_yield }
      , { "cone:spawn", &test_spawn }
+     , { "cone:spawn many", &test_spawn_many }
