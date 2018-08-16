@@ -287,19 +287,19 @@ enum {
 
 struct cone {
     cone_atom flags;
+    void **rsp;
     struct cone_loop *loop;
     struct cone_closure body;
     struct cone_event done;
-    struct mun_error error;
     #if CONE_ASAN
         const void * target_stack;
         size_t target_stack_size;
     #endif
-    void **rsp;
+    struct mun_error error;
     _Alignas(max_align_t) char stack[];
 };
 
-_Thread_local struct cone * volatile cone = NULL;
+_Thread_local struct cone * cone = NULL;
 
 static void cone_switch(struct cone *c) {
     c->flags ^= CONE_FLAG_RUNNING;
@@ -341,9 +341,8 @@ static void cone_switch(struct cone *c) {
 static int cone_run(struct cone *c) mun_nothrow {
     if (atomic_fetch_and(&c->flags, ~CONE_FLAG_SCHEDULED) & CONE_FLAG_FINISHED)
         return 0;
-    struct mun_error *ep = mun_last_error();
+    struct mun_error *ep = mun_set_error_storage(&c->error);
     struct cone *prev = cone;
-    mun_set_error_storage(&c->error);
     cone_switch(cone = c);
     mun_set_error_storage(ep);
     cone = prev;
@@ -453,9 +452,7 @@ static void cone_body(struct cone *c) {
     #if CONE_CXX
         cone_cxa_globals_load(NULL);
     #endif
-    if (c->body.code(c->body.data))
-        c->flags |= CONE_FLAG_FAILED;
-    c->flags |= CONE_FLAG_FINISHED;
+    c->flags |= (c->body.code(c->body.data) ? CONE_FLAG_FAILED : 0) | CONE_FLAG_FINISHED;
     mun_assert(!cone_wake(&c->done, (size_t)-1));
     mun_assert(!cone_event_schedule_add(&c->loop->at, 0, cone_bind(&cone_drop, c)));
     cone_loop_dec(c->loop);
@@ -522,11 +519,10 @@ static void __attribute__((constructor)) cone_main_init(void) {
 static void __attribute__((destructor)) cone_main_fini(void) {
     struct cone *c = cone;
     if (c) {
-        struct cone_loop *loop = c->loop;
-        cone_loop_dec(loop);
+        cone_loop_dec(&cone_main_loop);
         cone_switch(c);
         cone_drop(c);
-        mun_assert(cone_event_schedule_emit(&loop->at, (size_t)-1) >= 0);
-        cone_loop_fini(loop);
+        mun_assert(cone_event_schedule_emit(&cone_main_loop.at, (size_t)-1) >= 0);
+        cone_loop_fini(&cone_main_loop);
     }
 }

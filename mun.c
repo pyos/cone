@@ -31,8 +31,10 @@ struct mun_error *mun_last_error(void) {
     return mun_global_eptr;
 }
 
-void mun_set_error_storage(struct mun_error *p) {
+struct mun_error *mun_set_error_storage(struct mun_error *p) {
+    struct mun_error *ret = mun_global_eptr;
     mun_global_eptr = p;
+    return ret;
 }
 
 static void mun_error_fmt(const char *fmt, va_list args) {

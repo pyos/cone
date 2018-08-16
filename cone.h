@@ -31,7 +31,7 @@ extern
 #else
     _Thread_local
 #endif
-    struct cone * volatile cone;
+    struct cone * cone;
 
 // A manually triggered event. Zero-initialized; finalized with `mun_vec_fini`;
 // must not be destroyed if there are callbacks attached.
