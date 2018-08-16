@@ -28,11 +28,11 @@ void __sanitizer_finish_switch_fiber(void* fake_stack_save, const void** old_bot
 
 #if !defined(CONE_EVNOTIFIER) && __linux__
 #define CONE_EVNOTIFIER 1  // epoll
-#elif !defined(CONE_EVNOTIFIER) && __APPLE__
+#elif !defined(CONE_EVNOTIFIER) && (__FreeBSD__ || __APPLE__)
 #define CONE_EVNOTIFIER 2  // kqueue
 #endif
 
-#if !((__linux__ || __APPLE__) && __x86_64__)
+#if !((__linux__ || __FreeBSD__ || __APPLE__) && __x86_64__)
 _Static_assert(0, "stack switching is only supported on x86-64 UNIX");
 #endif
 
