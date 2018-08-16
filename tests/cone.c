@@ -200,10 +200,10 @@ static int test_concurrent_rw() {
     return 0;
 fail:
     cone_cancel(a);
-    cone_join(a, CONE_NORETHROW);
+    cone_join(a, 1);
 fail2:
     cone_cancel(c);
-    cone_join(c, CONE_NORETHROW);
+    cone_join(c, 1);
 fail3:
     close(st.fds[0]);
     close(st.fds[1]);

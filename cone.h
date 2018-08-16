@@ -50,18 +50,13 @@ struct cone *cone_spawn(size_t stack, struct cone_closure) mun_throws(memory);
 // Drop the reference to a coroutine returned by `cone_spawn`.
 int cone_drop(struct cone *);
 
-enum CONE_COWAIT_FLAGS
-{
-    CONE_NORETHROW = 1,
-};
-
-// Sleep until a coroutine finishes. If it happens to throw an error in the process,
-// rethrow it into the current coroutine instead of printing, unless CONE_NORETHROW is in flags.
-int cone_cowait(struct cone *, int flags);
+// Sleep until a coroutine finishes. If norethrow is 0, errors returned by the coroutine
+// are forwarded by this function.
+int cone_cowait(struct cone *, int norethrow);
 
 // Same as `cone_cowait`, but also drop the reference.
-static inline int cone_join(struct cone *c, int flags) {
-    int r = cone_cowait(c, flags);
+static inline int cone_join(struct cone *c, int norethrow) {
+    int r = cone_cowait(c, norethrow);
     cone_drop(c);
     return r;
 }

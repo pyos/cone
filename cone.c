@@ -415,13 +415,13 @@ int cone_drop(struct cone *c) {
     return !c MUN_RETHROW;
 }
 
-int cone_cowait(struct cone *c, int flags) {
+int cone_cowait(struct cone *c, int norethrow) {
     if (c == cone)
         return mun_error(deadlock, "coroutine waiting on itself");
     for (unsigned f; !((f = c->flags) & CONE_FLAG_FINISHED); )
         if (cone_wait(&c->done, &c->flags, f) < 0 && mun_last_error()->code != mun_errno_retry MUN_RETHROW)
             return -1;
-    if (!(flags & CONE_NORETHROW) && atomic_fetch_and(&c->flags, ~CONE_FLAG_FAILED) & CONE_FLAG_FAILED)
+    if (!norethrow && c->flags & CONE_FLAG_FAILED)
         return *mun_last_error() = c->error, mun_error_up(MUN_CURRENT_FRAME);
     return 0;
 }
