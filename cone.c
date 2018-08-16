@@ -55,7 +55,7 @@ struct cone_event_at {
 };
 
 struct cone_event_schedule {
-    struct mun_vec(struct cone_event_at) now;
+    struct mun_vec(struct cone_closure) now;
     struct mun_vec(struct cone_event_at) later;
 };
 
@@ -66,7 +66,7 @@ static void cone_event_schedule_fini(struct cone_event_schedule *ev) {
 
 static int cone_event_schedule_add(struct cone_event_schedule *ev, mun_usec at, struct cone_closure f) mun_throws(memory) {
     if (at == 0)
-        return mun_vec_append(&ev->now, &((struct cone_event_at){0, f}));
+        return mun_vec_append(&ev->now, &f);
     return mun_vec_insert(&ev->later, mun_vec_bisect(&ev->later, at < _->at), &((struct cone_event_at){at, f}));
 }
 
@@ -82,7 +82,7 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev, size_t 
         size_t more = 0;
         while (more < ev->later.size && ev->later.data[more].at <= now)
             more++;
-        if (mun_vec_extend(&ev->now, ev->later.data, more) MUN_RETHROW)
+        if (mun_vec_extend(&ev->now, &ev->later.data->f, more) MUN_RETHROW)
             return -1;
         mun_vec_erase(&ev->later, 0, more);
         if (!ev->now.size)
@@ -90,7 +90,7 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev, size_t 
         do {
             if (!limit--)
                 return 0;
-            struct cone_closure f = ev->now.data[0].f;
+            struct cone_closure f = ev->now.data[0];
             mun_vec_erase(&ev->now, 0, 1);
             if (f.code(f.data) MUN_RETHROW)
                 return -1;
