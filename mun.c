@@ -49,7 +49,7 @@ static void mun_error_fmt(const char *fmt, va_list args) {
     }
 }
 
-int mun_error_at(int n, const char *name, struct mun_stackframe frame, const char *fmt, ...) {
+int mun_error_at(int n, const char *name, const struct mun_stackframe *frame, const char *fmt, ...) {
     struct mun_error *ep = mun_last_error();
     errno = ep->code = n < 0 ? -n : n;
     ep->stacklen = 0;
@@ -63,14 +63,14 @@ int mun_error_at(int n, const char *name, struct mun_stackframe frame, const cha
     return mun_error_up(frame);
 }
 
-int mun_error_up(struct mun_stackframe frame) {
+int mun_error_up(const struct mun_stackframe *frame) {
     struct mun_error *ep = mun_last_error();
     if (ep->stacklen < sizeof(ep->stack) / sizeof(frame))
         ep->stack[ep->stacklen++] = frame;
     return -1;
 }
 
-int mun_error_up_ctx(struct mun_stackframe frame, const char *fmt, ...) {
+int mun_error_up_ctx(const struct mun_stackframe *frame, const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     mun_error_fmt(fmt, args);
@@ -91,5 +91,5 @@ void mun_error_show(const char *prefix, const struct mun_error *err) {
         err = mun_last_error();
     fprintf(stderr, mun_error_fmt_head[ansi], prefix, err->code, err->name, err->text);
     for (unsigned i = 0; i < err->stacklen; i++)
-        fprintf(stderr, mun_error_fmt_line[ansi], i + 1, err->stack[i].file, err->stack[i].line, err->stack[i].func);
+        fprintf(stderr, mun_error_fmt_line[ansi], i + 1, err->stack[i]->file, err->stack[i]->line, err->stack[i]->func);
 }

@@ -44,7 +44,7 @@ struct mun_error
     const char *name;
     char text[256];
     // Stack at the time of the error, starting from innermost frame (where `mun_error_at` was called).
-    struct mun_stackframe stack[16];
+    const struct mun_stackframe *stack[16];
 };
 
 // Return the last thrown error. Note that there's no way to mark an error as "swallowed",
@@ -55,13 +55,13 @@ struct mun_error *mun_last_error(void);
 void mun_set_error_storage(struct mun_error *);
 
 // Overwrite the last error with a new one, with a `printf`-style message. Always "fails".
-int mun_error_at(int, const char *name, struct mun_stackframe, const char *fmt, ...) __attribute__((format(printf, 4, 5)));
+int mun_error_at(int, const char *name, const struct mun_stackframe *, const char *fmt, ...) __attribute__((format(printf, 4, 5)));
 
 // Add a stack frame to the last error, if there's space for it. Always "fails".
-int mun_error_up(struct mun_stackframe);
+int mun_error_up(const struct mun_stackframe *);
 
 // Add a stack frame to the last error an a prefix to its text. Always "fails".
-int mun_error_up_ctx(struct mun_stackframe, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+int mun_error_up_ctx(const struct mun_stackframe *, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 
 // Print an error to stderr, possibly with pretty colored highlighting. If `err` is NULL,
 // `mun_last_error()` is used. The first line looks something like "{prefix} error {code}:
@@ -70,7 +70,7 @@ int mun_error_up_ctx(struct mun_stackframe, const char *fmt, ...) __attribute__(
 void mun_error_show(const char *prefix, const struct mun_error *err);
 
 // `struct mun_stackframe` desribing the position where this macro was used.
-#define MUN_CURRENT_FRAME ((struct mun_stackframe){__FILE__, __FUNCTION__, __LINE__})
+#define MUN_CURRENT_FRAME ({ static const struct mun_stackframe f = {__FILE__, __func__, __LINE__}; &f; })
 
 // Call `mun_error_at` with the current stack frame, error id "mun_errno_X", and name "X".
 #define mun_error(id, ...) mun_error_at(mun_errno_##id, #id, MUN_CURRENT_FRAME, __VA_ARGS__)
