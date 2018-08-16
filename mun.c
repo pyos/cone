@@ -93,3 +93,26 @@ void mun_error_show(const char *prefix, const struct mun_error *err) {
     for (unsigned i = 0; i < err->stacklen; i++)
         fprintf(stderr, mun_error_fmt_line[ansi], i + 1, err->stack[i]->file, err->stack[i]->line, err->stack[i]->func);
 }
+
+int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) mun_throws(memory) {
+    size_t cap = v->cap & ~MUN_VEC_STATIC_BIT;
+    if (n <= cap)
+        return 0;
+    void *start = mun_vec_data_s(s, v) - v->off;
+    if (v->off) {
+        cap += v->off;
+        if (v->cap & MUN_VEC_STATIC_BIT ? n <= cap : n + n/5 <= cap)
+            return *v = (struct mun_vec){memmove(start, v->data, v->size * s), v->size, v->cap + v->off, 0}, 0;
+    }
+    if (v->cap & MUN_VEC_STATIC_BIT)
+        return mun_error(memory, "static vector of %zu cannot fit %zu", cap, n);
+    cap += cap/2;
+    if (cap < n + 4)
+        cap = n + 4;
+    void *r = malloc(cap * s);
+    if (r == NULL)
+        return mun_error(memory, "%zu * %zu bytes", cap, s);
+    memmove(r, v->data, v->size * s);
+    free(start);
+    return *v = (struct mun_vec){r, v->size, cap, 0}, 0;
+}

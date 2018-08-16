@@ -175,28 +175,7 @@ static inline void mun_vec_shift_s(size_t s, struct mun_vec *v, size_t start, in
 // Resize the vector so that it may contain at least `n` elements.
 #define mun_vec_reserve(v, n) mun_vec_reserve_s(mun_vec_strided(v), n)
 
-static inline int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) mun_throws(memory) {
-    size_t cap = v->cap & ~MUN_VEC_STATIC_BIT;
-    if (n <= cap)
-        return 0;
-    void *start = mun_vec_data_s(s, v) - v->off;
-    if (v->off) {
-        cap += v->off;
-        if (v->cap & MUN_VEC_STATIC_BIT ? n <= cap : n + n/5 <= cap)
-            return *v = (struct mun_vec){memmove(start, v->data, v->size * s), v->size, v->cap + v->off, 0}, 0;
-    }
-    if (v->cap & MUN_VEC_STATIC_BIT)
-        return mun_error(memory, "static vector of %zu cannot fit %zu", cap, n);
-    cap += cap/2;
-    if (cap < n + 4)
-        cap = n + 4;
-    void *r = malloc(cap * s);
-    if (r == NULL)
-        return mun_error(memory, "%zu * %zu bytes", cap, s);
-    memmove(r, v->data, v->size * s);
-    free(start);
-    return *v = (struct mun_vec){r, v->size, cap, 0}, 0;
-}
+int mun_vec_reserve_s(size_t, struct mun_vec *, size_t n) mun_throws(memory);
 
 // Splice: insert `n` elements at `i`th position.
 // Extend: insert `n` elements at the end.
