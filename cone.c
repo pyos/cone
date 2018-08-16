@@ -406,7 +406,7 @@ int cone_yield(void) {
 }
 
 int cone_drop(struct cone *c) {
-    if (c && !((c->flags ^= CONE_FLAG_LAST_REF) & CONE_FLAG_LAST_REF)) {
+    if (c && (atomic_fetch_xor(&c->flags, CONE_FLAG_LAST_REF) & CONE_FLAG_LAST_REF)) {
         if (c->flags & CONE_FLAG_FAILED && c->error.code != mun_errno_cancelled)
             mun_error_show("cone destroyed with", &c->error);
         mun_vec_fini(&c->done);
