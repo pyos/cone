@@ -460,7 +460,7 @@ static void cone_body(struct cone *c) {
     abort();
 }
 
-struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct cone_closure body) {
+static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct cone_closure body) {
     size &= ~(size_t)(_Alignof(max_align_t) - 1);
     struct cone *c = (struct cone *)malloc(sizeof(struct cone) + size);
     if (c == NULL)
