@@ -484,10 +484,8 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
     return cone_loop_inc(c->loop), c;
 }
 
-static struct cone_loop cone_main_loop = {};
-
 struct cone *cone_spawn(size_t size, struct cone_closure body) {
-    return cone_spawn_on(cone ? cone->loop : &cone_main_loop, size, body);
+    return cone_spawn_on(cone->loop, size, body);
 }
 
 int cone_loop(size_t size, struct cone_closure body) {
@@ -509,9 +507,11 @@ const cone_atom * cone_count(void) {
     return cone ? &cone->loop->active : NULL;
 }
 
+static struct cone_loop cone_main_loop = {};
+
 static void __attribute__((constructor)) cone_main_init(void) {
     mun_assert(!cone_loop_init(&cone_main_loop));
-    struct cone *c = cone(&cone_main_run, &cone_main_loop);
+    struct cone *c = cone_spawn_on(&cone_main_loop, CONE_DEFAULT_STACK, cone_bind(&cone_main_run, &cone_main_loop));
     mun_assert(c != NULL);
     cone_switch(c);
 }
