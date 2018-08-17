@@ -317,14 +317,14 @@ static void cone_switch(struct cone *c) {
     __asm__(" jmp  %=0f       \n"
         "%=1: push %%rbp      \n"
         "     push %%rdi      \n"
-        "     mov  %%rsp, (%0)\n"
+        "     mov  %%rsp, %0  \n" // `xchg` is implicitly `lock`ed; 3 `mov`s are faster
         "     mov  %1, %%rsp  \n"
         "     pop  %%rdi      \n"
         "     pop  %%rbp      \n"
         "     ret             \n"
-        "%=0: call %=1b       \n" :
-      : "a"(&c->rsp), "c"(c->rsp)
-      : "rdx", "rbx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc", "memory");
+        "%=0: call %=1b       \n"
+      : "=m"(c->rsp) : "c"(c->rsp)
+      : "rax", "rdx", "rbx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc", "memory");
     // code from here on only runs when switching back into the event loop or an already running coroutine
     // (when switching into a coroutine for the first time, `ret` jumps right into `cone_body`.)
     #if CONE_ASAN
