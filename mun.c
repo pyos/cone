@@ -11,9 +11,9 @@
 #include <sys/time.h>
 
 mun_usec mun_usec_now(void) {
-    struct timeval val;
-    gettimeofday(&val, NULL);
-    return (mun_usec)val.tv_sec * 1000000ull + val.tv_usec;
+    struct timespec val;
+    clock_gettime(CLOCK_REALTIME, &val);
+    return (mun_usec)val.tv_sec * 1000000ull + val.tv_nsec / 1000;
 }
 
 mun_usec mun_usec_monotonic(void) {
