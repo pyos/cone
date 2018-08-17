@@ -123,7 +123,7 @@ static void cone_event_io_fini(struct cone_event_io *set) {
 }
 
 static void cone_event_io_ping(struct cone_event_io *set) {
-    if (!atomic_fetch_add(&set->pinged, 1))
+    if (atomic_compare_exchange_strong(&set->pinged, &(unsigned){0}, 1))
         write(set->selfpipe[1], "", 1);
 }
 
@@ -281,6 +281,7 @@ enum {
     CONE_FLAG_FAILED    = 0x10,
     CONE_FLAG_CANCELLED = 0x20,
     CONE_FLAG_TIMED_OUT = 0x40,
+    CONE_FLAG_JOINED    = 0x80,
 };
 
 struct cone {
@@ -393,8 +394,9 @@ struct cone *cone_spawn(size_t size, struct cone_closure body) {
 
 int cone_drop(struct cone *c) {
     if (c && (atomic_fetch_xor(&c->flags, CONE_FLAG_LAST_REF) & CONE_FLAG_LAST_REF)) {
-        if (c->flags & CONE_FLAG_FAILED && c->error.code != mun_errno_cancelled)
-            mun_error_show("cone destroyed with", &c->error);
+        if ((c->flags & (CONE_FLAG_FAILED | CONE_FLAG_JOINED)) == CONE_FLAG_FAILED)
+            if (c->error.code != mun_errno_cancelled)
+                mun_error_show("cone destroyed with", &c->error);
         mun_vec_fini(&c->done);
         free(c);
     }
@@ -463,7 +465,7 @@ int cone_cowait(struct cone *c, int norethrow) {
     for (unsigned f; !((f = c->flags) & CONE_FLAG_FINISHED); )
         if (cone_wait(&c->done, &c->flags, f) < 0 && mun_last_error()->code != mun_errno_retry MUN_RETHROW)
             return -1;
-    if (!norethrow && c->flags & CONE_FLAG_FAILED)
+    if (!norethrow && atomic_fetch_or(&c->flags, CONE_FLAG_JOINED) & CONE_FLAG_FAILED)
         return *mun_last_error() = c->error, mun_error_up(MUN_CURRENT_FRAME);
     return 0;
 }
