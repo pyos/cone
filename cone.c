@@ -4,32 +4,30 @@
 #include <unistd.h>
 #include <stdatomic.h>
 
-#if __clang__
-#if __has_feature(address_sanitizer)
-#define CONE_ASAN 1
-#endif
-#else
-#if defined(address_sanitizer_enabled) || defined(__SANITIZE_ADDRESS__)
-#define CONE_ASAN 1
-#endif
+#ifndef __has_feature
+#define __has_feature(x) 0
 #endif
 
-#if CONE_CXX
-#include <alloca.h>
-extern const size_t cone_cxa_globals_size;
-void cone_cxa_globals_save(void *);
-void cone_cxa_globals_load(void *);
-#endif
-
-#if CONE_ASAN
+#if defined(__SANITIZE_ADDRESS__) || __has_feature(address_sanitizer)
+#define CONE_ASAN 1
 void __sanitizer_start_switch_fiber(void** fake_stack_save, const void* bottom, size_t size);
 void __sanitizer_finish_switch_fiber(void* fake_stack_save, const void** old_bottom, size_t* old_size);
 #endif
 
-#if !defined(CONE_EVNOTIFIER) && __linux__
-#define CONE_EVNOTIFIER 1  // epoll
-#elif !defined(CONE_EVNOTIFIER) && (__FreeBSD__ || __APPLE__)
-#define CONE_EVNOTIFIER 2  // kqueue
+#if CONE_CXX
+#if CONE_ASAN && __clang__
+// XXX a bug in LLVM causes it to ignore the clobbering of %rbx, which is used as a stack pointer
+//     instead of %rsp when asan is enabled and there is an alloca.
+#define cone_cxa_globals_size 64
+#else
+extern const size_t cone_cxa_globals_size;
+#endif
+void cone_cxa_globals_save(void *);
+void cone_cxa_globals_load(void *);
+#endif
+
+#ifndef CONE_EVNOTIFIER
+#define CONE_EVNOTIFIER (__linux__ ? 1 : __FreeBSD__ || __APPLE__ ? 2 : 0)
 #endif
 
 #if !((__linux__ || __FreeBSD__ || __APPLE__) && __x86_64__)
@@ -302,13 +300,7 @@ _Thread_local struct cone * cone = NULL;
 
 static void cone_switch(struct cone *c) {
     #if CONE_CXX
-        #if CONE_ASAN && __clang__
-            // XXX a bug in LLVM causes it to ignore the clobbering of %rbx, which is used as a stack pointer
-            //     instead of %rsp when asan is enabled and there is an alloca.
-            char cxa_globals[64];
-        #else
-            void * cxa_globals = alloca(cone_cxa_globals_size);
-        #endif
+        char cxa_globals[cone_cxa_globals_size];
         cone_cxa_globals_save(cxa_globals);
     #endif
     #if CONE_ASAN
