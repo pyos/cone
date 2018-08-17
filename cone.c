@@ -277,7 +277,6 @@ static void cone_loop_dec(struct cone_loop *loop) {
 enum {
     CONE_FLAG_LAST_REF  = 0x01,
     CONE_FLAG_SCHEDULED = 0x02,
-    CONE_FLAG_RUNNING   = 0x04,
     CONE_FLAG_FINISHED  = 0x08,
     CONE_FLAG_FAILED    = 0x10,
     CONE_FLAG_CANCELLED = 0x20,
@@ -301,7 +300,6 @@ struct cone {
 _Thread_local struct cone * cone = NULL;
 
 static void cone_switch(struct cone *c) {
-    c->flags ^= CONE_FLAG_RUNNING;
     #if CONE_CXX
         #if CONE_ASAN && __clang__
             // XXX a bug in LLVM causes it to ignore the clobbering of %rbx, which is used as a stack pointer
