@@ -305,21 +305,19 @@ static void cone_switch(struct cone *c) {
     #endif
     #if CONE_ASAN
         void * fake_stack = NULL;
-        __sanitizer_start_switch_fiber(c->flags & CONE_FLAG_FINISHED ? NULL : &fake_stack, c->target_stack, c->target_stack_size);
+        __sanitizer_start_switch_fiber(&fake_stack, c->target_stack, c->target_stack_size);
     #endif
-    __asm__(" jmp  %=0f       \n"
-        "%=1: push %%rbp      \n"
-        "     push %%rdi      \n"
-        "     mov  %%rsp, %0  \n" // `xchg` is implicitly `lock`ed; 3 `mov`s are faster
-        "     mov  %1, %%rsp  \n"
-        "     pop  %%rdi      \n"
-        "     pop  %%rbp      \n"
-        "     ret             \n"
-        "%=0: call %=1b       \n"
+    __asm__("jmp  %=0f       \n"
+    "%=1:"  "push %%rbp      \n"
+            "push %%rdi      \n"
+            "mov  %%rsp, %0  \n" // `xchg` is implicitly `lock`ed; 3 `mov`s are faster
+            "mov  %1, %%rsp  \n" // (the third is inserted by the compiler to load c->rsp)
+            "pop  %%rdi      \n"
+            "pop  %%rbp      \n"
+            "ret             \n" // jumps into `cone_body` if this is a new coroutine
+    "%=0:"  "call %=1b       \n"
       : "=m"(c->rsp) : "c"(c->rsp)
       : "rax", "rdx", "rbx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc", "memory");
-    // code from here on only runs when switching back into the event loop or an already running coroutine
-    // (when switching into a coroutine for the first time, `ret` jumps right into `cone_body`.)
     #if CONE_ASAN
         __sanitizer_finish_switch_fiber(fake_stack, &c->target_stack, &c->target_stack_size);
     #endif
@@ -328,7 +326,7 @@ static void cone_switch(struct cone *c) {
     #endif
 }
 
-static void cone_body(struct cone *c) {
+static void __attribute__((noreturn)) cone_body(struct cone *c) {
     #if CONE_ASAN
         __sanitizer_finish_switch_fiber(NULL, &c->target_stack, &c->target_stack_size);
     #endif
@@ -337,10 +335,16 @@ static void cone_body(struct cone *c) {
     #endif
     c->flags |= (c->body.code(c->body.data) ? CONE_FLAG_FAILED : 0) | CONE_FLAG_FINISHED;
     mun_assert(!cone_wake(&c->done, (size_t)-1));
-    mun_assert(!cone_event_schedule_add(&c->loop->at, 0, cone_bind(&cone_drop, c)));
     cone_loop_dec(c->loop);
-    cone_switch(c);
-    abort();
+    #if CONE_ASAN
+        __sanitizer_start_switch_fiber(NULL, c->target_stack, c->target_stack_size);
+    #endif
+    __asm__("mov  %0, %%rsp  \n" :: "r"(c->rsp));
+    cone_drop(c);
+    __asm__("pop  %%rdi      \n"
+            "pop  %%rbp      \n"
+            "ret             \n" ::);
+    __builtin_unreachable();
 }
 
 static int cone_run(struct cone *c) mun_nothrow {
@@ -506,15 +510,13 @@ static void __attribute__((constructor)) cone_main_init(void) {
     struct cone *c = cone_spawn_on(&cone_main_loop, CONE_DEFAULT_STACK, cone_bind(&cone_main_run, &cone_main_loop));
     mun_assert(c != NULL);
     cone_switch(c);
+    cone_drop(c);
 }
 
 static void __attribute__((destructor)) cone_main_fini(void) {
-    struct cone *c = cone;
-    if (c) {
-        cone_loop_dec(&cone_main_loop);
-        cone_switch(c);
-        cone_drop(c);
-        mun_assert(cone_event_schedule_emit(&cone_main_loop.at, (size_t)-1) >= 0);
+    if (cone) {
+        cone_loop_dec(&cone_main_loop); // must be done here to actually stop the loop
+        cone_switch(cone); // (even though the coroutine will decrement again before returning)
         cone_loop_fini(&cone_main_loop);
     }
 }
