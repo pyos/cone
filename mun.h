@@ -189,9 +189,13 @@ int mun_vec_reserve_s(size_t, struct mun_vec *, size_t n) mun_throws(memory);
 static inline int mun_vec_splice_s(size_t s, struct mun_vec *v, size_t i, const void *e, size_t n) {
     if (!n)
         return 0;
-    if (mun_vec_reserve_s(s, v, v->size + n))
-        return -1;
-    mun_vec_shift_s(s, v, i, n);
+    if (i == 0 && v->off >= n) {
+        *v = (struct mun_vec){mun_vec_data_s(s, v)[-n], v->size + n, v->cap + n, v->off - n};
+    } else {
+        if (mun_vec_reserve_s(s, v, v->size + n))
+            return -1;
+        mun_vec_shift_s(s, v, i, n);
+    }
     memcpy(&mun_vec_data_s(s, v)[i], e, n * s);
     return 0;
 }
