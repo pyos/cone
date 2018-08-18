@@ -81,7 +81,7 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev, size_t 
         size_t more = 0;
         while (more < ev->later.size && ev->later.data[more].at <= now)
             more++;
-        if (mun_vec_extend(&ev->now, &ev->later.data->f, more) MUN_RETHROW)
+        if (more && mun_vec_extend(&ev->now, &ev->later.data->f, more) MUN_RETHROW)
             return -1;
         mun_vec_erase(&ev->later, 0, more);
         if (!ev->now.size)
@@ -516,14 +516,16 @@ static void __attribute__((constructor)) cone_main_init(void) {
     mun_assert(!cone_loop_init(&cone_main_loop));
     struct cone *c = cone_spawn_on(&cone_main_loop, CONE_DEFAULT_STACK, cone_bind(&cone_main_run, &cone_main_loop));
     mun_assert(c != NULL);
-    cone_switch(c);
+    cone_switch(c); // start the loop, which will switch back because `c` is scheduled to run
+    cone_drop(c);
 }
 
 static void __attribute__((destructor)) cone_main_fini(void) {
-    if (cone) {
-        cone_loop_dec(&cone_main_loop); // must be done here to actually stop the loop
-        cone_switch(cone); // (even though the coroutine will decrement again before returning)
-        cone_drop(cone);
+    struct cone *c = cone;
+    if (c) {
+        cone_loop_dec(&cone_main_loop); // must be done here to stop `cone_loop_run`
+        cone_switch(c);
+        cone_drop(c); // it was scheduled to execute when `cone_main_run` returned, but `cone_loop_run` is already done
         cone_loop_fini(&cone_main_loop);
     }
 }

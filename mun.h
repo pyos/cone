@@ -190,7 +190,7 @@ static inline int mun_vec_splice_s(size_t s, struct mun_vec *v, size_t i, const 
     if (!n)
         return 0;
     if (i == 0 && v->off >= n) {
-        *v = (struct mun_vec){mun_vec_data_s(s, v)[-n], v->size + n, v->cap + n, v->off - n};
+        *v = (struct mun_vec){mun_vec_data_s(s, v) - n, v->size + n, v->cap + n, v->off - n};
     } else {
         if (mun_vec_reserve_s(s, v, v->size + n))
             return -1;
