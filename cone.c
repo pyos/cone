@@ -31,6 +31,7 @@ void cone_cxa_globals_load(void *);
 #endif
 
 #if !((__linux__ || __FreeBSD__ || __APPLE__) && __x86_64__)
+// There used to be a `sigaltstack`-based implementation, but it was crap.
 _Static_assert(0, "stack switching is only supported on x86-64 UNIX");
 #endif
 
@@ -260,7 +261,8 @@ static int cone_loop_run(struct cone_loop *loop) {
     while (atomic_load_explicit(&loop->active, memory_order_acquire))
         if (cone_event_io_emit(&loop->io, cone_event_schedule_emit(&loop->at, 256)) MUN_RETHROW)
             return -1;
-    return 0;
+    // there may still be some `cone_drop`s pending; see `cone_body`.
+    return cone_event_schedule_emit(&loop->at, (size_t)-1) < 0 MUN_RETHROW;
 }
 
 static void cone_loop_inc(struct cone_loop *loop) {
@@ -335,6 +337,11 @@ static void __attribute__((noreturn)) cone_body(struct cone *c) {
     #endif
     c->flags |= (c->body.code(c->body.data) ? CONE_FLAG_FAILED : 0) | CONE_FLAG_FINISHED;
     mun_assert(!cone_wake(&c->done, (size_t)-1));
+    // 1. `cone_drop` may deallocate the current stack, so we have to switch before calling it.
+    // 2. the callback is scheduled to run as early as possible to minimize the probability
+    //    of `c` getting evicted from CPU caches.
+    // 3. inserting at 0 here is cheap because `cone_run(c)` was recently popped off the same
+    //    vector, so there's guaranteed to be some empty space at the beginning.
     mun_assert(!mun_vec_insert(&c->loop->at.now, 0, &cone_bind(&cone_drop, c)));
     cone_loop_dec(c->loop);
     #if CONE_ASAN
@@ -350,7 +357,7 @@ static void __attribute__((noreturn)) cone_body(struct cone *c) {
 static int cone_run(struct cone *c) mun_nothrow {
     c->flags &= ~CONE_FLAG_SCHEDULED;
     if (c->flags & CONE_FLAG_FINISHED)
-        return 0;
+        return 0; // this coroutine was cancelled/timed out but did not hit a preemption point before terminating
     struct mun_error *ep = mun_set_error_storage(&c->error);
     struct cone *prev = cone;
     cone_switch(cone = c);
@@ -510,14 +517,13 @@ static void __attribute__((constructor)) cone_main_init(void) {
     struct cone *c = cone_spawn_on(&cone_main_loop, CONE_DEFAULT_STACK, cone_bind(&cone_main_run, &cone_main_loop));
     mun_assert(c != NULL);
     cone_switch(c);
-    cone_drop(c);
 }
 
 static void __attribute__((destructor)) cone_main_fini(void) {
     if (cone) {
         cone_loop_dec(&cone_main_loop); // must be done here to actually stop the loop
         cone_switch(cone); // (even though the coroutine will decrement again before returning)
-        mun_assert(cone_event_schedule_emit(&cone_main_loop.at, (size_t)-1) >= 0);
+        cone_drop(cone);
         cone_loop_fini(&cone_main_loop);
     }
 }
