@@ -73,7 +73,7 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 #define MUN_CURRENT_FRAME ({ static const struct mun_stackframe f = {__FILE__, __func__, __LINE__}; &f; })
 
 // Call `mun_error_at` with the current stack frame, error id "mun_errno_X", and name "X".
-#define mun_error(id, ...) mun_error_at(mun_errno_##id, #id, MUN_CURRENT_FRAME, __VA_ARGS__)
+#define mun_error(id, ...) (mun_error_at(mun_errno_##id, #id, MUN_CURRENT_FRAME, __VA_ARGS__), -1)
 
 // No-op macros to make function declarations slightly more descriptive.
 #define mun_throws(...)
@@ -81,14 +81,14 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 
 // Should be used as a suffix to an expression that returns something true-ish if it failed,
 // in which case the current stack frame is marked in its error. Otherwise, 0 is returned.
-#define MUN_RETHROW ? mun_error_up(MUN_CURRENT_FRAME) : 0
+#define MUN_RETHROW ? (mun_error_up(MUN_CURRENT_FRAME), -1) : 0
 
 // Same as `MUN_RETHROW`, but adds a prefix to the text.
-#define MUN_RETHROW_CTX(fmt, ...) ? mun_error_up_ctx(MUN_CURRENT_FRAME, fmt, __VA_ARGS__) : 0
+#define MUN_RETHROW_CTX(fmt, ...) ? (mun_error_up_ctx(MUN_CURRENT_FRAME, fmt, __VA_ARGS__), -1) : 0
 
 // Same as `MUN_RETHROW`, but assumes the expression is a standard library function that
 // sets `errno` and does not call `mun_error_at`.
-#define MUN_RETHROW_OS ? mun_error_at(-errno, "errno", MUN_CURRENT_FRAME, "OS error %d", errno) : 0
+#define MUN_RETHROW_OS ? (mun_error_at(-errno, "errno", MUN_CURRENT_FRAME, "OS error %d", errno), 01) : 0
 
 // Abort if the expression is false.
 #define mun_assert(e) do if (!(e) MUN_RETHROW) mun_error_show("panic", NULL), abort(); while (0)
