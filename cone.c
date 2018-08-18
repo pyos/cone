@@ -335,15 +335,15 @@ static void __attribute__((noreturn)) cone_body(struct cone *c) {
     #endif
     c->flags |= (c->body.code(c->body.data) ? CONE_FLAG_FAILED : 0) | CONE_FLAG_FINISHED;
     mun_assert(!cone_wake(&c->done, (size_t)-1));
+    mun_assert(!mun_vec_insert(&c->loop->at.now, 0, &cone_bind(&cone_drop, c)));
     cone_loop_dec(c->loop);
     #if CONE_ASAN
         __sanitizer_start_switch_fiber(NULL, c->target_stack, c->target_stack_size);
     #endif
-    __asm__("mov  %0, %%rsp  \n" :: "r"(c->rsp));
-    cone_drop(c);
-    __asm__("pop  %%rdi      \n"
+    __asm__("mov  %0, %%rsp  \n"
+            "pop  %%rdi      \n"
             "pop  %%rbp      \n"
-            "ret             \n" ::);
+            "ret             \n" :: "r"(c->rsp));
     __builtin_unreachable();
 }
 
@@ -517,6 +517,7 @@ static void __attribute__((destructor)) cone_main_fini(void) {
     if (cone) {
         cone_loop_dec(&cone_main_loop); // must be done here to actually stop the loop
         cone_switch(cone); // (even though the coroutine will decrement again before returning)
+        mun_assert(cone_event_schedule_emit(&cone_main_loop.at, (size_t)-1) >= 0);
         cone_loop_fini(&cone_main_loop);
     }
 }
