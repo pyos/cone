@@ -516,16 +516,12 @@ static void __attribute__((constructor)) cone_main_init(void) {
     mun_assert(!cone_loop_init(&cone_main_loop));
     struct cone *c = cone_spawn_on(&cone_main_loop, CONE_DEFAULT_STACK, cone_bind(&cone_main_run, &cone_main_loop));
     mun_assert(c != NULL);
-    cone_switch(c); // start the loop, which will switch back because `c` is scheduled to run
-    cone_drop(c);
+    cone_switch(c); // the loop will then switch back because the coroutine is scheduled to run
 }
 
 static void __attribute__((destructor)) cone_main_fini(void) {
-    struct cone *c = cone;
-    if (c) {
-        cone_loop_dec(&cone_main_loop); // must be done here to stop `cone_loop_run`
-        cone_switch(c);
-        cone_drop(c); // it was scheduled to execute when `cone_main_run` returned, but `cone_loop_run` is already done
-        cone_loop_fini(&cone_main_loop);
-    }
+    if (cone && cone->loop->active != 1)
+        mun_assert(!mun_error(assert,
+            "main() returned, but %u more coroutine(s) are still alive. They may attempt to use "
+            "destroyed global data. main() should join all coroutines it spawns.", cone->loop->active - 1));
 }
