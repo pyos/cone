@@ -415,14 +415,13 @@ static int cone_ensure_running(struct cone *c) {
          : state & CONE_FLAG_TIMED_OUT ? mun_error(timeout, " ") : 0;
 }
 
-// FIXME will spuriously wake up if a coroutine cancels itself, ignores the cancellation, then waits.
-#define cone_pause(ev_add, ev_del, ...) do {                          \
-    if (cone_ensure_running(cone) || ev_add(__VA_ARGS__) MUN_RETHROW) \
-        return -1;                                                    \
-    cone_switch(cone);                                                \
-    int cancelled = cone_ensure_running(cone) MUN_RETHROW;            \
-    ev_del(__VA_ARGS__);                                              \
-    return cancelled;                                                 \
+#define cone_pause(ev_add, ev_del, ...) do {               \
+    if (ev_add(__VA_ARGS__) MUN_RETHROW)                   \
+        return -1;                                         \
+    cone_switch(cone);                                     \
+    int cancelled = cone_ensure_running(cone) MUN_RETHROW; \
+    ev_del(__VA_ARGS__);                                   \
+    return cancelled;                                      \
 } while (0)
 
 static void cone_event_unsub(struct cone_event *ev, struct cone **c) {
