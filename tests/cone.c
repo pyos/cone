@@ -210,11 +210,24 @@ fail3:
     return -1;
 }
 
+static int test_cancel_ignore_sleep() {
+    cone_cancel(cone);
+    if (!cone_yield() || mun_last_error()->code != ECANCELED)
+        return mun_error(assert, "did not cancel itself");
+    mun_usec a = mun_usec_monotonic();
+    if (cone_sleep(100000u) MUN_RETHROW)
+        return -1;
+    if (mun_usec_monotonic() - a < 100000u)
+        return mun_error(assert, "slept for too little");
+    return 0;
+}
+
 export { "cone:sleep (0.5s concurrent with 1s)", &test_concurrent_sleep }
      , { "cone:sleep (0.1s concurrent with 1s cancelled after 0.1s)", &test_cancelled_sleep }
      , { "cone:reader + writer", &test_rdwr }
      , { "cone:reader + writer on one fd", &test_concurrent_rw }
      , { "cone:io starvation", &test_io_starvation }
+     , { "cone:cancel-yield-sleep", &test_cancel_ignore_sleep }
      , { "cone:yield", &test_yield }
      , { "cone:spawn", &test_spawn }
      , { "cone:spawn many", &test_spawn_many }
