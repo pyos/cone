@@ -17,7 +17,7 @@ void __sanitizer_finish_switch_fiber(void* fake_stack_save, const void** old_bot
 #if CONE_CXX
 // 1. can't use sizeof(...) here -- that requires a C++-only <cxxabi.h>.
 // 2. alloca prevents inlining (+ there's a bug in LLVM that causes it to ignore clobbering
-//    if %rbx if there's an alloca and asan is enabled), so this shouldn't be an extern variable.
+//    of %rbx if there's an alloca and asan is enabled), so this shouldn't be an extern variable.
 #define cone_cxa_globals_size 64
 void cone_cxa_globals_save(void *);
 void cone_cxa_globals_load(void *);
@@ -27,7 +27,7 @@ void cone_cxa_globals_load(void *);
 #define CONE_EVNOTIFIER (__linux__ ? 1 : __FreeBSD__ || __APPLE__ ? 2 : 0)
 #endif
 
-#if !((__linux__ || __FreeBSD__ || __APPLE__) && __x86_64__)
+#if !__x86_64__
 // There used to be a `sigaltstack`-based implementation, but it was crap.
 _Static_assert(0, "stack switching is only supported on x86-64 UNIX");
 #endif
@@ -40,6 +40,7 @@ _Static_assert(0, "stack switching is only supported on x86-64 UNIX");
 #include <sys/select.h>
 #endif
 
+// FIXME: why is this here and not somewhere in the vicinity of cold.c?
 int cone_unblock(int fd) {
     int flags = fcntl(fd, F_GETFL);
     return flags == -1 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) MUN_RETHROW_OS;
@@ -60,7 +61,7 @@ static void cone_event_schedule_fini(struct cone_event_schedule *ev) {
     mun_vec_fini(&ev->later);
 }
 
-static int cone_event_schedule_add(struct cone_event_schedule *ev, mun_usec at, struct cone_closure f) mun_throws(memory) {
+static int cone_event_schedule_add(struct cone_event_schedule *ev, mun_usec at, struct cone_closure f) {
     if (at == 0)
         return mun_vec_append(&ev->now, &f);
     return mun_vec_insert(&ev->later, mun_vec_bisect(&ev->later, at < _->at), &((struct cone_event_at){at, f}));
@@ -135,7 +136,7 @@ static struct cone_event_fd **cone_event_io_bucket(struct cone_event_io *set, in
     return b;
 }
 
-static int cone_event_io_add(struct cone_event_io *set, struct cone_event_fd *st) mun_throws(memory, assert) {
+static int cone_event_io_add(struct cone_event_io *set, struct cone_event_fd *st) {
     struct cone_event_fd **b = cone_event_io_bucket(set, st->fd);
     st->link = *b;
     *b = st;
@@ -171,7 +172,7 @@ static void cone_event_io_del(struct cone_event_io *set, struct cone_event_fd *s
     #endif
 }
 
-static int cone_event_io_init(struct cone_event_io *set) mun_throws(memory) {
+static int cone_event_io_init(struct cone_event_io *set) {
     set->selfpipe[0] = set->selfpipe[1] = set->poller = -1;
     if (pipe(set->selfpipe) MUN_RETHROW_OS)
         return -1;
@@ -244,7 +245,7 @@ struct cone_loop {
     struct cone_event_schedule at;
 };
 
-static int cone_loop_init(struct cone_loop *loop) mun_throws(memory) {
+static int cone_loop_init(struct cone_loop *loop) {
     return cone_event_io_init(&loop->io);
 }
 
@@ -310,7 +311,7 @@ static void cone_switch(struct cone *c) {
             "push %%rdi      \n"
             "mov  %%rsp, %0  \n" // `xchg` is implicitly `lock`ed; 3 `mov`s are faster
             "mov  %1, %%rsp  \n" // (the third is inserted by the compiler to load c->rsp)
-            "pop  %%rdi      \n"
+            "pop  %%rdi      \n" // FIXME prone to incur cache misses
             "pop  %%rbp      \n"
             "ret             \n" // jumps into `cone_body` if this is a new coroutine
     "%=0:"  "call %=1b       \n"
@@ -350,8 +351,8 @@ static void __attribute__((noreturn)) cone_body(struct cone *c) {
     __builtin_unreachable();
 }
 
-static int cone_run(struct cone *c) mun_nothrow {
-    c->flags &= ~CONE_FLAG_SCHEDULED;
+static int cone_run(struct cone *c) {
+    c->flags &= ~CONE_FLAG_SCHEDULED; // FIXME prone to incur cache misses
     if (c->flags & CONE_FLAG_FINISHED)
         return 0; // this coroutine was cancelled/timed out but did not hit a preemption point before terminating
     struct mun_error *ep = mun_set_error_storage(&c->error);
@@ -399,21 +400,22 @@ int cone_drop(struct cone *c) {
         mun_vec_fini(&c->done);
         free(c);
     }
-    return !c MUN_RETHROW;
+    return !c;
 }
 
-static int cone_schedule(struct cone *c) mun_throws(memory) {
+static int cone_schedule(struct cone *c) {
     if (atomic_fetch_or(&c->flags, CONE_FLAG_SCHEDULED) & (CONE_FLAG_SCHEDULED | CONE_FLAG_FINISHED))
         return 0;
     return cone_event_schedule_add(&c->loop->at, 0, cone_bind(&cone_run, c)) MUN_RETHROW;
 }
 
-static int cone_ensure_running(struct cone *c) mun_throws(cancelled) {
+static int cone_ensure_running(struct cone *c) {
     int state = atomic_fetch_and(&c->flags, ~CONE_FLAG_CANCELLED & ~CONE_FLAG_TIMED_OUT);
     return state & CONE_FLAG_CANCELLED ? mun_error(cancelled, " ")
          : state & CONE_FLAG_TIMED_OUT ? mun_error(timeout, " ") : 0;
 }
 
+// FIXME will spuriously wake up if a coroutine cancels itself, ignores the cancellation, then waits.
 #define cone_pause(ev_add, ev_del, ...) do {                          \
     if (cone_ensure_running(cone) || ev_add(__VA_ARGS__) MUN_RETHROW) \
         return -1;                                                    \
@@ -454,12 +456,12 @@ int cone_sleep_until(mun_usec t) {
 }
 
 int cone_yield(void) {
-    cone_event_io_ping(&cone->loop->io);
+    cone_event_io_ping(&cone->loop->io); // kinda slow, maybe add a separate "yield queue"?
     return cone_wait(&cone->loop->io.ping, &cone->loop->io.pinged, 1) MUN_RETHROW;
 }
 
 int cone_cowait(struct cone *c, int norethrow) {
-    if (c == cone)
+    if (c == cone) // maybe detect more complicated deadlocks too?..
         return mun_error(deadlock, "coroutine waiting on itself");
     for (unsigned f; !((f = c->flags) & CONE_FLAG_FINISHED); )
         if (cone_wait(&c->done, &c->flags, f) < 0 && mun_last_error()->code != mun_errno_retry MUN_RETHROW)
@@ -496,6 +498,9 @@ int cone_loop(size_t size, struct cone_closure body) {
     if (cone_loop_init(&loop) MUN_RETHROW)
         return -1;
     struct cone *c = cone_spawn_on(&loop, size, body);
+    // FIXME if `cone_loop_run` fails, things get ugly and coroutines get leaked. in theory,
+    //       `memory` errors (the only kind possible right now) can be handled by freeing
+    //       some up and calling `cone_loop_run` again, though this function can't do that.
     if (c == NULL || cone_loop_run(&loop) MUN_RETHROW)
         return cone_drop(c), cone_loop_fini(&loop), -1;
     return cone_loop_fini(&loop), cone_join(c, 0) MUN_RETHROW;

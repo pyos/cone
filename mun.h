@@ -10,15 +10,20 @@
 extern "C" {
 #endif
 
-// A microsecond-resolution clock. That's good enough; epoll_wait(2) can't handle
+// A microsecond-resolution clock. That's good enough; `epoll_wait` can't handle
 // less than millisecond resolution anyway.
 typedef int64_t mun_usec;
+
 #define MUN_USEC_MAX INT64_MAX
+
+// The wall clock time. May jump around depending on the whims of NTP servers.
 mun_usec mun_usec_now(void);
+
+// The monotonic clock. Only the differences are meaningful, but it always moves forward
+// at a rate of one second per second.
 mun_usec mun_usec_monotonic(void);
 
-enum
-{
+enum {
     mun_errno_cancelled       = ECANCELED,
     mun_errno_assert          = EINVAL,
     mun_errno_memory          = ENOMEM,
@@ -30,20 +35,20 @@ enum
     mun_errno_custom          = 100000,
 };
 
-struct mun_stackframe
-{
+struct mun_stackframe {
     const char *file;
     const char *func;
     unsigned line;
 };
 
-struct mun_error
-{
+struct mun_error {
     int code;  // Either `mun_errno_X`, or an actual `errno`.
     unsigned stacklen;
     const char *name;
     char text[256];
-    // Stack at the time of the error, starting from innermost frame (where `mun_error_at` was called).
+    // Stack at the time of the error, starting from innermost frame. Aside from the
+    // origin, only frames in which `mun_error_up` (aka `MUN_RETHROW`) was evaluated are
+    // recorded. Meaning, this is not a complete stack trace, but it sure is fast.
     const struct mun_stackframe *stack[16];
 };
 
@@ -51,7 +56,7 @@ struct mun_error
 // so this information may be outdated. Only valid until the next call to `mun_error_at`.
 struct mun_error *mun_last_error(void);
 
-// Make `mun_last_error` point to a different location, return the old one.
+// Make `mun_last_error` point to a different location for this thread; return the old one.
 struct mun_error *mun_set_error_storage(struct mun_error *);
 
 // Overwrite the last error with a new one, with a `printf`-style message. Always "fails".
@@ -60,7 +65,7 @@ int mun_error_at(int, const char *name, const struct mun_stackframe *, const cha
 // Add a stack frame to the last error, if there's space for it. Always "fails".
 int mun_error_up(const struct mun_stackframe *);
 
-// Add a stack frame to the last error an a prefix to its text. Always "fails".
+// Add a stack frame to the last error and a prefix to the text. Always "fails".
 int mun_error_up_ctx(const struct mun_stackframe *, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 
 // Print an error to stderr, possibly with pretty colored highlighting. If `err` is NULL,
@@ -77,7 +82,6 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 
 // No-op macros to make function declarations slightly more descriptive.
 #define mun_throws(...)
-#define mun_nothrow
 
 // Should be used as a suffix to an expression that returns something true-ish if it failed,
 // in which case the current stack frame is marked in its error. Otherwise, 0 is returned.
