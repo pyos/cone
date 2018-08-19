@@ -168,10 +168,10 @@ static void cone_event_io_del(struct cone_event_io *set, struct cone_event_fd *s
         struct epoll_event ev = {0, {.ptr = *b}};
         for (struct cone_event_fd *e = *b; e && e->fd == st->fd; e = e->link)
             ev.events |= e->write ? EPOLLOUT : EPOLLIN|EPOLLRDHUP;
-        mun_assert(!(epoll_ctl(set->poller, ev.events ? EPOLL_CTL_MOD : EPOLL_CTL_DEL, st->fd, &ev) MUN_RETHROW_OS));
+        mun_cant_fail(epoll_ctl(set->poller, ev.events ? EPOLL_CTL_MOD : EPOLL_CTL_DEL, st->fd, &ev) MUN_RETHROW_OS);
     #elif CONE_EVNOTIFIER == 2
         struct kevent ev = {st->fd, st->write ? EVFILT_WRITE : EVFILT_READ, EV_DELETE|EV_UDATA_SPECIFIC, 0, 0, st};
-        mun_assert(!(kevent(set->poller, &ev, 1, NULL, 0, NULL) MUN_RETHROW_OS));
+        mun_cant_fail(kevent(set->poller, &ev, 1, NULL, 0, NULL) MUN_RETHROW_OS);
     #endif
 }
 
@@ -336,13 +336,13 @@ static void __attribute__((noreturn)) cone_body(struct cone *c) {
         cone_cxa_globals_load(NULL);
     #endif
     c->flags |= (c->body.code(c->body.data) ? CONE_FLAG_FAILED : 0) | CONE_FLAG_FINISHED;
-    mun_assert(!cone_wake(&c->done, (size_t)-1));
     // 1. `cone_drop` may deallocate the current stack, so we have to switch before calling it.
     // 2. the callback is scheduled to run as early as possible to minimize the probability
     //    of `c` getting evicted from CPU caches.
     // 3. inserting at 0 here is cheap because `cone_run(c)` was recently popped off the same
     //    vector, so there's guaranteed to be some empty space at the beginning.
-    mun_assert(!mun_vec_insert(&c->loop->at.now, 0, &cone_bind(&cone_drop, c)));
+    mun_cant_fail(mun_vec_insert(&c->loop->at.now, 0, &cone_bind(&cone_drop, c)) MUN_RETHROW);
+    mun_cant_fail(cone_wake(&c->done, (size_t)-1) MUN_RETHROW);
     cone_loop_dec(c->loop);
     #if CONE_ASAN
         __sanitizer_start_switch_fiber(NULL, c->target_stack, c->target_stack_size);
@@ -506,22 +506,20 @@ int cone_loop(size_t size, struct cone_closure body) {
 }
 
 static int cone_main_run(struct cone_loop *loop) {
-    mun_assert(!cone_loop_run(loop));
-    return 0;
+    return mun_cant_fail(cone_loop_run(loop) MUN_RETHROW);
 }
 
 static struct cone_loop cone_main_loop = {};
 
 static void __attribute__((constructor)) cone_main_init(void) {
-    mun_assert(!cone_loop_init(&cone_main_loop));
+    mun_cant_fail(cone_loop_init(&cone_main_loop) MUN_RETHROW);
     struct cone *c = cone_spawn_on(&cone_main_loop, CONE_DEFAULT_STACK, cone_bind(&cone_main_run, &cone_main_loop));
-    mun_assert(c != NULL);
+    mun_cant_fail(c == NULL MUN_RETHROW);
     cone_switch(c); // the loop will then switch back because the coroutine is scheduled to run
 }
 
 static void __attribute__((destructor)) cone_main_fini(void) {
-    if (cone && cone->loop->active != 1)
-        mun_assert(!mun_error(assert,
-            "main() returned, but %u more coroutine(s) are still alive. They may attempt to use "
-            "destroyed global data. main() should join all coroutines it spawns.", cone->loop->active - 1));
+    mun_assert(!cone || cone->loop->active == 1,
+        "main() returned, but %u more coroutine(s) are still alive. They may attempt to use "
+        "destroyed global data. main() should join all coroutines it spawns.", cone->loop->active - 1);
 }
