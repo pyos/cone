@@ -15,13 +15,10 @@ void __sanitizer_finish_switch_fiber(void* fake_stack_save, const void** old_bot
 #endif
 
 #if CONE_CXX
-#if CONE_ASAN && __clang__
-// XXX a bug in LLVM causes it to ignore the clobbering of %rbx, which is used as a stack pointer
-//     instead of %rsp when asan is enabled and there is an alloca.
+// 1. can't use sizeof(...) here -- that requires a C++-only <cxxabi.h>.
+// 2. alloca prevents inlining (+ there's a bug in LLVM that causes it to ignore clobbering
+//    if %rbx if there's an alloca and asan is enabled), so this shouldn't be an extern variable.
 #define cone_cxa_globals_size 64
-#else
-extern const size_t cone_cxa_globals_size;
-#endif
 void cone_cxa_globals_save(void *);
 void cone_cxa_globals_load(void *);
 #endif
@@ -127,8 +124,7 @@ static void cone_event_io_ping(struct cone_event_io *set) {
 }
 
 static int cone_event_io_on_ping(struct cone_event_io *set) {
-    char buf[32];
-    read(set->selfpipe[0], buf, 32);  // never yields
+    read(set->selfpipe[0], (char[4]){}, 4);  // never yields
     atomic_store_explicit(&set->pinged, 0, memory_order_release);
     return cone_wake(&set->ping, (size_t)-1) MUN_RETHROW;
 }
