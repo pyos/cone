@@ -1,7 +1,7 @@
 .PHONY: clean tests tests/%
 .PRECIOUS: obj/%.o obj/tests/%
 
-tests: tests/cone tests/siy tests/mae
+tests: tests/cone
 
 tests/%: obj/tests/%
 	$<
@@ -12,10 +12,10 @@ obj/tests/%: tests/%.c tests/base.c obj/libcone.a
 	@mkdir -p $(dir $@)
 	$(CCMD) -DSRC=$< tests/base.c -o $@ -Lobj -lcone -ldl
 
-obj/libcone.a: obj/cone.o obj/cold.o obj/mun.o obj/siy.o obj/mae.o
+obj/libcone.a: obj/cone.o obj/cold.o obj/mun.o
 	ar rcs $@ $^
 
-obj/%.o: %.c cone.h mun.h siy.h mae.h
+obj/%.o: %.c cone.h mun.h
 	@mkdir -p $(dir $@)
 	$(CCMD) -c $< -o $@
 
