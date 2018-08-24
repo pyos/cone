@@ -44,9 +44,8 @@ struct cone *cone_spawn(size_t stack, struct cone_closure) mun_throws(memory);
 
 #define cone(f, arg) cone_spawn(CONE_DEFAULT_STACK, cone_bind(f, arg))
 
-// Drop the reference to a coroutine returned by `cone_spawn`. Although this function is
-// specified to sometimes fail, it only does so when passed a NULL pointer, in which case
-// it assumes you did `cone_drop(cone(f, arg)))` without checking the return value of `cone`.
+// Drop the reference to a coroutine returned by `cone_spawn`. No-op if the pointer
+// is NULL, in which case it returns a nonzero value.
 int cone_drop(struct cone *) mun_throws(memory);
 
 // Sleep until a coroutine finishes. If `norethrow` is 0 and the coroutine fails, this
