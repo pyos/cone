@@ -178,13 +178,14 @@ static void cone_event_io_del(struct cone_event_io *set, struct cone_event_fd *s
 
 static int cone_event_io_init(struct cone_event_io *set) {
     set->selfpipe[0] = set->selfpipe[1] = set->poller = -1;
-    if (pipe(set->selfpipe) MUN_RETHROW_OS)
-        return -1;
+    if (pipe(set->selfpipe) || fcntl(set->selfpipe[0], F_SETFD, FD_CLOEXEC)
+                            || fcntl(set->selfpipe[1], F_SETFD, FD_CLOEXEC) MUN_RETHROW_OS)
+        return cone_event_io_fini(set), -1;
     #if CONE_EVNOTIFIER == 1
-        if ((set->poller = epoll_create1(0)) < 0 MUN_RETHROW_OS)
+        if ((set->poller = epoll_create1(EPOLL_CLOEXEC)) < 0 MUN_RETHROW_OS)
             return cone_event_io_fini(set), -1;
     #elif CONE_EVNOTIFIER == 2
-        if ((set->poller = kqueue()) < 0 MUN_RETHROW_OS)
+        if ((set->poller = kqueue()) < 0 || fcntl(set->poller, F_SETFD, FD_CLOEXEC) < 0 MUN_RETHROW_OS)
             return cone_event_io_fini(set), -1;
     #endif
     set->ping_ev.fd = set->selfpipe[0];
