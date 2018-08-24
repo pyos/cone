@@ -14,13 +14,17 @@ void __sanitizer_start_switch_fiber(void** fake_stack_save, const void* bottom, 
 void __sanitizer_finish_switch_fiber(void* fake_stack_save, const void** old_bottom, size_t* old_size);
 #endif
 
+struct /*__cxxabiv1::, dunno what the mangled name is, doesn't matter */__cxa_eh_globals {
+    void* caughtExceptions;
+    unsigned int uncaughtExceptions;
+};
+
+// Mach-O requires some weird link-time magic to properly support weak symbols,
+// and also other non-ELF formats probably don't support them at all, so provide a switch.
 #if CONE_CXX
-// 1. can't use sizeof(...) here -- that requires a C++-only <cxxabi.h>.
-// 2. alloca prevents inlining (+ there's a bug in LLVM that causes it to ignore clobbering
-//    of %rbx if there's an alloca and asan is enabled), so this shouldn't be an extern variable.
-#define cone_cxa_globals_size 64
-void cone_cxa_globals_save(void *);
-void cone_cxa_globals_load(void *);
+struct __cxa_eh_globals *__cxa_get_globals() __attribute__((weak));
+#else
+static struct __cxa_eh_globals * (*__cxa_get_globals)() = NULL;
 #endif
 
 #ifndef CONE_EVNOTIFIER
@@ -298,10 +302,9 @@ struct cone {
 _Thread_local struct cone * cone = NULL;
 
 static void cone_switch(struct cone *c) {
-    #if CONE_CXX
-        char cxa_globals[cone_cxa_globals_size];
-        cone_cxa_globals_save(cxa_globals);
-    #endif
+    struct __cxa_eh_globals cxa_globals;
+    if (__cxa_get_globals)
+        cxa_globals = *__cxa_get_globals();
     #if CONE_ASAN
         void * fake_stack = NULL;
         __sanitizer_start_switch_fiber(&fake_stack, c->target_stack, c->target_stack_size);
@@ -320,18 +323,16 @@ static void cone_switch(struct cone *c) {
     #if CONE_ASAN
         __sanitizer_finish_switch_fiber(fake_stack, &c->target_stack, &c->target_stack_size);
     #endif
-    #if CONE_CXX
-        cone_cxa_globals_load(cxa_globals);
-    #endif
+    if (__cxa_get_globals)
+        *__cxa_get_globals() = cxa_globals;
 }
 
 static void __attribute__((noreturn)) cone_body(struct cone *c) {
     #if CONE_ASAN
         __sanitizer_finish_switch_fiber(NULL, &c->target_stack, &c->target_stack_size);
     #endif
-    #if CONE_CXX
-        cone_cxa_globals_load(NULL);
-    #endif
+    if (__cxa_get_globals)
+        *__cxa_get_globals() = (struct __cxa_eh_globals){ NULL, 0 };
     c->flags |= (c->body.code(c->body.data) ? CONE_FLAG_FAILED : 0) | CONE_FLAG_FINISHED;
     // 1. `cone_drop` may deallocate the current stack, so we have to switch before calling it.
     // 2. the callback is scheduled to run as early as possible to minimize the probability
