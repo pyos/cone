@@ -40,8 +40,8 @@ static bool test_wait_no_rethrow(char *) {
 
 template <bool cancel>
 static bool test_sleep(char *msg) {
-    cone::ref a = []() { return cone::sleep(100000us); };
-    cone::ref b = []() { return cone::sleep(500000us); };
+    cone::ref a = []() { return cone::sleep(50ms); };
+    cone::ref b = []() { return cone::sleep(100ms); };
     auto start = cone::time::clock::now();
     if (!a->wait())
         return false;
@@ -51,7 +51,26 @@ static bool test_sleep(char *msg) {
         return false;
     auto end = cone::time::clock::now();
     sprintf(msg, "%fs", std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count());
-    return true;
+    return ASSERT((end - start) > (cancel ? 50ms : 100ms), "did not sleep enough")
+        && ASSERT(!cancel || (end - start) < 75ms, "slept too much");
+}
+
+static bool test_deadline(char *) {
+    cone::deadline d(::cone, 0us);
+    return ASSERT(!cone::yield() && mun_last_error()->code == ETIMEDOUT, "deadline did not trigger");
+}
+
+static bool test_deadline_cancel(char *) {
+    cone::ref c = []() {
+        return ASSERT(!cone::yield() && mun_last_error()->code == ECANCELED, "not cancelled") && cone::yield();
+    };
+    cone::deadline d{c, 0us};
+    return c->cancel(), c->wait();
+}
+
+static bool test_deadline_lifting(char *) {
+    cone::deadline{::cone, 0us};
+    return cone::yield();
 }
 
 static bool test_count(char *) {
@@ -199,8 +218,11 @@ export { "cone:yield", &test_yield }
      , { "cone:wait", &test_wait }
      , { "cone:wait on cancelled", &test_cancel }
      , { "cone:wait(rethrow=false)", &test_wait_no_rethrow }
-     , { "cone:sleep 0.1s concurrent with 0.5s)", &test_sleep<false> }
-     , { "cone:sleep 0.1s concurrent with 0.5s cancelled after 0.1s", &test_sleep<true> }
+     , { "cone:sleep 50ms concurrent with 100ms)", &test_sleep<false> }
+     , { "cone:sleep 50ms concurrent with cancelled 100ms", &test_sleep<true> }
+     , { "cone:deadline", &test_deadline }
+     , { "cone:deadline & cancel", &test_deadline_cancel }
+     , { "cone:deadline lifting", &test_deadline_lifting }
      , { "cone:count", &test_count }
      , { "cone:io starvation", &test_io_starvation }
      , { "cone:throw", &test_exceptions_0 }

@@ -19,6 +19,27 @@ struct cone {
     // or `yield` from this coroutine fail with ECANCELED. No-op if the coroutine has finished.
     void cancel() noexcept;
 
+    struct deadline {
+        // `cone_deadline` and `cone_complete`, but in RAII form. This object must not
+        // outlive the `cone`. (Don't tell me to rewrite this in Rust.)
+        deadline(cone *, time);
+
+        // Same as above, but relative to now.
+        deadline(cone *c, timedelta t)
+            : deadline(c, time::clock::now() + t)
+        {
+        }
+
+        ~deadline();
+
+        deadline(const deadline&) = delete;
+        deadline& operator=(const deadline&) = delete;
+
+    private:
+        cone *c_;
+        time t_;
+    };
+
     // Wait until the next iteration of the event loop.
     static bool yield() noexcept;
 
@@ -46,6 +67,10 @@ struct cone {
         ref(F&& f, size_t stack = default_stack)
             : ref(std::make_unique<std::remove_reference_t<F>>(std::forward<F>(f)), stack)
         {
+        }
+
+        operator cone*() const {
+            return r_.get();
         }
 
         cone& operator*() const {

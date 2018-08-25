@@ -17,17 +17,32 @@ void cone::cancel() noexcept {
     mun_cant_fail(cone_cancel(this) MUN_RETHROW);
 }
 
-bool cone::yield() noexcept {
-    return !cone_yield();
-}
-
 static uint64_t usec(cone::time t) {
     return std::chrono::duration_cast<std::chrono::microseconds>(t.time_since_epoch()).count(); // wut
 }
 
-bool cone::sleep(cone::time t) noexcept {
+static mun_usec mun_usec_chrono(cone::time t) noexcept {
     static const uint64_t diff = mun_usec_monotonic() - usec(cone::time::clock::now());
-    return !cone_sleep_until(usec(t) + diff);
+    return usec(t) + diff;
+}
+
+cone::deadline::deadline(cone *c, time t)
+    : c_(c)
+    , t_(t)
+{
+    mun_cant_fail(cone_deadline(c_, mun_usec_chrono(t_)) MUN_RETHROW);
+}
+
+cone::deadline::~deadline() {
+    cone_complete(c_, mun_usec_chrono(t_));
+}
+
+bool cone::yield() noexcept {
+    return !cone_yield();
+}
+
+bool cone::sleep(cone::time t) noexcept {
+    return !cone_sleep_until(mun_usec_chrono(t));
 }
 
 const std::atomic<unsigned>& cone::count() noexcept {
