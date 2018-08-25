@@ -1,54 +1,8 @@
-#include "cone.h"
 #include "cone.hh"
 
 #if __GNUC__
 #include <cxxabi.h>
 #endif
-
-#if !CONE_CXX
-static_assert(0, "need -DCONE_CXX=1 (when building cone.c too!) for coroutine-local exceptions");
-#endif
-
-bool cone::wait(bool rethrow) noexcept {
-    return !cone_cowait(this, !rethrow);
-}
-
-void cone::cancel() noexcept {
-    mun_cant_fail(cone_cancel(this) MUN_RETHROW);
-}
-
-static uint64_t usec(cone::time t) {
-    return std::chrono::duration_cast<std::chrono::microseconds>(t.time_since_epoch()).count(); // wut
-}
-
-static mun_usec mun_usec_chrono(cone::time t) noexcept {
-    static const uint64_t diff = mun_usec_monotonic() - usec(cone::time::clock::now());
-    return usec(t) + diff;
-}
-
-cone::deadline::deadline(cone *c, time t)
-    : c_(c)
-    , t_(t)
-{
-    mun_cant_fail(cone_deadline(c_, mun_usec_chrono(t_)) MUN_RETHROW);
-}
-
-cone::deadline::~deadline() {
-    cone_complete(c_, mun_usec_chrono(t_));
-}
-
-bool cone::yield() noexcept {
-    return !cone_yield();
-}
-
-bool cone::sleep(cone::time t) noexcept {
-    return !cone_sleep_until(mun_usec_chrono(t));
-}
-
-const std::atomic<unsigned>& cone::count() noexcept {
-    mun_assert(::cone, "not running in a coroutine");
-    return *cone_count();
-}
 
 static const std::unique_ptr<const char, void(*)(const void*)> demangle(const char *name) {
     #if __GNUC__
@@ -70,28 +24,4 @@ void cone::exception_to_error() noexcept {
     } else {
         mun_error(assert, "no active exception");
     }
-}
-
-cone::ref::ref(int (*f)(void*), void *data, size_t stack) noexcept
-    : r_(cone_spawn(stack, cone_bind(f, data)), cone_drop)
-{
-    mun_cant_fail(!r_.get() MUN_RETHROW);
-}
-
-cone::event::event() noexcept {
-    static_assert(sizeof(decltype(r_)) == sizeof(cone_event), "cone::event has wrong size");
-    static_assert(alignof(decltype(r_)) == alignof(cone_event), "cone::event has wrong alignment");
-    memset(&r_, 0, sizeof(r_));
-}
-
-cone::event::~event() noexcept {
-    mun_vec_fini((cone_event *)&r_);
-}
-
-bool cone::event::wait(const std::atomic<unsigned>& atom, unsigned expect) noexcept {
-    return !cone_wait((cone_event *)&r_, &atom, expect);
-}
-
-void cone::event::wake(size_t n) noexcept {
-    mun_cant_fail(cone_wake((cone_event *)&r_, n) MUN_RETHROW);
 }

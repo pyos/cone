@@ -1,5 +1,7 @@
 #pragma once
 
+#include "cone.h"
+
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -9,20 +11,26 @@ struct cone {
     using time = std::chrono::steady_clock::time_point;
     using timedelta = std::chrono::steady_clock::duration;
 
-    // Note that not all of this is committed to memory if you don't use the whole stack.
-    static constexpr size_t default_stack = 100L * 1024;
-
     // Sleep until this coroutine finishes, optionally returning any error it finishes with.
-    bool wait(bool rethrow = true) noexcept;
+    bool wait(bool rethrow = true) noexcept {
+        return !cone_cowait(this, !rethrow);
+    }
 
     // Make the next (or current, if any) call to `wait`, `iowait`, `sleep_until`, `sleep`,
     // or `yield` from this coroutine fail with ECANCELED. No-op if the coroutine has finished.
-    void cancel() noexcept;
+    void cancel() noexcept {
+        mun_cant_fail(cone_cancel(this) MUN_RETHROW);
+    }
 
     struct deadline {
         // `cone_deadline` and `cone_complete`, but in RAII form. This object must not
         // outlive the `cone`. (Don't tell me to rewrite this in Rust.)
-        deadline(cone *, time);
+        deadline(cone *c, time t)
+            : c_(c)
+            , t_(t)
+        {
+            mun_cant_fail(cone_deadline(c_, mun_usec_chrono(t_)) MUN_RETHROW);
+        }
 
         // Same as above, but relative to now.
         deadline(cone *c, timedelta t)
@@ -30,7 +38,9 @@ struct cone {
         {
         }
 
-        ~deadline();
+        ~deadline() {
+            cone_complete(c_, mun_usec_chrono(t_));
+        }
 
         deadline(const deadline&) = delete;
         deadline& operator=(const deadline&) = delete;
@@ -41,10 +51,14 @@ struct cone {
     };
 
     // Wait until the next iteration of the event loop.
-    static bool yield() noexcept;
+    static bool yield() noexcept {
+        return !cone_yield();
+    }
 
     // Wait until a specified point in time.
-    static bool sleep(time) noexcept;
+    static bool sleep(time t) noexcept {
+        return !cone_sleep_until(mun_usec_chrono(t));
+    }
 
     // Wait for some time.
     static bool sleep(timedelta t) noexcept {
@@ -52,7 +66,10 @@ struct cone {
     }
 
     // Get a reference to the number of currently running coroutines.
-    static const std::atomic<unsigned>& count() noexcept;
+    static const std::atomic<unsigned>& count() noexcept {
+        mun_assert(::cone, "not running in a coroutine");
+        return *cone_count();
+    }
 
     // Convert a C++ exception that is being handled into a mun error.
     static void exception_to_error() noexcept;
@@ -63,9 +80,11 @@ struct cone {
         {
         }
 
-        template <typename F /* = bool() */>
-        ref(F&& f, size_t stack = default_stack)
-            : ref(std::make_unique<std::remove_reference_t<F>>(std::forward<F>(f)), stack)
+        template <typename F /* = bool() */, typename G = std::remove_reference_t<F>>
+        ref(F&& f, size_t stack = 100UL * 1024)
+            // XXX cone_spawn allows a single pointer-sized argument; if F is trivially
+            //     copyable and fits into that space, we can pass it by value.
+            : ref(&invoke<std::unique_ptr<G>>, new G(std::forward<F>(f)), stack)
         {
         }
 
@@ -82,44 +101,53 @@ struct cone {
         }
 
     private:
-        ref(int (*)(void*), void *, size_t stack) noexcept;
-
-        template <typename F, typename D>
-        ref(std::unique_ptr<F, D> f, size_t stack = default_stack)
-            : ref(&invoke<F, D>, f.get(), stack)
+        ref(int (*f)(void*), void *data, size_t stack) noexcept
+            : r_(cone_spawn(stack, cone_bind(f, data)), cone_drop)
         {
-            (void)f.release();
+            mun_cant_fail(!r_.get() MUN_RETHROW);
         }
 
-    private:
+        template <typename U>
+        static int invoke(void *ptr) noexcept {
+            try {
+                return (*U(reinterpret_cast<typename U::pointer>(ptr)))() ? 0 : -1;
+            } catch (...) {
+                return exception_to_error(), -1;
+            }
+        }
+
         std::unique_ptr<cone, void (*)(cone*) noexcept> r_;
     };
 
     struct event {
-        event() noexcept;
-        ~event() noexcept;
+        event() noexcept = default;
 
-        event(event&& other) noexcept
-            : event()
-        {
-            std::swap(r_, other.r_);
+        ~event() noexcept {
+            mun_vec_fini(&e_);
         }
 
-        cone::event& operator=(event&& other) noexcept {
-            std::swap(r_, other.r_);
-            return *this;
+        event(event&& other) noexcept {
+            std::swap(e_, other.e_);
+        }
+
+        event& operator=(event&& other) noexcept {
+            return std::swap(e_, other.e_), *this;
         }
 
         bool wait() noexcept {
             return wait(std::atomic<unsigned>{0}, 0);
         }
 
-        bool wait(const std::atomic<unsigned>&, unsigned expect) noexcept;
-        void wake(size_t n = std::numeric_limits<size_t>::max()) noexcept;
+        bool wait(const std::atomic<unsigned>& atom, unsigned expect) noexcept {
+            return !cone_wait(&e_, &atom, expect);
+        }
+
+        void wake(size_t n = std::numeric_limits<size_t>::max()) noexcept {
+            mun_cant_fail(cone_wake(&e_, n) MUN_RETHROW);
+        }
 
     private:
-        // XXX maybe don't bother and simply include mun.h?
-        std::aligned_storage_t<sizeof(void*) + sizeof(size_t) * 3, alignof(void*)> r_;
+        cone_event e_ = {};
     };
 
     struct mutex {
@@ -145,12 +173,8 @@ struct cone {
     };
 
 private:
-    template <typename F, typename D>
-    static int invoke(void *ptr) noexcept {
-        try {
-            return (*std::unique_ptr<F, D>(reinterpret_cast<F*>(ptr)))() ? 0 : -1;
-        } catch (...) {
-            return exception_to_error(), -1;
-        }
+    static inline mun_usec mun_usec_chrono(time t) noexcept {
+        static const auto d = std::chrono::microseconds(mun_usec_monotonic()) - time::clock::now().time_since_epoch();
+        return std::chrono::duration_cast<std::chrono::microseconds>((t + d).time_since_epoch()).count();
     }
 };
