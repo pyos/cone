@@ -5,6 +5,7 @@
 #include <dlfcn.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 
 #ifndef RTLD_NEXT
 #define RTLD_NEXT (void*)(uintptr_t)-1  // avoid requiring _GNU_SOURCE; unclear if RTLD_NEXT is POSIX-standard
@@ -77,6 +78,12 @@ int connect(int fd, const struct sockaddr *addr, socklen_t addrlen) {
 ssize_t read(int fd, void *buf, size_t count)
     cold_iocall(fd, 0, read, fd, buf, count)
 
+ssize_t pread(int fd, void *buf, size_t count, off_t offset)
+    cold_iocall(fd, 0, pread, fd, buf, count, offset)
+
+ssize_t readv(int fd, const struct iovec *iov, int iovcnt)
+    cold_iocall(fd, 0, readv, fd, iov, iovcnt)
+
 ssize_t recv(int fd, void *buf, size_t len, int flags)
     cold_iocall(fd, 0, recv, fd, buf, len, flags)
 
@@ -88,6 +95,12 @@ ssize_t recvmsg(int fd, struct msghdr *msg, int flags)
 
 ssize_t write(int fd, const void *buf, size_t count)
     cold_iocall(fd, 1, write, fd, buf, count)
+
+ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset)
+    cold_iocall(fd, 1, pwrite, fd, buf, count, offset)
+
+ssize_t writev(int fd, const struct iovec *iov, int iovcnt)
+    cold_iocall(fd, 1, writev, fd, iov, iovcnt)
 
 ssize_t send(int fd, const void *buf, size_t len, int flags)
     cold_iocall(fd, 1, send, fd, buf, len, flags)
