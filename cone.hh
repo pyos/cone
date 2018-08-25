@@ -6,6 +6,8 @@
 #include <chrono>
 #include <memory>
 
+extern "C" char *__cxa_demangle(const char *, char *, size_t *, int *);
+
 // `cone` is actually an opaque type defined in cone.c, but who cares? That's a different unit!
 struct cone {
     using time = std::chrono::steady_clock::time_point;
@@ -71,9 +73,6 @@ struct cone {
         return *cone_count();
     }
 
-    // Convert a C++ exception that is being handled into a mun error.
-    static void exception_to_error() noexcept;
-
     struct ref {
         ref() noexcept = default;
 
@@ -99,12 +98,16 @@ struct cone {
 
     private:
         template <typename F>
-        static int invoke(void *ptr) noexcept {
-            try {
-                return (*std::unique_ptr<F>(reinterpret_cast<F*>(ptr)))() ? 0 : -1;
-            } catch (...) {
-                return exception_to_error(), -1;
-            }
+        static int invoke(void *ptr) noexcept try {
+            return (*std::unique_ptr<F>(reinterpret_cast<F*>(ptr)))() ? 0 : -1;
+        } catch (const std::exception& e) {
+            std::unique_ptr<const char, void(*)(const void*)> name{typeid(e).name(), [](const void*) noexcept {}};
+            if (char *c = __cxa_demangle(name.get(), nullptr, nullptr, nullptr))
+                name = {c, [](const void *c) noexcept { free((void*)c); }};
+            // XXX perhaps mun_error should contain the whole name instead of a pointer?..
+            return mun_error_at(mun_errno_custom + 18293, "exception", MUN_CURRENT_FRAME, "[%s] %s", name.get(), e.what());
+        } catch (...) {
+            return mun_error_at(mun_errno_custom + 18293, "exception", MUN_CURRENT_FRAME, "unknown");
         }
 
         std::unique_ptr<cone, void (*)(cone*) noexcept> r_{nullptr, cone_drop};

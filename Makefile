@@ -20,7 +20,7 @@ obj/libcone.a: obj/cone.o obj/cold.o obj/mun.o
 	ar rcs $@ $^
 
 # This version requires linking with libcxxabi/libcxxrt/etc.:
-obj/libcxxcone.a: obj/cone-cxa.o obj/cone-cc.o obj/cold.o obj/mun.o
+obj/libcxxcone.a: obj/cone-cxa.o obj/cold.o obj/mun.o
 	ar rcs $@ $^
 
 obj/%.o: %.c cone.h mun.h
@@ -30,10 +30,6 @@ obj/%.o: %.c cone.h mun.h
 obj/cone-cxa.o: cone.c cone.h mun.h
 	@mkdir -p $(dir $@)
 	$(CC) -std=c11 $(flags) -DCONE_CXX=1 -c $< -o $@
-
-obj/cone-cc.o: cone.cc cone.hh cone.h mun.h
-	@mkdir -p $(dir $@)
-	$(CXX) -std=c++14 $(flags) -DCONE_CXX=1 -c $< -o $@
 
 clean:
 	rm -rf obj
