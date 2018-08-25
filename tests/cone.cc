@@ -257,6 +257,17 @@ static bool test_io_starvation(char *) {
     return cc->wait() && ca->wait() && cb->wait();
 }
 
+static int test_cone_loop_inner(int *i) {
+    cone::ref c = [&]() { return (*i)++, true; };
+    return c->wait() ? 0 : -1;
+}
+
+static bool test_cone_loop(char *) {
+    int v = 0;
+    return !(cone_loop(CONE_DEFAULT_STACK, cone_bind(&test_cone_loop_inner, &v)) MUN_RETHROW)
+        && ASSERT(v == 1, "%d != 1", v);
+}
+
 export { "cone:yield", &test_yield }
      , { "cone:detach", &test_detach }
      , { "cone:wait", &test_wait }
@@ -280,3 +291,4 @@ export { "cone:yield", &test_yield }
      , { "cone:reader + writer", &test_rdwr }
      , { "cone:reader + writer on one fd", &test_concurrent_rw }
      , { "cone:io starvation", &test_io_starvation }
+     , { "cone:new loop", &test_cone_loop }
