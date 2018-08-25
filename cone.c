@@ -228,7 +228,7 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
             for (struct cone_event_fd *e = set->fds[i]; e; e = e->link) {
                 if (max_fd <= e->fd)
                     max_fd = e->fd + 1;
-                FD_SET(e->fd, &fds[e->write]);
+                FD_SET(e->fd, &fds[!!e->write]);
             }
         }
         struct timeval us = {timeout / 1000000ull, timeout % 1000000ull};
@@ -236,7 +236,7 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
             return errno != EINTR MUN_RETHROW_OS;
         for (size_t i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++)
             for (struct cone_event_fd *e = set->fds[i]; e; e = e->link)
-                if (FD_ISSET(e->fd, &fds[e->write]) && e->f.code(e->f.data) MUN_RETHROW)
+                if (FD_ISSET(e->fd, &fds[!!e->write]) && e->f.code(e->f.data) MUN_RETHROW)
                     return -1;
     #endif
     return 0;
@@ -424,9 +424,9 @@ static int cone_ensure_running(struct cone *c) {
     if (cone_ensure_running(cone) || ev_add(__VA_ARGS__) MUN_RETHROW) \
         return -1;                                                    \
     cone_switch(cone);                                                \
-    int cancelled = cone_ensure_running(cone) MUN_RETHROW;            \
-    ev_del(__VA_ARGS__);                                              \
-    return cancelled;                                                 \
+    if (cone_ensure_running(cone) MUN_RETHROW)                        \
+        return ev_del(__VA_ARGS__), -1;                               \
+    return 0;                                                         \
 } while (0)
 
 static void cone_event_unsub(struct cone_event *ev, struct cone **c) {
@@ -450,9 +450,19 @@ int cone_wake(struct cone_event *ev, size_t n) {
     return 0;
 }
 
+struct cone_iowait_tmp {
+    struct cone *c;
+    struct cone_event_fd ev;
+};
+
+static int cone_iowake(struct cone_iowait_tmp *st) {
+    cone_event_io_del(&st->c->loop->io, &st->ev);
+    return cone_schedule(st->c);
+}
+
 int cone_iowait(int fd, int write) {
-    struct cone_event_fd ev = {fd, write, cone_bind(&cone_schedule, cone), NULL};
-    cone_pause(cone_event_io_add, cone_event_io_del, &cone->loop->io, &ev);
+    struct cone_iowait_tmp st = {cone, {fd, write, cone_bind(&cone_iowake, &st), NULL}};
+    cone_pause(cone_event_io_add, cone_event_io_del, &cone->loop->io, &st.ev);
 }
 
 int cone_sleep_until(mun_usec t) {
