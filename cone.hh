@@ -82,10 +82,10 @@ struct cone {
 
         template <typename F /* = bool() */, typename G = std::remove_reference_t<F>>
         ref(F&& f, size_t stack = 100UL * 1024)
-            // XXX cone_spawn allows a single pointer-sized argument; if F is trivially
-            //     copyable and fits into that space, we can pass it by value.
-            : ref(&invoke<std::unique_ptr<G>>, new G(std::forward<F>(f)), stack)
+            // XXX if F is trivially copyable and fits into one `void*`, we can pass it by value.
+            : r_(cone_spawn(stack, cone_bind(&invoke<G>, new G(std::forward<F>(f)))), cone_drop)
         {
+            mun_cant_fail(!r_.get() MUN_RETHROW);
         }
 
         operator cone*() const {
@@ -101,16 +101,10 @@ struct cone {
         }
 
     private:
-        ref(int (*f)(void*), void *data, size_t stack) noexcept
-            : r_(cone_spawn(stack, cone_bind(f, data)), cone_drop)
-        {
-            mun_cant_fail(!r_.get() MUN_RETHROW);
-        }
-
-        template <typename U>
+        template <typename F>
         static int invoke(void *ptr) noexcept {
             try {
-                return (*U(reinterpret_cast<typename U::pointer>(ptr)))() ? 0 : -1;
+                return (*std::unique_ptr<F>(reinterpret_cast<F*>(ptr)))() ? 0 : -1;
             } catch (...) {
                 return exception_to_error(), -1;
             }
