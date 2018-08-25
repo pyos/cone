@@ -33,6 +33,19 @@ static bool test_cancel(char *) {
         && ASSERT(v == 0, "%d != 0", v);
 }
 
+static bool test_cancel_atomic(char *) {
+    int v = 0;
+    // also run this under asan (must not use-after-free)
+    cone::ref{[&]() { return ::cone->cancel(), v++, true; }};
+    return cone::yield() && ASSERT(v == 1, "%d != 1", v);
+}
+
+static bool test_cancel_sleeping(char *) {
+    cone::ref c = []() { return ASSERT(!cone::sleep(100ms) && mun_last_error()->code == ECANCELED, "not cancelled"); };
+    auto a = cone::time::clock::now();
+    return (c->cancel(), c->wait()) && ASSERT(cone::time::clock::now() - a < 10ms, "shouldn't have slept");
+}
+
 static bool test_wait_no_rethrow(char *) {
     cone::ref c = [&]() { return cone::yield(); };
     c->cancel();
@@ -66,14 +79,6 @@ static bool test_sleep_after_cancel(char *) {
 static bool test_deadline(char *) {
     cone::deadline d(::cone, 0us);
     return ASSERT(!cone::yield() && mun_last_error()->code == ETIMEDOUT, "deadline did not trigger");
-}
-
-static bool test_deadline_cancel(char *) {
-    cone::ref c = []() {
-        return ASSERT(!cone::yield() && mun_last_error()->code == ECANCELED, "not cancelled") && cone::yield();
-    };
-    cone::deadline d{c, 0us};
-    return c->cancel(), c->wait();
 }
 
 static bool test_deadline_lifting(char *) {
@@ -243,12 +248,13 @@ export { "cone:yield", &test_yield }
      , { "cone:detach", &test_detach }
      , { "cone:wait", &test_wait }
      , { "cone:wait on cancelled", &test_cancel }
+     , { "cone:wait on cancelled, but atomic", &test_cancel_atomic }
+     , { "cone:wait on cancelled before sleeping", &test_cancel_sleeping }
      , { "cone:wait(rethrow=false)", &test_wait_no_rethrow }
      , { "cone:sleep 50ms concurrent with 100ms)", &test_sleep<false> }
      , { "cone:sleep 50ms concurrent with cancelled 100ms", &test_sleep<true> }
      , { "cone:sleep while handling cancellation", &test_sleep_after_cancel }
      , { "cone:deadline", &test_deadline }
-     , { "cone:deadline & cancel", &test_deadline_cancel }
      , { "cone:deadline lifting", &test_deadline_lifting }
      , { "cone:count", &test_count }
      , { "cone:event", &test_event }
