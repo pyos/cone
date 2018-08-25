@@ -308,27 +308,27 @@ static void cone_switch(struct cone *c) {
         void * fake_stack = NULL;
         __sanitizer_start_switch_fiber(&fake_stack, c->target_stack, c->target_stack_size);
     #endif
+    int done;
     __asm__("jmp  %=0f       \n"
     "%=1:"  "push %%rbp      \n"
             "push %%rdi      \n"
             "mov  %%rsp, %0  \n" // `xchg` is implicitly `lock`ed; 3 `mov`s are faster
-            "mov  %1, %%rsp  \n" // (the third is inserted by the compiler to load c->rsp)
+            "mov  %2, %%rsp  \n" // (the third is inserted by the compiler to load c->rsp)
+            "xor  %1, %1     \n"
             "pop  %%rdi      \n" // FIXME prone to incur cache misses
             "pop  %%rbp      \n"
             "ret             \n" // jumps into `cone_body` if this is a new coroutine
     "%=0:"  "call %=1b       \n"
-      : "=m"(c->rsp) : "c"(c->rsp)
-      : "rax", "rdx", "rbx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc", "memory");
+      : "=m"(c->rsp), "=a"(done) : "c"(c->rsp)
+      : "rdx", "rbx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc", "memory");
     #if CONE_ASAN
         __sanitizer_finish_switch_fiber(fake_stack, &c->target_stack, &c->target_stack_size);
     #endif
+    if (done)
+        cone_drop(c); // can't do this in `cone_body` because it might destroy the stack
     #if CONE_CXX
         *__cxa_get_globals() = cxa_globals;
     #endif
-}
-
-static int cone_drop_ex(struct cone *c) {
-    return cone_drop(c), 0;
 }
 
 static void __attribute__((noreturn)) cone_body(struct cone *c) {
@@ -339,18 +339,13 @@ static void __attribute__((noreturn)) cone_body(struct cone *c) {
         *__cxa_get_globals() = (struct __cxa_eh_globals){ NULL, 0 };
     #endif
     c->flags |= (c->body.code(c->body.data) ? CONE_FLAG_FAILED : 0) | CONE_FLAG_FINISHED;
-    // 1. `cone_drop` may deallocate the current stack, so we have to switch before calling it.
-    // 2. the callback is scheduled to run as early as possible to minimize the probability
-    //    of `c` getting evicted from CPU caches.
-    // 3. inserting at 0 here is cheap because `cone_run(c)` was recently popped off the same
-    //    vector, so there's guaranteed to be some empty space at the beginning.
-    mun_cant_fail(mun_vec_insert(&c->loop->at.now, 0, &cone_bind(&cone_drop_ex, c)) MUN_RETHROW);
     mun_cant_fail(cone_wake(&c->done, (size_t)-1) MUN_RETHROW);
     cone_loop_dec(c->loop);
     #if CONE_ASAN
         __sanitizer_start_switch_fiber(NULL, c->target_stack, c->target_stack_size);
     #endif
     __asm__("mov  %0, %%rsp  \n"
+            "mov  $1, %%eax  \n" // make `cone_switch` call `cone_drop`
             "pop  %%rdi      \n"
             "pop  %%rbp      \n"
             "ret             \n" :: "r"(c->rsp));
