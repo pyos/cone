@@ -87,7 +87,7 @@ static bool test_deadline_lifting(char *) {
 }
 
 static bool test_count(char *) {
-    auto& c = cone::count();
+    auto& c = *cone::count();
     if (!ASSERT(c == 1u, "%u != 1", c.load())) return false; // i.e. this coroutine
     cone::ref _1 = []() { return true; };
     if (!ASSERT(c == 2u, "%u != 2", c.load())) return false;

@@ -27,7 +27,7 @@ struct cone {
     struct deadline {
         // `cone_deadline` and `cone_complete`, but in RAII form. This object must not
         // outlive the `cone`. (Don't tell me to rewrite this in Rust.)
-        deadline(cone *c, time t)
+        deadline(cone *c, time t) noexcept
             : c_(c)
             , t_(t)
         {
@@ -35,7 +35,7 @@ struct cone {
         }
 
         // Same as above, but relative to now.
-        deadline(cone *c, timedelta t)
+        deadline(cone *c, timedelta t) noexcept
             : deadline(c, time::clock::now() + t)
         {
         }
@@ -67,32 +67,31 @@ struct cone {
         return sleep(time::clock::now() + t);
     }
 
-    // Get a reference to the number of currently running coroutines.
-    static const std::atomic<unsigned>& count() noexcept {
-        mun_assert(::cone, "not running in a coroutine");
-        return *cone_count();
+    // Get the number of currently running coroutines, nullptr if not in an event loop.
+    static const std::atomic<unsigned>* count() noexcept {
+        return cone_count();
     }
 
     struct ref {
         ref() noexcept = default;
 
         template <typename F /* = bool() */, typename G = std::remove_reference_t<F>>
-        ref(F&& f, size_t stack = 100UL * 1024)
+        ref(F&& f, size_t stack = 100UL * 1024) noexcept
             // XXX if F is trivially copyable and fits into one `void*`, we can pass it by value.
             : r_(cone_spawn(stack, cone_bind(&invoke<G>, new G(std::forward<F>(f)))), cone_drop)
         {
             mun_cant_fail(!r_.get() MUN_RETHROW);
         }
 
-        operator cone*() const {
+        operator cone*() const noexcept {
             return r_.get();
         }
 
-        cone& operator*() const {
+        cone& operator*() const noexcept {
             return *r_;
         }
 
-        cone* operator->() const {
+        cone* operator->() const noexcept {
             return r_.get();
         }
 
