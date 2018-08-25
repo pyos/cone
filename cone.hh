@@ -75,10 +75,7 @@ struct cone {
     static void exception_to_error() noexcept;
 
     struct ref {
-        ref(cone *c = nullptr) noexcept
-            : r_(c, [](cone *) noexcept {})
-        {
-        }
+        ref() noexcept = default;
 
         template <typename F /* = bool() */, typename G = std::remove_reference_t<F>>
         ref(F&& f, size_t stack = 100UL * 1024)
@@ -110,7 +107,7 @@ struct cone {
             }
         }
 
-        std::unique_ptr<cone, void (*)(cone*) noexcept> r_;
+        std::unique_ptr<cone, void (*)(cone*) noexcept> r_{nullptr, cone_drop};
     };
 
     struct event {
