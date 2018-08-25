@@ -116,7 +116,8 @@ int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) mun_throws(memory) 
     void *r = malloc(cap * s);
     if (r == NULL)
         return mun_error(memory, "%zu * %zu bytes", cap, s);
-    memmove(r, v->data, v->size * s);
+    if (v->size)
+        memmove(r, v->data, v->size * s);
     free(start);
     return *v = (struct mun_vec){r, v->size, cap, 0}, 0;
 }
