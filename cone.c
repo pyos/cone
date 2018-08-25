@@ -110,28 +110,12 @@ struct cone_event_fd {
 
 struct cone_event_io {
     int poller;
-    int selfpipe[2];
-    cone_atom pinged;
-    struct cone_event_fd ping_ev;
     struct cone_event_fd *fds[127];
 };
 
 static void cone_event_io_fini(struct cone_event_io *set) {
     if (set->poller >= 0)
         close(set->poller);
-    if (set->selfpipe[0] >= 0)
-        close(set->selfpipe[0]), close(set->selfpipe[1]);
-}
-
-static void cone_event_io_ping(struct cone_event_io *set) {
-    if (atomic_compare_exchange_strong(&set->pinged, &(unsigned){0}, 1))
-        write(set->selfpipe[1], "", 1);
-}
-
-static int cone_event_io_on_ping(struct cone_event_io *set) {
-    read(set->selfpipe[0], (char[4]){}, 4);  // never yields
-    atomic_store_explicit(&set->pinged, 0, memory_order_release);
-    return 0;
 }
 
 static struct cone_event_fd **cone_event_io_bucket(struct cone_event_io *set, int fd) {
@@ -177,10 +161,6 @@ static void cone_event_io_del(struct cone_event_io *set, struct cone_event_fd *s
 }
 
 static int cone_event_io_init(struct cone_event_io *set) {
-    set->selfpipe[0] = set->selfpipe[1] = set->poller = -1;
-    if (pipe(set->selfpipe) || fcntl(set->selfpipe[0], F_SETFD, FD_CLOEXEC)
-                            || fcntl(set->selfpipe[1], F_SETFD, FD_CLOEXEC) MUN_RETHROW_OS)
-        return cone_event_io_fini(set), -1;
     #if CONE_EVNOTIFIER == 1
         if ((set->poller = epoll_create1(EPOLL_CLOEXEC)) < 0 MUN_RETHROW_OS)
             return cone_event_io_fini(set), -1;
@@ -188,16 +168,10 @@ static int cone_event_io_init(struct cone_event_io *set) {
         if ((set->poller = kqueue()) < 0 || fcntl(set->poller, F_SETFD, FD_CLOEXEC) < 0 MUN_RETHROW_OS)
             return cone_event_io_fini(set), -1;
     #endif
-    set->ping_ev.fd = set->selfpipe[0];
-    set->ping_ev.f = cone_bind(&cone_event_io_on_ping, set);
-    if (cone_event_io_add(set, &set->ping_ev) MUN_RETHROW_OS)
-        return cone_event_io_fini(set), -1;
     return 0;
 }
 
 static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
-    if (timeout < 0 MUN_RETHROW)
-        return -1;
     if (timeout > 60000000ll)
         timeout = 60000000ll;
     #if CONE_EVNOTIFIER == 1
@@ -260,20 +234,13 @@ static void cone_loop_fini(struct cone_loop *loop) {
 }
 
 static int cone_loop_run(struct cone_loop *loop) {
-    while (atomic_load_explicit(&loop->active, memory_order_acquire))
-        if (cone_event_io_emit(&loop->io, cone_event_schedule_emit(&loop->at, 256)) MUN_RETHROW)
+    while (1) {
+        mun_usec next = cone_event_schedule_emit(&loop->at, 256);
+        if (next == MUN_USEC_MAX && !atomic_load_explicit(&loop->active, memory_order_acquire))
+            return 0;
+        if (next < 0 || cone_event_io_emit(&loop->io, next) MUN_RETHROW)
             return -1;
-    // there may still be some `cone_drop`s pending; see `cone_body`.
-    return cone_event_schedule_emit(&loop->at, (size_t)-1) < 0 MUN_RETHROW;
-}
-
-static void cone_loop_inc(struct cone_loop *loop) {
-    atomic_fetch_add_explicit(&loop->active, 1, memory_order_relaxed);
-}
-
-static void cone_loop_dec(struct cone_loop *loop) {
-    if (atomic_fetch_sub_explicit(&loop->active, 1, memory_order_acq_rel) == 1)
-        cone_event_io_ping(&loop->io);
+    }
 }
 
 enum {
@@ -348,7 +315,7 @@ static void __attribute__((noreturn)) cone_body(struct cone *c) {
     //    vector, so there's guaranteed to be some empty space at the beginning.
     mun_cant_fail(mun_vec_insert(&c->loop->at.now, 0, &cone_bind(&cone_drop_ex, c)) MUN_RETHROW);
     mun_cant_fail(cone_wake(&c->done, (size_t)-1) MUN_RETHROW);
-    cone_loop_dec(c->loop);
+    atomic_fetch_sub_explicit(&c->loop->active, 1, memory_order_acq_rel);
     #if CONE_ASAN
         __sanitizer_start_switch_fiber(NULL, c->target_stack, c->target_stack_size);
     #endif
@@ -389,11 +356,12 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
     c->rsp[1] = NULL;               // %rbp: nothing; there's no previous frame yet
     c->rsp[2] = (void*)&cone_body;  // %rip: code to execute;
     c->rsp[3] = NULL;               // return address: nothing; same as for %rbp
-    if (cone_event_schedule_add(&c->loop->at, 0, cone_bind(&cone_run, c)) MUN_RETHROW) {
+    if (cone_event_schedule_add(&loop->at, 0, cone_bind(&cone_run, c)) MUN_RETHROW) {
         c->flags ^= CONE_FLAG_LAST_REF;
         return cone_drop(c), NULL;
     }
-    return cone_loop_inc(c->loop), c;
+    atomic_fetch_add_explicit(&loop->active, 1, memory_order_relaxed);
+    return c;
 }
 
 struct cone *cone_spawn(size_t size, struct cone_closure body) {
