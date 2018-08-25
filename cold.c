@@ -81,6 +81,14 @@ ssize_t read(int fd, void *buf, size_t count)
 ssize_t pread(int fd, void *buf, size_t count, off_t offset)
     cold_iocall(fd, 0, pread, fd, buf, count, offset)
 
+#if __linux__
+ssize_t __read_chk(int fd, void *buf, size_t count, size_t buflen)
+    cold_iocall(fd, 0, __read_chk, fd, buf, count, buflen)
+
+ssize_t __pread_chk(int fd, void *buf, size_t count, off_t offset, size_t buflen)
+    cold_iocall(fd, 0, __pread_chk, fd, buf, count, offset, buflen)
+#endif
+
 ssize_t readv(int fd, const struct iovec *iov, int iovcnt)
     cold_iocall(fd, 0, readv, fd, iov, iovcnt)
 
