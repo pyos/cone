@@ -11,7 +11,7 @@ tests/%: obj/tests/%
 obj/tests/%: obj/tests/%.o obj/libcxxcone.a
 	$(CXX) $< -o $@ -Lobj -lcxxcone -ldl
 
-obj/tests/%.o: tests/%.cc tests/base.cc cone.h mun.h
+obj/tests/%.o: tests/%.cc tests/base.cc cone.h mun.h cone.hh
 	@mkdir -p $(dir $@)
 	$(CXX) -std=c++14 $(flags) -DSRC=$< -c tests/base.cc -o $@
 
