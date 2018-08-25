@@ -151,14 +151,14 @@ struct cone {
 
         bool lock() noexcept {
             while (!try_lock())
-                if (!e_.wait(v_, 1))
-                    return false;
+                if (!e_.wait(v_, 1) && mun_last_error()->code != EAGAIN)
+                    return try_lock() && (unlock(), false); // wake one more if needed
             return true;
         }
 
         void unlock() noexcept {
             v_ = 0;
-            e_.wake(); // XXX should only wake one (but handle cancellation)
+            e_.wake(1);
         }
 
     private:
