@@ -327,6 +327,10 @@ static void cone_switch(struct cone *c) {
     #endif
 }
 
+static int cone_drop_ex(struct cone *c) {
+    return cone_drop(c), 0;
+}
+
 static void __attribute__((noreturn)) cone_body(struct cone *c) {
     #if CONE_ASAN
         __sanitizer_finish_switch_fiber(NULL, &c->target_stack, &c->target_stack_size);
@@ -340,7 +344,7 @@ static void __attribute__((noreturn)) cone_body(struct cone *c) {
     //    of `c` getting evicted from CPU caches.
     // 3. inserting at 0 here is cheap because `cone_run(c)` was recently popped off the same
     //    vector, so there's guaranteed to be some empty space at the beginning.
-    mun_cant_fail(mun_vec_insert(&c->loop->at.now, 0, &cone_bind(&cone_drop, c)) MUN_RETHROW);
+    mun_cant_fail(mun_vec_insert(&c->loop->at.now, 0, &cone_bind(&cone_drop_ex, c)) MUN_RETHROW);
     mun_cant_fail(cone_wake(&c->done, (size_t)-1) MUN_RETHROW);
     cone_loop_dec(c->loop);
     #if CONE_ASAN
@@ -394,7 +398,7 @@ struct cone *cone_spawn(size_t size, struct cone_closure body) {
     return cone_spawn_on(cone->loop, size, body);
 }
 
-int cone_drop(struct cone *c) {
+void cone_drop(struct cone *c) {
     if (c && (atomic_fetch_xor(&c->flags, CONE_FLAG_LAST_REF) & CONE_FLAG_LAST_REF)) {
         if ((c->flags & (CONE_FLAG_FAILED | CONE_FLAG_JOINED)) == CONE_FLAG_FAILED)
             if (c->error.code != mun_errno_cancelled)
@@ -402,7 +406,6 @@ int cone_drop(struct cone *c) {
         mun_vec_fini(&c->done);
         free(c);
     }
-    return !c;
 }
 
 static int cone_schedule(struct cone *c) {

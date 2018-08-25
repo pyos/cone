@@ -44,9 +44,8 @@ struct cone *cone_spawn(size_t stack, struct cone_closure) mun_throws(memory);
 
 #define cone(f, arg) cone_spawn(CONE_DEFAULT_STACK, cone_bind(f, arg))
 
-// Drop the reference to a coroutine returned by `cone_spawn`. No-op if the pointer
-// is NULL, in which case it returns a nonzero value.
-int cone_drop(struct cone *) mun_throws(memory);
+// Drop the reference to a coroutine returned by `cone_spawn`. No-op if the pointer is NULL.
+void cone_drop(struct cone *);
 
 // Sleep until a coroutine finishes. If `norethrow` is 0 and the coroutine fails, this
 // function returns the error. If this is never done, the error is printed to stderr (see
@@ -56,8 +55,7 @@ int cone_cowait(struct cone *, int norethrow) mun_throws(cancelled, timeout, mem
 // Same as `cone_cowait`, but also drop the reference.
 static inline int cone_join(struct cone *c, int norethrow) mun_throws(cancelled, timeout, memory) {
     int r = cone_cowait(c, norethrow);
-    cone_drop(c);
-    return r;
+    return cone_drop(c), r;
 }
 
 // Sleep until a file descriptor is ready for reading/writing. If it already is,
