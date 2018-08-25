@@ -95,8 +95,7 @@ struct cone {
         std::unique_ptr<cone, void (*)(cone*) noexcept> r_;
     };
 
-    class event {
-    public:
+    struct event {
         event() noexcept;
         ~event() noexcept;
 
@@ -121,6 +120,28 @@ struct cone {
     private:
         // XXX maybe don't bother and simply include mun.h?
         std::aligned_storage_t<sizeof(void*) + sizeof(size_t) * 3, alignof(void*)> r_;
+    };
+
+    struct mutex {
+        bool try_lock() noexcept {
+            return v_.exchange(1) == 0;
+        }
+
+        bool lock() noexcept {
+            while (!try_lock())
+                if (!e_.wait(v_, 1))
+                    return false;
+            return true;
+        }
+
+        void unlock() noexcept {
+            v_ = 0;
+            e_.wake(); // XXX should only wake one (but handle cancellation)
+        }
+
+    private:
+        std::atomic<unsigned> v_{0};
+        event e_;
     };
 
 private:

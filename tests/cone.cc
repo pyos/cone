@@ -56,6 +56,13 @@ static bool test_sleep(char *msg) {
         && ASSERT(!cancel || (end - start) < 75ms, "slept too much");
 }
 
+static bool test_sleep_after_cancel(char *) {
+    ::cone->cancel();
+    auto a = cone::time::clock::now();
+    return ASSERT(!cone::yield() && mun_last_error()->code == ECANCELED, "did not cancel itself")
+        && cone::sleep(100us) && ASSERT(cone::time::clock::now() - a >= 100us, "slept for too little");
+}
+
 static bool test_deadline(char *) {
     cone::deadline d(::cone, 0us);
     return ASSERT(!cone::yield() && mun_last_error()->code == ETIMEDOUT, "deadline did not trigger");
@@ -101,25 +108,22 @@ static bool test_event_wake(char *) {
         && (ev.wake(), cone::yield() && ASSERT(v == 1, "%d != 1", v));
 }
 
-static bool test_io_starvation(char *) {
-    bool stop = false;
-    cone::event a;
-    cone::event b;
-    auto wake_wait = [&](cone::event& wk, cone::event& wt) {
-        while (!stop)
-            if (wk.wake(), !wt.wait())
-                return false;
-        return true;
+static bool test_mutex(char *) {
+    int last = 0;
+    cone::mutex m;
+    cone::ref a = [&]() {
+        if (!m.lock())
+            return false;
+        if (!cone::yield() || !cone::yield() || !cone::yield() || !cone::yield())
+            return m.unlock(), false;
+        return last = 1, m.unlock(), true;
     };
-    cone::ref ca = [&]() { return wake_wait(b, a); };
-    cone::ref cb = [&]() { return wake_wait(a, b); };
-    // yield is technically an I/O operation on an internal pipe
-    cone::ref cc = [&]() { return cone::yield() && (a.wake(), b.wake(), stop = true); };
-    if (!ASSERT(cone::sleep(20ms), "sleep() failed")) return false;
-    cc->cancel();
-    ca->cancel();
-    cb->cancel();
-    return cc->wait() && ca->wait() && cb->wait();
+    cone::ref b = [&]() {
+        if (!m.lock())
+            return false;
+        return last = 2, m.unlock(), true;
+    };
+    return a->wait() && b->wait() && ASSERT(last == 2, "%d != 2", last);
 }
 
 static bool test_exceptions_0(char *msg) {
@@ -214,11 +218,25 @@ static bool test_concurrent_rw(char *) {
         && c->wait();
 }
 
-static bool test_cancel_ignore_sleep(char *) {
-    ::cone->cancel();
-    auto a = cone::time::clock::now();
-    return ASSERT(!cone::yield() && mun_last_error()->code == ECANCELED, "did not cancel itself")
-        && cone::sleep(100us) && ASSERT(cone::time::clock::now() - a >= 100us, "slept for too little");
+static bool test_io_starvation(char *) {
+    bool stop = false;
+    cone::event a;
+    cone::event b;
+    auto wake_wait = [&](cone::event& wk, cone::event& wt) {
+        while (!stop)
+            if (wk.wake(), !wt.wait())
+                return false;
+        return true;
+    };
+    cone::ref ca = [&]() { return wake_wait(b, a); };
+    cone::ref cb = [&]() { return wake_wait(a, b); };
+    // yield is technically an I/O operation on an internal pipe
+    cone::ref cc = [&]() { return cone::yield() && (a.wake(), b.wake(), stop = true); };
+    if (!ASSERT(cone::sleep(20ms), "sleep() failed")) return false;
+    cc->cancel();
+    ca->cancel();
+    cb->cancel();
+    return cc->wait() && ca->wait() && cb->wait();
 }
 
 export { "cone:yield", &test_yield }
@@ -228,16 +246,17 @@ export { "cone:yield", &test_yield }
      , { "cone:wait(rethrow=false)", &test_wait_no_rethrow }
      , { "cone:sleep 50ms concurrent with 100ms)", &test_sleep<false> }
      , { "cone:sleep 50ms concurrent with cancelled 100ms", &test_sleep<true> }
+     , { "cone:sleep while handling cancellation", &test_sleep_after_cancel }
      , { "cone:deadline", &test_deadline }
      , { "cone:deadline & cancel", &test_deadline_cancel }
      , { "cone:deadline lifting", &test_deadline_lifting }
      , { "cone:count", &test_count }
      , { "cone:event", &test_event }
      , { "cone:event.wake(1)", &test_event_wake }
-     , { "cone:io starvation", &test_io_starvation }
+     , { "cone:mutex", &test_mutex }
      , { "cone:throw", &test_exceptions_0 }
      , { "cone:throw and unwind", &test_exceptions_1 }
      , { "cone:throw and throw again", &test_exceptions_2 }
      , { "cone:reader + writer", &test_rdwr }
      , { "cone:reader + writer on one fd", &test_concurrent_rw }
-     , { "cone:cancel-yield-sleep", &test_cancel_ignore_sleep }
+     , { "cone:io starvation", &test_io_starvation }
