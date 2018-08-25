@@ -8,12 +8,12 @@ tests: tests/cone tests/perf
 tests/%: obj/tests/%
 	$<
 
-obj/tests/%: obj/tests/%.o obj/libcone.a
-	$(CC) $< -o $@ -Lobj -lcone -ldl
+obj/tests/%: obj/tests/%.o obj/libcxxcone.a
+	$(CXX) $< -o $@ -Lobj -lcxxcone -ldl
 
-obj/tests/%.o: tests/%.c tests/base.c cone.h mun.h
+obj/tests/%.o: tests/%.cc tests/base.cc cone.h mun.h
 	@mkdir -p $(dir $@)
-	$(CC) -std=c11 $(flags) -DSRC=$< -c tests/base.c -o $@
+	$(CXX) -std=c++14 $(flags) -DSRC=$< -c tests/base.cc -o $@
 
 # This version is pure C:
 obj/libcone.a: obj/cone.o obj/cold.o obj/mun.o
