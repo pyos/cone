@@ -78,12 +78,12 @@ static bool test_sleep_after_cancel(char *) {
 
 static bool test_deadline(char *) {
     cone::deadline d(::cone, 0us);
-    return ASSERT(!cone::yield() && mun_errno == ETIMEDOUT, "deadline did not trigger");
+    return ASSERT(!cone::sleep(1ms) && mun_errno == ETIMEDOUT, "deadline did not trigger");
 }
 
 static bool test_deadline_lifting(char *) {
     cone::deadline{::cone, 0us};
-    return cone::yield();
+    return cone::sleep(1ms);
 }
 
 static bool test_count(char *) {
