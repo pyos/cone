@@ -151,7 +151,7 @@ struct cone {
 
         bool lock() noexcept {
             while (!try_lock())
-                if (!e_.wait(v_, 1) && mun_last_error()->code != EAGAIN)
+                if (!e_.wait(v_, 1) && mun_errno != EAGAIN)
                     return try_lock() && (unlock(), false); // wake one more if needed
             return true;
         }

@@ -56,6 +56,9 @@ struct mun_error {
 // so this information may be outdated. Only valid until the next call to `mun_error_at`.
 struct mun_error *mun_last_error(void);
 
+// The code of the last error.
+#define mun_errno (mun_last_error()->code)
+
 // Make `mun_last_error` point to a different location for this thread; return the old one.
 struct mun_error *mun_set_error_storage(struct mun_error *);
 

@@ -29,7 +29,7 @@ static bool test_cancel(char *) {
     cone::ref c = [&]() { return cone::yield() && (v++, true); };
     c->cancel();
     return ASSERT(!c->wait(), "cancelled coroutine succeeded")
-        && ASSERT(mun_last_error()->code == ECANCELED, "unexpected error %d", mun_last_error()->code)
+        && ASSERT(mun_errno == ECANCELED, "unexpected error %d", mun_errno)
         && ASSERT(v == 0, "%d != 0", v);
 }
 
@@ -41,7 +41,7 @@ static bool test_cancel_atomic(char *) {
 }
 
 static bool test_cancel_sleeping(char *) {
-    cone::ref c = []() { return ASSERT(!cone::sleep(100ms) && mun_last_error()->code == ECANCELED, "not cancelled"); };
+    cone::ref c = []() { return ASSERT(!cone::sleep(100ms) && mun_errno == ECANCELED, "not cancelled"); };
     auto a = cone::time::clock::now();
     return (c->cancel(), c->wait()) && ASSERT(cone::time::clock::now() - a < 10ms, "shouldn't have slept");
 }
@@ -61,7 +61,7 @@ static bool test_sleep(char *msg) {
         return false;
     if (cancel)
         b->cancel();
-    if (cancel ? !ASSERT(!b->wait() && mun_last_error()->code == ECANCELED, "b->wait() failed") : !b->wait())
+    if (cancel ? !ASSERT(!b->wait() && mun_errno == ECANCELED, "b->wait() failed") : !b->wait())
         return false;
     auto end = cone::time::clock::now();
     sprintf(msg, "%fs", std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count());
@@ -72,13 +72,13 @@ static bool test_sleep(char *msg) {
 static bool test_sleep_after_cancel(char *) {
     ::cone->cancel();
     auto a = cone::time::clock::now();
-    return ASSERT(!cone::yield() && mun_last_error()->code == ECANCELED, "did not cancel itself")
+    return ASSERT(!cone::yield() && mun_errno == ECANCELED, "did not cancel itself")
         && cone::sleep(100us) && ASSERT(cone::time::clock::now() - a >= 100us, "slept for too little");
 }
 
 static bool test_deadline(char *) {
     cone::deadline d(::cone, 0us);
-    return ASSERT(!cone::yield() && mun_last_error()->code == ETIMEDOUT, "deadline did not trigger");
+    return ASSERT(!cone::yield() && mun_errno == ETIMEDOUT, "deadline did not trigger");
 }
 
 static bool test_deadline_lifting(char *) {

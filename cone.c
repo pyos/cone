@@ -468,7 +468,7 @@ int cone_cowait(struct cone *c, int norethrow) {
     if (c == cone) // maybe detect more complicated deadlocks too?..
         return mun_error(deadlock, "coroutine waiting on itself");
     for (unsigned f; !((f = c->flags) & CONE_FLAG_FINISHED); )
-        if (cone_wait(&c->done, &c->flags, f) < 0 && mun_last_error()->code != mun_errno_retry MUN_RETHROW)
+        if (cone_wait(&c->done, &c->flags, f) && mun_errno != EAGAIN MUN_RETHROW)
             return -1;
     if (!norethrow && atomic_fetch_or(&c->flags, CONE_FLAG_JOINED) & CONE_FLAG_FAILED)
         return *mun_last_error() = c->error, mun_error_up(MUN_CURRENT_FRAME);
