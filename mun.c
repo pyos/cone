@@ -53,15 +53,17 @@ static void mun_error_fmt(const char *fmt, va_list args) {
 
 int mun_error_at(int n, const char *name, const struct mun_stackframe *frame, const char *fmt, ...) {
     struct mun_error *ep = mun_last_error();
-    errno = ep->code = n < 0 ? -n : n;
+    ep->code = n < 0 ? -n : n;
     ep->stacklen = 0;
     ep->name = name;
-    if (n >= 0 || strerror_r(-n, ep->text, sizeof(ep->text)))
+    if (n >= 0 || strerror_r(-n, ep->text, sizeof(ep->text))) {
         ep->text[0] = 0;
-    va_list args;
-    va_start(args, fmt);
-    mun_error_fmt(fmt, args);
-    va_end(args);
+        va_list args;
+        va_start(args, fmt);
+        mun_error_fmt(fmt, args);
+        va_end(args);
+    }
+    errno = ep->code;
     return mun_error_up(frame);
 }
 

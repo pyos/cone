@@ -92,7 +92,7 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 
 // Same as `MUN_RETHROW`, but assumes the expression is a standard library function that
 // sets `errno` and does not call `mun_error_at`.
-#define MUN_RETHROW_OS ? (mun_error_at(-errno, "errno", MUN_CURRENT_FRAME, "OS error %d", errno), 01) : 0
+#define MUN_RETHROW_OS ? (mun_error_at(-errno, "system", MUN_CURRENT_FRAME, "unknown"), -1) : 0
 
 // Abort if the expression fails with a mun error, else return 0.
 #define mun_cant_fail(e) (!(e) ? 0 : (mun_error_show("panic", NULL), abort(), -1))
