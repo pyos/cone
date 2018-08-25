@@ -182,10 +182,23 @@ namespace {
     };
 }
 
+static bool test_yield_to_io(char *) {
+    fd fds[2];
+    if (pipe((int*)fds) || cone_unblock(fds[0].i) || cone_unblock(fds[1].i) MUN_RETHROW)
+        return false;
+    int v = 0;
+    cone::ref c = [&]() {
+        char buf[1];
+        return !(read(fds[0].i, buf, 1) < 0 MUN_RETHROW_OS) && (v++, true);
+    };
+    return cone::yield() && !(write(fds[1].i, "k", 1) < 0 MUN_RETHROW_OS)
+        && cone::yield() && ASSERT(v == 1, "%d != 1", v);
+}
+
 static bool test_rdwr(char *) {
     fd fds[2];
     if (pipe((int*)fds) || cone_unblock(fds[0].i) || cone_unblock(fds[1].i) MUN_RETHROW)
-        return -1;
+        return false;
     const char data[] = "Hello, World! Hello, World! Hello, World! Hello, World!";
     cone::ref r = [&, fd = fds[0].i]() {
         char buf[sizeof(data)];
@@ -263,6 +276,7 @@ export { "cone:yield", &test_yield }
      , { "cone:throw", &test_exceptions_0 }
      , { "cone:throw and unwind", &test_exceptions_1 }
      , { "cone:throw and throw again", &test_exceptions_2 }
+     , { "cone:yield to reader", &test_yield_to_io }
      , { "cone:reader + writer", &test_rdwr }
      , { "cone:reader + writer on one fd", &test_concurrent_rw }
      , { "cone:io starvation", &test_io_starvation }
