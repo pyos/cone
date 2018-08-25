@@ -73,7 +73,25 @@ void cone::exception_to_error() noexcept {
 }
 
 cone::ref::ref(int (*f)(void*), void *data, size_t stack) noexcept
-    : r_(cone_spawn(stack, cone_bind(f, data)), [](cone *c) noexcept { cone_drop(c); })
+    : r_(cone_spawn(stack, cone_bind(f, data)), cone_drop)
 {
     mun_cant_fail(!r_.get() MUN_RETHROW);
+}
+
+cone::event::event() noexcept {
+    static_assert(sizeof(decltype(r_)) == sizeof(cone_event), "cone::event has wrong size");
+    static_assert(alignof(decltype(r_)) == alignof(cone_event), "cone::event has wrong alignment");
+    memset(&r_, 0, sizeof(r_));
+}
+
+cone::event::~event() noexcept {
+    mun_vec_fini((cone_event *)&r_);
+}
+
+bool cone::event::wait(const std::atomic<unsigned>& atom, unsigned expect) noexcept {
+    return !cone_wait((cone_event *)&r_, &atom, expect);
+}
+
+void cone::event::wake(size_t n) noexcept {
+    mun_cant_fail(cone_wake((cone_event *)&r_, n) MUN_RETHROW);
 }

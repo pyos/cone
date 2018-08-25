@@ -85,25 +85,36 @@ static bool test_count(char *) {
         && ASSERT(c == 1u, "%u != 1", c.load());
 }
 
+static bool test_event(char *) {
+    cone::event ev;
+    cone::ref _ = [&]() { return ev.wake(), true; };
+    return ev.wait();
+}
+
+static bool test_event_wake(char *) {
+    int v = 0;
+    cone::event ev;
+    cone::ref _1 = [&]() { return ev.wait() && (v++, true); };
+    cone::ref _2 = [&]() { return ev.wake(1), true; };
+    // _1 has not started running yet, so this coroutine will be the first in queue.
+    return ev.wait() && ASSERT(v == 0, "%d != 0", v)
+        && (ev.wake(), cone::yield() && ASSERT(v == 1, "%d != 1", v));
+}
+
 static bool test_io_starvation(char *) {
     bool stop = false;
-    struct cone_event a = {};
-    struct cone_event b = {};
-    cone_atom fake{0};
-    auto wake_wait = [&](struct cone_event& wk, struct cone_event& wt) {
+    cone::event a;
+    cone::event b;
+    auto wake_wait = [&](cone::event& wk, cone::event& wt) {
         while (!stop)
-            if (cone_wake(&wk, -1) || cone_wait(&wt, &fake, 0) MUN_RETHROW)
+            if (wk.wake(), !wt.wait())
                 return false;
         return true;
     };
     cone::ref ca = [&]() { return wake_wait(b, a); };
     cone::ref cb = [&]() { return wake_wait(a, b); };
-    cone::ref cc = [&]() {
-        if (!cone::yield()) // technically an I/O operation on an internal pipe
-            return false;
-        stop = true;
-        return !(cone_wake(&a, -1) || cone_wake(&b, -1) MUN_RETHROW);
-    };
+    // yield is technically an I/O operation on an internal pipe
+    cone::ref cc = [&]() { return cone::yield() && (a.wake(), b.wake(), stop = true); };
     if (!ASSERT(cone::sleep(20ms), "sleep() failed")) return false;
     cc->cancel();
     ca->cancel();
@@ -221,6 +232,8 @@ export { "cone:yield", &test_yield }
      , { "cone:deadline & cancel", &test_deadline_cancel }
      , { "cone:deadline lifting", &test_deadline_lifting }
      , { "cone:count", &test_count }
+     , { "cone:event", &test_event }
+     , { "cone:event.wake(1)", &test_event_wake }
      , { "cone:io starvation", &test_io_starvation }
      , { "cone:throw", &test_exceptions_0 }
      , { "cone:throw and unwind", &test_exceptions_1 }

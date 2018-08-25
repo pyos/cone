@@ -95,6 +95,34 @@ struct cone {
         std::unique_ptr<cone, void (*)(cone*) noexcept> r_;
     };
 
+    class event {
+    public:
+        event() noexcept;
+        ~event() noexcept;
+
+        event(event&& other) noexcept
+            : event()
+        {
+            std::swap(r_, other.r_);
+        }
+
+        cone::event& operator=(event&& other) noexcept {
+            std::swap(r_, other.r_);
+            return *this;
+        }
+
+        bool wait() noexcept {
+            return wait(std::atomic<unsigned>{0}, 0);
+        }
+
+        bool wait(const std::atomic<unsigned>&, unsigned expect) noexcept;
+        void wake(size_t n = std::numeric_limits<size_t>::max()) noexcept;
+
+    private:
+        // XXX maybe don't bother and simply include mun.h?
+        std::aligned_storage_t<sizeof(void*) + sizeof(size_t) * 3, alignof(void*)> r_;
+    };
+
 private:
     template <typename F, typename D>
     static int invoke(void *ptr) noexcept {
