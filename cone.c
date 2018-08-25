@@ -110,7 +110,9 @@ struct cone_event_fd {
 
 struct cone_event_io {
     int poller;
-    struct cone_event_fd *fds[127];
+    #if CONE_EVNOTIFIER != 2
+        struct cone_event_fd *fds[127];
+    #endif
 };
 
 static void cone_event_io_fini(struct cone_event_io *set) {
@@ -118,49 +120,48 @@ static void cone_event_io_fini(struct cone_event_io *set) {
         close(set->poller);
 }
 
-static struct cone_event_fd **cone_event_io_bucket(struct cone_event_io *set, int fd) {
-    struct cone_event_fd **b = &set->fds[fd % (sizeof(set->fds) / sizeof(set->fds[0]))];
-    while (*b && (*b)->fd != fd) b = &(*b)->link;
-    return b;
+static int cone_event_io_mod(struct cone_event_io *set, struct cone_event_fd *st, int add) {
+    #if CONE_EVNOTIFIER == 2
+        uint16_t flags = (add ? EV_ADD : EV_DELETE)|EV_UDATA_SPECIFIC;
+        struct kevent ev = {st->fd, st->write ? EVFILT_WRITE : EVFILT_READ, flags, 0, 0, st};
+        return kevent(set->poller, &ev, 1, NULL, 0, NULL) && errno != ENOENT MUN_RETHROW_OS;
+    #else
+        struct cone_event_fd **b = &set->fds[st->fd % (sizeof(set->fds) / sizeof(set->fds[0]))];
+        while (*b && (*b)->fd != st->fd)
+            b = &(*b)->link;
+        struct cone_event_fd **c = b;
+        if (add) {
+            st->link = *c;
+            *c = st;
+        } else {
+            while (*c && (*c)->fd == st->fd && *c != st)
+                c = &(*c)->link;
+            if (*c != st)
+                return 0;
+            *c = st->link;
+        }
+        #if CONE_EVNOTIFIER == 1
+            struct epoll_event ev = {0, {.ptr = *b}};
+            for (struct cone_event_fd *e = *b; e && e->fd == st->fd; e = e->link)
+                ev.events |= e->write ? EPOLLOUT : EPOLLIN|EPOLLRDHUP;
+            int op = add && !st->link ? EPOLL_CTL_ADD : !add && !ev.events ? EPOLL_CTL_DEL : EPOLL_CTL_MOD;
+            if (epoll_ctl(set->poller, op, st->fd, &ev) MUN_RETHROW_OS)
+                return *c = (add ? st->link : st), -1;
+        #endif
+        return 0;
+    #endif
 }
 
 static int cone_event_io_add(struct cone_event_io *set, struct cone_event_fd *st) {
-    struct cone_event_fd **b = cone_event_io_bucket(set, st->fd);
-    st->link = *b;
-    *b = st;
-    #if CONE_EVNOTIFIER == 1
-        struct epoll_event ev = {0, {.ptr = st}};
-        for (struct cone_event_fd *e = st; e && e->fd == st->fd; e = e->link)
-            ev.events |= e->write ? EPOLLOUT : EPOLLIN|EPOLLRDHUP;
-        if (epoll_ctl(set->poller, st->link ? EPOLL_CTL_MOD : EPOLL_CTL_ADD, st->fd, &ev) MUN_RETHROW_OS)
-            return *b = st->link, -1;
-    #elif CONE_EVNOTIFIER == 2
-        struct kevent ev = {st->fd, st->write ? EVFILT_WRITE : EVFILT_READ, EV_ADD|EV_UDATA_SPECIFIC, 0, 0, st};
-        if (kevent(set->poller, &ev, 1, NULL, 0, NULL) MUN_RETHROW_OS)
-            return *b = st->link, -1;
-    #endif
-    return 0;
+    return cone_event_io_mod(set, st, 1) MUN_RETHROW;
 }
 
 static void cone_event_io_del(struct cone_event_io *set, struct cone_event_fd *st) {
-    struct cone_event_fd **b = cone_event_io_bucket(set, st->fd);
-    struct cone_event_fd **c = b;
-    while (*c && (*c)->fd == st->fd && *c != st) c = &(*c)->link;
-    if (*c != st)
-        return;
-    *c = st->link;
-    #if CONE_EVNOTIFIER == 1
-        struct epoll_event ev = {0, {.ptr = *b}};
-        for (struct cone_event_fd *e = *b; e && e->fd == st->fd; e = e->link)
-            ev.events |= e->write ? EPOLLOUT : EPOLLIN|EPOLLRDHUP;
-        mun_cant_fail(epoll_ctl(set->poller, ev.events ? EPOLL_CTL_MOD : EPOLL_CTL_DEL, st->fd, &ev) MUN_RETHROW_OS);
-    #elif CONE_EVNOTIFIER == 2
-        struct kevent ev = {st->fd, st->write ? EVFILT_WRITE : EVFILT_READ, EV_DELETE|EV_UDATA_SPECIFIC, 0, 0, st};
-        mun_cant_fail(kevent(set->poller, &ev, 1, NULL, 0, NULL) MUN_RETHROW_OS);
-    #endif
+    mun_cant_fail(cone_event_io_mod(set, st, 0) MUN_RETHROW);
 }
 
 static int cone_event_io_init(struct cone_event_io *set) {
+    (void)set;
     #if CONE_EVNOTIFIER == 1
         if ((set->poller = epoll_create1(EPOLL_CLOEXEC)) < 0 MUN_RETHROW_OS)
             return cone_event_io_fini(set), -1;
