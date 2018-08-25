@@ -13,8 +13,9 @@ static bool test_yield(char *) {
 
 static bool test_detach(char *) {
     int v = 0;
-    cone::ref{[&]() { return (v++, true); }};
-    return cone::yield() && ASSERT(v == 1, "%d != 1", v);
+    cone::ref{[&]() { return (v++, cone::yield()) ? (v++, true) : (v++, false); }};
+    return cone::yield() && ASSERT(v == 1, "%d != 1", v)
+        && cone::yield() && ASSERT(v == 2, "%d != 2", v);
 }
 
 static bool test_wait(char *) {
@@ -89,25 +90,21 @@ static bool test_io_starvation(char *) {
     struct cone_event a = {};
     struct cone_event b = {};
     cone_atom fake{0};
-    cone::ref ca = [&]() {
+    auto wake_wait = [&](struct cone_event& wk, struct cone_event& wt) {
         while (!stop)
-            if (cone_wake(&b, -1) || cone_wait(&a, &fake, 0) MUN_RETHROW)
+            if (cone_wake(&wk, -1) || cone_wait(&wt, &fake, 0) MUN_RETHROW)
                 return false;
         return true;
     };
-    cone::ref cb = [&]() {
-        while (!stop)
-            if (cone_wake(&a, -1) || cone_wait(&b, &fake, 0) MUN_RETHROW)
-                return false;
-        return true;
-    };
+    cone::ref ca = [&]() { return wake_wait(b, a); };
+    cone::ref cb = [&]() { return wake_wait(a, b); };
     cone::ref cc = [&]() {
         if (!cone::yield()) // technically an I/O operation on an internal pipe
             return false;
         stop = true;
         return !(cone_wake(&a, -1) || cone_wake(&b, -1) MUN_RETHROW);
     };
-    if (!ASSERT(cone::sleep(100ms), "sleep() failed")) return false;
+    if (!ASSERT(cone::sleep(20ms), "sleep() failed")) return false;
     cc->cancel();
     ca->cancel();
     cb->cancel();
@@ -208,9 +205,9 @@ static bool test_concurrent_rw(char *) {
 
 static bool test_cancel_ignore_sleep(char *) {
     ::cone->cancel();
-    ASSERT(!cone::yield() && mun_last_error()->code == ECANCELED, "did not cancel itself");
     auto a = cone::time::clock::now();
-    return cone::sleep(100us) && ASSERT(cone::time::clock::now() - a >= 100us, "slept for too little");
+    return ASSERT(!cone::yield() && mun_last_error()->code == ECANCELED, "did not cancel itself")
+        && cone::sleep(100us) && ASSERT(cone::time::clock::now() - a >= 100us, "slept for too little");
 }
 
 export { "cone:yield", &test_yield }
