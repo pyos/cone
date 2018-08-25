@@ -56,11 +56,13 @@ struct cone_event_at {
 struct cone_event_schedule {
     struct mun_vec(struct cone_closure) now;
     struct mun_vec(struct cone_event_at) later;
+    struct cone_event yield;
 };
 
 static void cone_event_schedule_fini(struct cone_event_schedule *ev) {
     mun_vec_fini(&ev->now);
     mun_vec_fini(&ev->later);
+    mun_vec_fini(&ev->yield);
 }
 
 static int cone_event_schedule_add(struct cone_event_schedule *ev, mun_usec at, struct cone_closure f) {
@@ -76,6 +78,8 @@ static void cone_event_schedule_del(struct cone_event_schedule *ev, mun_usec at,
 }
 
 static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev, size_t limit) {
+    if (cone_wake(&ev->yield, (size_t)-1) MUN_RETHROW)
+        return -1;
     while (1) {
         mun_usec now = mun_usec_monotonic();
         size_t more = 0;
@@ -85,7 +89,7 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev, size_t 
             return -1;
         mun_vec_erase(&ev->later, 0, more);
         if (!ev->now.size)
-            return ev->later.size ? ev->later.data->at - now : MUN_USEC_MAX;
+            return ev->yield.size ? 0 : ev->later.size ? ev->later.data->at - now : MUN_USEC_MAX;
         do {
             if (!limit--)
                 return 0;
@@ -108,13 +112,11 @@ struct cone_event_io {
     int poller;
     int selfpipe[2];
     cone_atom pinged;
-    struct cone_event ping;
     struct cone_event_fd ping_ev;
     struct cone_event_fd *fds[127];
 };
 
 static void cone_event_io_fini(struct cone_event_io *set) {
-    mun_vec_fini(&set->ping);
     if (set->poller >= 0)
         close(set->poller);
     if (set->selfpipe[0] >= 0)
@@ -129,7 +131,7 @@ static void cone_event_io_ping(struct cone_event_io *set) {
 static int cone_event_io_on_ping(struct cone_event_io *set) {
     read(set->selfpipe[0], (char[4]){}, 4);  // never yields
     atomic_store_explicit(&set->pinged, 0, memory_order_release);
-    return cone_wake(&set->ping, (size_t)-1) MUN_RETHROW;
+    return 0;
 }
 
 static struct cone_event_fd **cone_event_io_bucket(struct cone_event_io *set, int fd) {
@@ -470,8 +472,8 @@ int cone_sleep_until(mun_usec t) {
 }
 
 int cone_yield(void) {
-    cone_event_io_ping(&cone->loop->io); // kinda slow, maybe add a separate "yield queue"?
-    return cone_wait(&cone->loop->io.ping, &cone->loop->io.pinged, 1) MUN_RETHROW;
+    cone_atom fake = 0;
+    return cone_wait(&cone->loop->at.yield, &fake, 0) MUN_RETHROW;
 }
 
 int cone_cowait(struct cone *c, int norethrow) {
