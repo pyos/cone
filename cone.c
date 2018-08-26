@@ -287,7 +287,7 @@ static void cone_switch(struct cone *c) {
             "pop  %%rbp      \n"
             "ret             \n" // jumps into `cone_body` if this is a new coroutine
     "%=0:"  "call %=1b       \n"
-      : "=m"(c->rsp) : "c"(c->rsp)
+      : "=m"(c->rsp) : "c"(c->rsp) // FIXME prone to incur cache misses
       : "rax", "rdx", "rbx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc", "memory");
     #if CONE_ASAN
         __sanitizer_finish_switch_fiber(fake_stack, &c->target_stack, &c->target_stack_size);
@@ -295,10 +295,6 @@ static void cone_switch(struct cone *c) {
     #if CONE_CXX
         *__cxa_get_globals() = cxa_globals;
     #endif
-}
-
-static int cone_drop_ex(struct cone *c) {
-    return cone_drop(c), 0;
 }
 
 static void __attribute__((noreturn)) cone_body(struct cone *c) {
@@ -309,14 +305,6 @@ static void __attribute__((noreturn)) cone_body(struct cone *c) {
         *__cxa_get_globals() = (struct __cxa_eh_globals){ NULL, 0 };
     #endif
     c->flags |= (c->body.code(c->body.data) ? CONE_FLAG_FAILED : 0) | CONE_FLAG_FINISHED;
-    // 1. `cone_drop` may deallocate the current stack, so we have to switch before calling it.
-    // 2. the callback is scheduled to run as early as possible to minimize the probability
-    //    of `c` getting evicted from CPU caches.
-    // 3. inserting at 0 here is cheap because `cone_run(c)` was recently popped off the same
-    //    vector, so there's guaranteed to be some empty space at the beginning.
-    mun_cant_fail(mun_vec_insert(&c->loop->at.now, 0, &cone_bind(&cone_drop_ex, c)) MUN_RETHROW);
-    mun_cant_fail(cone_wake(&c->done, (size_t)-1) MUN_RETHROW);
-    atomic_fetch_sub_explicit(&c->loop->active, 1, memory_order_acq_rel);
     #if CONE_ASAN
         __sanitizer_start_switch_fiber(NULL, c->target_stack, c->target_stack_size);
     #endif
@@ -328,14 +316,19 @@ static void __attribute__((noreturn)) cone_body(struct cone *c) {
 }
 
 static int cone_run(struct cone *c) {
-    struct mun_error *ep = mun_set_error_storage(&c->error); // FIXME prone to incur cache misses
+    struct mun_error *ep = mun_set_error_storage(&c->error);
     struct cone *prev = cone;
     cone_switch(cone = c);
-    // Only after switching back; else there's a use-after-free on `cone_cancel(cone)`
-    // followed by terminating without ever preempting if the coroutine is detached.
-    c->flags &= ~CONE_FLAG_SCHEDULED;
-    mun_set_error_storage(ep);
     cone = prev;
+    mun_set_error_storage(ep);
+    // Only after switching back, else `cone_cancel(cone)` from within the coroutine would
+    // schedule it again. If it then completes without pausing, there'd be a use-after-free.
+    c->flags &= ~CONE_FLAG_SCHEDULED;
+    if (c->flags & CONE_FLAG_FINISHED) {
+        atomic_fetch_sub_explicit(&c->loop->active, 1, memory_order_acq_rel);
+        int ret = cone_wake(&c->done, (size_t)-1) MUN_RETHROW;
+        return cone_drop(c), ret;
+    }
     return 0;
 }
 
