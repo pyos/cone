@@ -73,7 +73,7 @@ struct cone {
     }
 
     struct ref {
-        ref() noexcept = default;
+        ref() noexcept {}
 
         template <typename F /* = bool() */, typename G = std::remove_reference_t<F>>
         ref(F&& f, size_t stack = 100UL * 1024) noexcept
@@ -113,7 +113,7 @@ struct cone {
     };
 
     struct event {
-        event() noexcept = default;
+        event() noexcept {}
 
         ~event() noexcept {
             mun_vec_fini(&e_);
