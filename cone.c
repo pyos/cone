@@ -347,10 +347,8 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
     c->rsp[1] = NULL;               // %rbp: nothing; there's no previous frame yet
     c->rsp[2] = (void*)&cone_body;  // %rip: code to execute;
     c->rsp[3] = NULL;               // return address: nothing; same as for %rbp
-    if (cone_event_schedule_add(&loop->at, 0, cone_bind(&cone_run, c)) MUN_RETHROW) {
-        c->flags ^= CONE_FLAG_LAST_REF;
-        return cone_drop(c), NULL;
-    }
+    if (cone_event_schedule_add(&loop->at, 0, cone_bind(&cone_run, c)) MUN_RETHROW)
+        return free(c), NULL;
     atomic_fetch_add_explicit(&loop->active, 1, memory_order_relaxed);
     return c;
 }
