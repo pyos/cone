@@ -189,7 +189,7 @@ static bool test_yield_to_io(char *) {
     int v = 0;
     cone::ref c = [&]() {
         char buf[1];
-        return !(read(fds[0].i, buf, 1) < 0 MUN_RETHROW_OS) && (v++, true);
+        return !(cold_read(fds[0].i, buf, 1) < 0 MUN_RETHROW_OS) && (v++, true);
     };
     return cone::yield() && !(write(fds[1].i, "k", 1) < 0 MUN_RETHROW_OS)
         && cone::yield() && ASSERT(v == 1, "%d != 1", v);
@@ -203,7 +203,7 @@ static bool test_rdwr(char *) {
     cone::ref r = [&, fd = fds[0].i]() {
         char buf[sizeof(data)];
         for (ssize_t rd, mod = 0, N = 100000; N--; mod = (mod + rd) % sizeof(data)) {
-            if ((rd = read(fd, buf, sizeof(data) - mod)) < 0 MUN_RETHROW_OS)
+            if ((rd = cold_read(fd, buf, sizeof(data) - mod)) < 0 MUN_RETHROW_OS)
                 return false;
             if (memcmp(data + mod, buf, rd))
                 return !mun_error(assert, "recvd bad data");
@@ -212,7 +212,7 @@ static bool test_rdwr(char *) {
     };
     cone::ref w = [&, fd = fds[1].i]() {
         for (ssize_t wr, mod = 0, N = 100000; N--; mod = (mod + wr) % sizeof(data))
-            if ((wr = write(fd, data + mod, sizeof(data) - mod)) < 0 MUN_RETHROW_OS)
+            if ((wr = cold_write(fd, data + mod, sizeof(data) - mod)) < 0 MUN_RETHROW_OS)
                 return false;
         return true;
     };

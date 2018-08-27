@@ -1,4 +1,5 @@
 #include "../mun.h"
+#include "../cold.h"
 #include "../cone.h"
 #include "../cone.hh"
 #include <stdio.h>
