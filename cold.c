@@ -52,7 +52,7 @@ int cold_fcn(accept4)(int fd, struct sockaddr *addr, socklen_t *addrlen, int fla
     cold_iocall(fd, 0, accept4, fd, addr, addrlen, cone ? flags | SOCK_NONBLOCK : flags)
 
 int cold_fcn(accept)(int fd, struct sockaddr *addr, socklen_t *addrlen) {
-    return accept4(fd, addr, addrlen, 0);
+    return cold_fcn(accept4)(fd, addr, addrlen, 0);
 }
 #else
 static int accept_impl(int fd, struct sockaddr *addr, socklen_t *addrlen)
