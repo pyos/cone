@@ -1,5 +1,4 @@
 #include "cone.h"
-#include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
 #include <stdatomic.h>
@@ -37,16 +36,11 @@ _Static_assert(0, "stack switching is only supported on x86-64 UNIX");
 #if CONE_EVNOTIFIER == 1
 #include <sys/epoll.h>
 #elif CONE_EVNOTIFIER == 2
+#include <fcntl.h>
 #include <sys/event.h>
 #else
 #include <sys/select.h>
 #endif
-
-// FIXME: why is this here and not somewhere in the vicinity of cold.c?
-int cone_unblock(int fd) {
-    int flags = fcntl(fd, F_GETFL);
-    return flags == -1 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) MUN_RETHROW_OS;
-}
 
 struct cone_event_at {
     mun_usec at;

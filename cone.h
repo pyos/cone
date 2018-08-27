@@ -34,9 +34,6 @@ extern _Thread_local struct cone *cone;
 // must not be destroyed if there are callbacks attached.
 struct cone_event mun_vec(struct cone *);
 
-// Switch a file descriptor into non-blocking mode. See fcntl(2) for error codes.
-int cone_unblock(int fd);
-
 // Create a new coroutine that runs a given function with a single pointer argument.
 // The memory will be freed when the coroutine finishes and the returned reference is
 // dropped, no matter the order. For what happens when the closure fails, see `cone_cowait`.

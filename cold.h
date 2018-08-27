@@ -15,6 +15,9 @@ struct msghdr;
 #define cold_fwd(ret, f, typed, untyped) ret f typed; static inline ret cold_##f typed { return f untyped; }
 #endif
 
+// Switch a file descriptor into non-blocking mode. See fcntl(2) for error codes.
+int cold_unblock(int fd);
+
 // `fd` is automatically switched to non-blocking mode:
 cold_fwd(int, listen, (int fd, int backlog), (fd, backlog))
 // Coroutine-blocking; `fd` is automatically switched to non-blocking mode:

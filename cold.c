@@ -1,6 +1,7 @@
 #include "cone.h"
 
 #include <time.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
@@ -36,9 +37,14 @@
     return __r;                              \
 }
 
+int cold_unblock(int fd) {
+    int flags = fcntl(fd, F_GETFL);
+    return flags == -1 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) MUN_RETHROW_OS;
+}
+
 int cold_fcn(listen)(int fd, int backlog) {
     cold_def(listen);
-    return cone && cone_unblock(fd) ? -1 : libc_listen(fd, backlog);
+    return cone && cold_unblock(fd) ? -1 : libc_listen(fd, backlog);
 }
 
 #ifdef __linux__
@@ -54,14 +60,14 @@ static int accept_impl(int fd, struct sockaddr *addr, socklen_t *addrlen)
 
 int cold_fcn(accept)(int fd, struct sockaddr *addr, socklen_t *addrlen) {
     int client = accept_impl(fd, addr, addrlen);
-    if (client >= 0 && cone_unblock(client))
+    if (client >= 0 && cold_unblock(client))
         return close(client), -1;
     return client;
 }
 #endif
 
 int cold_fcn(connect)(int fd, const struct sockaddr *addr, socklen_t addrlen) {
-    if (cone && cone_unblock(fd))
+    if (cone && cold_unblock(fd))
         return -1;
     cold_def(connect);
     int result = libc_connect(fd, addr, addrlen);

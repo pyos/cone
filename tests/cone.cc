@@ -184,7 +184,7 @@ namespace {
 
 static bool test_yield_to_io(char *) {
     fd fds[2];
-    if (pipe((int*)fds) || cone_unblock(fds[0].i) || cone_unblock(fds[1].i) MUN_RETHROW)
+    if (pipe((int*)fds) || cold_unblock(fds[0].i) || cold_unblock(fds[1].i) MUN_RETHROW)
         return false;
     int v = 0;
     cone::ref c = [&]() {
@@ -197,7 +197,7 @@ static bool test_yield_to_io(char *) {
 
 static bool test_rdwr(char *) {
     fd fds[2];
-    if (pipe((int*)fds) || cone_unblock(fds[0].i) || cone_unblock(fds[1].i) MUN_RETHROW)
+    if (pipe((int*)fds) || cold_unblock(fds[0].i) || cold_unblock(fds[1].i) MUN_RETHROW)
         return false;
     const char data[] = "Hello, World! Hello, World! Hello, World! Hello, World!";
     cone::ref r = [&, fd = fds[0].i]() {
