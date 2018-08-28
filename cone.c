@@ -267,16 +267,19 @@ static void cone_switch(struct cone *c) {
         void * fake_stack = NULL;
         __sanitizer_start_switch_fiber(&fake_stack, c->target_stack, c->target_stack_size);
     #endif
-    __asm__("jmp  %=0f       \n"
+    unsigned mxcsr;
+    __asm__("stmxcsr %1      \n"
+            "jmp  %=0f       \n"
     "%=1:"  "push %%rbp      \n"
             "push %%rdi      \n"
             "mov  %%rsp, %0  \n" // `xchg` is implicitly `lock`ed; 3 `mov`s are faster
-            "mov  %1, %%rsp  \n" // (the third is inserted by the compiler to load c->rsp)
+            "mov  %2, %%rsp  \n" // (the third is inserted by the compiler to load c->rsp)
             "pop  %%rdi      \n" // FIXME prone to incur cache misses
             "pop  %%rbp      \n"
             "ret             \n" // jumps into `cone_body` if this is a new coroutine
     "%=0:"  "call %=1b       \n"
-      : "=m"(c->rsp) : "c"(c->rsp) // FIXME prone to incur cache misses
+            "ldmxcsr %1      \n"
+      : "=m"(c->rsp), "=m"(mxcsr) : "c"(c->rsp) // FIXME prone to incur cache misses
       : "rax", "rdx", "rbx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc", "memory");
     #if CONE_ASAN
         __sanitizer_finish_switch_fiber(fake_stack, &c->target_stack, &c->target_stack_size);
