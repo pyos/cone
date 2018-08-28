@@ -161,6 +161,13 @@ static int cone_event_io_init(struct cone_event_io *set) {
     return 0;
 }
 
+static int cone_event_io_call(struct cone_event_io *set, struct cone_event_fd *e) {
+    if (e->f.code(e->f.data))
+        return -1;
+    cone_event_io_del(set, e); // `e` is still allocated & `e->link` points to next element
+    return 0;
+}
+
 static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
     if (timeout > 60000000ll)
         timeout = 60000000ll;
@@ -172,7 +179,7 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
         for (int i = 0; i < got; i++) {
             for (struct cone_event_fd *st = evs[i].data.ptr, *e = st; e && e->fd == st->fd; e = e->link) {
                 int flags = e->write ? EPOLLOUT : EPOLLIN|EPOLLRDHUP;
-                if (evs[i].events & (flags|EPOLLERR|EPOLLHUP) && e->f.code(e->f.data) MUN_RETHROW)
+                if (evs[i].events & (flags|EPOLLERR|EPOLLHUP) && cone_event_io_call(set, e) MUN_RETHROW)
                     return -1;
             }
         }
@@ -182,11 +189,9 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
         int got = kevent(set->poller, NULL, 0, evs, 64, &ns);
         if (got < 0)
             return errno != EINTR MUN_RETHROW_OS;
-        for (int i = 0; i < got; i++) {
-            struct cone_event_fd *e = evs[i].udata;
-            if (e->f.code(e->f.data) MUN_RETHROW)
+        for (int i = 0; i < got; i++)
+            if (cone_event_io_call(set, evs[i].udata) MUN_RETHROW)
                 return -1;
-        }
     #else
         fd_set fds[2] = {};
         int max_fd = 0;
@@ -202,7 +207,7 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
             return errno != EINTR MUN_RETHROW_OS;
         for (size_t i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++)
             for (struct cone_event_fd *e = set->fds[i]; e; e = e->link)
-                if (FD_ISSET(e->fd, &fds[!!e->write]) && e->f.code(e->f.data) MUN_RETHROW)
+                if (FD_ISSET(e->fd, &fds[!!e->write]) && cone_event_io_call(set, e) MUN_RETHROW)
                     return -1;
     #endif
     return 0;
@@ -404,19 +409,9 @@ int cone_wake(struct cone_event *ev, size_t n) {
     return 0;
 }
 
-struct cone_iowait_tmp {
-    struct cone *c;
-    struct cone_event_fd ev;
-};
-
-static int cone_iowake(struct cone_iowait_tmp *st) {
-    cone_event_io_del(&st->c->loop->io, &st->ev);
-    return cone_schedule(st->c);
-}
-
 int cone_iowait(int fd, int write) {
-    struct cone_iowait_tmp st = {cone, {fd, write, cone_bind(&cone_iowake, &st), NULL}};
-    cone_pause(cone_event_io_add, cone_event_io_del, &cone->loop->io, &st.ev);
+    struct cone_event_fd ev = {fd, write, cone_bind(&cone_schedule, cone), NULL};
+    cone_pause(cone_event_io_add, cone_event_io_del, &cone->loop->io, &ev);
 }
 
 int cone_sleep_until(mun_usec t) {
