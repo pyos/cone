@@ -130,7 +130,8 @@ struct mun_vec mun_vec(void);
 #define mun_vec_data_s(stride, v) ((char (*)[(stride)])((const struct mun_vec*){(v)})->data)
 
 // Initializer for a vector that uses on-stack storage for `n` elements of type `T`.
-// The resulting vector is empty, but can be appended to up to `n` times.
+// The resulting vector is empty, but can be appended to up to `n` times. More than that,
+// and it will be reallocated on the heap.
 //
 //     struct mun_vec(char) xs = mun_vec_init_static(char, 128);
 //
