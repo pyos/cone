@@ -77,18 +77,16 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev, size_t 
     while (1) {
         mun_usec now = mun_usec_monotonic();
         for (; ev->later.size && ev->later.data->at <= now; mun_vec_erase(&ev->later, 0, 1))
-            if (mun_vec_append(&ev->now, &ev->later.data->f) MUN_RETHROW)
+            if (ev->later.data->f.code(ev->later.data->f.data) MUN_RETHROW)
                 return -1;
         if (!ev->now.size)
             return ev->yield.size ? 0 : ev->later.size ? ev->later.data->at - now : MUN_USEC_MAX;
-        do {
+        for (; ev->now.size; mun_vec_erase(&ev->now, 0, 1)) {
             if (!limit--)
                 return 0;
-            struct cone_closure f = ev->now.data[0];
-            mun_vec_erase(&ev->now, 0, 1);
-            if (f.code(f.data) MUN_RETHROW)
+            if (ev->now.data->code(ev->now.data->data) MUN_RETHROW)
                 return -1;
-        } while (ev->now.size);
+        }
     }
 }
 
