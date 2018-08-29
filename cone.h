@@ -30,9 +30,9 @@ extern thread_local struct cone *cone;
 extern _Thread_local struct cone *cone;
 #endif
 
-// A manually triggered event. Zero-initialized; finalized with `mun_vec_fini`;
+// A manually triggered event. Zero-initialized; no finalizer; trivially movable;
 // must not be destroyed if there are callbacks attached.
-struct cone_event mun_vec(struct cone *);
+struct cone_event { void *head, *tail; };
 
 // Create a new coroutine that runs a given function with a single pointer argument.
 // The memory will be freed when the coroutine finishes and the returned reference is
@@ -47,10 +47,10 @@ void cone_drop(struct cone *);
 // Sleep until a coroutine finishes. If `norethrow` is 0 and the coroutine fails, this
 // function returns the error. If this is never done, the error is printed to stderr (see
 // `mun_error_show`) when the coroutine is deallocated, and is otherwise ignored.
-int cone_cowait(struct cone *, int norethrow) mun_throws(cancelled, timeout, memory);
+int cone_cowait(struct cone *, int norethrow) mun_throws(cancelled, timeout, deadlock);
 
 // Same as `cone_cowait`, but also drop the reference.
-static inline int cone_join(struct cone *c, int norethrow) mun_throws(cancelled, timeout, memory) {
+static inline int cone_join(struct cone *c, int norethrow) mun_throws(cancelled, timeout, deadlock) {
     int r = cone_cowait(c, norethrow);
     return cone_drop(c), r;
 }
@@ -60,7 +60,7 @@ static inline int cone_join(struct cone *c, int norethrow) mun_throws(cancelled,
 // still fail with EAGAIN, e.g. if another coroutine already used the file descriptor
 // while this one was in the scheduler's run queue. If a call to this function is not
 // inside a `while` loop, you're almost certainly doing it wrong.
-int cone_iowait(int fd, int write) mun_throws(cancelled, timeout, memory);
+int cone_iowait(int fd, int write) mun_throws(cancelled, timeout);
 
 // Sleep until at least the specified time, given by the monotonic clock (see
 // `mun_usec_monotonic`). Unlike normal system calls, does not interact with signals.
@@ -75,13 +75,13 @@ static inline int cone_sleep(mun_usec t) mun_throws(cancelled, timeout, memory) 
 // Wait until the next iteration of the event loop. Unlike `cone_sleep(0)`, if this
 // call isn't cancelled, pending I/O events are guaranteed to be consumed before
 // it returns. (`cone_sleep` may or may not poll for I/O).
-int cone_yield(void) mun_throws(cancelled, timeout, memory);
+int cone_yield(void) mun_throws(cancelled, timeout);
 
 // If the value at the address is the same as the one passed as an argument, sleep until
 // `cone_wake` is called with the same event. If not, return EAGAIN. This behavior
 // is intended to replicate the futex API (specifically, FUTEX_WAIT and FUTEX_WAKE).
 // NOTE: unfortunately, atomicity of a `cone_event` is not yet implemented.
-int cone_wait(struct cone_event *, const cone_atom *, unsigned) mun_throws(cancelled, timeout, memory, retry);
+int cone_wait(struct cone_event *, const cone_atom *, unsigned) mun_throws(cancelled, timeout, retry);
 
 // Wake up at most N coroutines paused with `cone_wait`.
 int cone_wake(struct cone_event *, size_t) mun_throws(memory);

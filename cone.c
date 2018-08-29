@@ -56,7 +56,6 @@ struct cone_event_schedule {
 static void cone_event_schedule_fini(struct cone_event_schedule *ev) {
     mun_vec_fini(&ev->now);
     mun_vec_fini(&ev->later);
-    mun_vec_fini(&ev->yield);
 }
 
 static int cone_event_schedule_ready(struct cone_event_schedule *ev, struct cone *c) {
@@ -84,7 +83,7 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev, size_t 
             if (ev->later.data->f.code(ev->later.data->f.data) MUN_RETHROW)
                 return -1;
         if (!ev->now.size)
-            return ev->yield.size ? 0 : ev->later.size ? ev->later.data->at - now : MUN_USEC_MAX;
+            return ev->yield.head ? 0 : ev->later.size ? ev->later.data->at - now : MUN_USEC_MAX;
         for (; ev->now.size; mun_vec_erase(&ev->now, 0, 1)) {
             if (!limit--)
                 return 0;
@@ -366,7 +365,6 @@ void cone_drop(struct cone *c) {
         if ((c->flags & (CONE_FLAG_FAILED | CONE_FLAG_JOINED)) == CONE_FLAG_FAILED)
             if (c->error.code != mun_errno_cancelled)
                 mun_error_show("cone destroyed with", &c->error);
-        mun_vec_fini(&c->done);
         free(c);
     }
 }
@@ -404,23 +402,38 @@ static int cone_ensure_running(struct cone *c) {
     return 0;                                                         \
 } while (0)
 
-static void cone_event_unsub(struct cone_event *ev, struct cone **c) {
-    size_t i = mun_vec_find(ev, *_ == *c);
-    if (i != ev->size)
-        mun_vec_erase(ev, i, 1);
+struct cone_event_it {
+    struct cone_event_it *next, *prev;
+    struct cone *c;
+};
+
+static int cone_event_add(struct cone_event *ev, struct cone_event_it *it) {
+    it->next = NULL;
+    it->prev = ev->tail;
+    it->prev ? (it->prev->next = it) : (ev->head = it);
+    ev->tail = it;
+    return 0;
+}
+
+static void cone_event_del(struct cone_event *ev, struct cone_event_it *it) {
+    // This'd be easier if it was a circular list, but then `cone_event` would not be movable.
+    it->next ? (it->next->prev = it->prev) : (ev->tail = it->prev);
+    it->prev ? (it->prev->next = it->next) : (ev->head = it->next);
+    it->prev = it;
+    it->next = it;
 }
 
 int cone_wait(struct cone_event *ev, const cone_atom *uptr, unsigned u) {
     // TODO thread-safety
     if (*uptr != u)
         return mun_error(retry, "compare-and-sleep precondition failed");
-    cone_pause(mun_vec_append, cone_event_unsub, ev, &(struct cone *){cone});
+    cone_pause(cone_event_add, cone_event_del, ev, (&(struct cone_event_it){ NULL, NULL, cone }));
 }
 
 int cone_wake(struct cone_event *ev, size_t n) {
     // TODO thread-safety
-    for (; n-- && ev->size; mun_vec_erase(ev, 0, 1))
-        if (cone_schedule(ev->data[0], 0) MUN_RETHROW)
+    for (; n-- && ev->head; cone_event_del(ev, ev->head))
+        if (cone_schedule(((struct cone_event_it *)ev->head)->c, 0) MUN_RETHROW)
             return -1;
     return 0;
 }
@@ -435,8 +448,7 @@ int cone_sleep_until(mun_usec t) {
 }
 
 int cone_yield(void) {
-    cone_atom fake = 0;
-    return cone_wait(&cone->loop->at.yield, &fake, 0) MUN_RETHROW;
+    cone_pause(cone_event_add, cone_event_del, &cone->loop->at.yield, (&(struct cone_event_it){ NULL, NULL, cone }));
 }
 
 int cone_cowait(struct cone *c, int norethrow) {
