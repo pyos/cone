@@ -32,7 +32,7 @@ struct mun_error *mun_last_error(void) {
 }
 
 struct mun_error *mun_set_error_storage(struct mun_error *p) {
-    struct mun_error *ret = mun_global_eptr;
+    struct mun_error *ret = mun_last_error();
     mun_global_eptr = p;
     return ret;
 }
@@ -41,14 +41,12 @@ static void mun_error_fmt(const char *fmt, va_list args) {
     struct mun_error *ep = mun_last_error();
     char tmp[sizeof(ep->text)];
     int r = vsnprintf(tmp, sizeof(tmp), fmt, args);
-    if (ep->text[0] && r >= 0 && (size_t)r + 2 < sizeof(ep->text)) {
-        memmove(ep->text + r + 2, ep->text, sizeof(ep->text) - r - 2);
-        memmove(ep->text + r, ": ", 2);
-        memmove(ep->text, tmp, r);
-        ep->text[sizeof(ep->text) - 1] = 0;
-    } else {
-        memmove(ep->text, tmp, sizeof(ep->text));
+    if (ep->text[0] && r >= 0 && r + 2 < (int)sizeof(tmp)) {
+        memmove(tmp + r, ": ", 2);
+        memmove(tmp + r + 2, ep->text, sizeof(tmp) - r - 2);
     }
+    tmp[sizeof(tmp) - 1] = 0;
+    strcpy(ep->text, tmp);
 }
 
 int mun_error_at(int n, const char *name, const struct mun_stackframe *frame, const char *fmt, ...) {
