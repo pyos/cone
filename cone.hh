@@ -160,6 +160,26 @@ struct cone {
             e_.wake(1);
         }
 
+        struct guard {
+            guard(mutex &m)
+                : r_(m.lock() ? &m : nullptr)
+            {
+            }
+
+            explicit operator bool() const {
+                return !!r_;
+            }
+
+        private:
+            struct mutex_unlock {
+                void operator()(mutex *m) const {
+                    m->unlock();
+                }
+            };
+
+            std::unique_ptr<mutex, mutex_unlock> r_;
+        };
+
     private:
         std::atomic<unsigned> v_{0};
         event e_;

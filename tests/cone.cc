@@ -117,11 +117,10 @@ static bool test_mutex(char *) {
     int last = 0;
     cone::mutex m;
     cone::ref a = [&]() {
-        if (!m.lock())
-            return false;
-        if (!cone::yield() || !cone::yield() || !cone::yield() || !cone::yield())
-            return m.unlock(), false;
-        return last = 1, m.unlock(), true;
+        if (cone::mutex::guard g{m})
+            if (cone::yield() && cone::yield() && cone::yield() && cone::yield())
+                return last = 1, true;
+        return false;
     };
     cone::ref b = [&]() {
         if (!m.lock())
