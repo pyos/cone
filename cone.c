@@ -375,8 +375,8 @@ static int cone_schedule(struct cone *c) {
 
 static int cone_ensure_running(struct cone *c) {
     int state = atomic_fetch_and(&c->flags, ~CONE_FLAG_CANCELLED & ~CONE_FLAG_TIMED_OUT);
-    return state & CONE_FLAG_CANCELLED ? mun_error(cancelled, " ")
-         : state & CONE_FLAG_TIMED_OUT ? mun_error(timeout, " ") : 0;
+    return state & CONE_FLAG_CANCELLED ? mun_error(cancelled, "blocking call aborted")
+         : state & CONE_FLAG_TIMED_OUT ? mun_error(timeout, "blocking call timed out") : 0;
 }
 
 #define cone_pause(ev_add, ev_del, ...) do {                          \
@@ -397,7 +397,7 @@ static void cone_event_unsub(struct cone_event *ev, struct cone **c) {
 int cone_wait(struct cone_event *ev, const cone_atom *uptr, unsigned u) {
     // TODO thread-safety
     if (*uptr != u)
-        return mun_error(retry, " ");
+        return mun_error(retry, "compare-and-sleep precondition failed");
     cone_pause(mun_vec_append, cone_event_unsub, ev, &(struct cone *){cone});
 }
 
