@@ -112,6 +112,18 @@ static void cone_event_io_fini(struct cone_event_io *set) {
         close(set->poller);
 }
 
+static int cone_event_io_init(struct cone_event_io *set) {
+    (void)set;
+    #if CONE_EVNOTIFIER == 1
+        if ((set->poller = epoll_create1(EPOLL_CLOEXEC)) < 0 MUN_RETHROW_OS)
+            return cone_event_io_fini(set), -1;
+    #elif CONE_EVNOTIFIER == 2
+        if ((set->poller = kqueue()) < 0 || fcntl(set->poller, F_SETFD, FD_CLOEXEC) < 0 MUN_RETHROW_OS)
+            return cone_event_io_fini(set), -1;
+    #endif
+    return 0;
+}
+
 static int cone_event_io_mod(struct cone_event_io *set, struct cone_event_fd *st, int add) {
     #if CONE_EVNOTIFIER == 2
         uint16_t flags = (add ? EV_ADD : EV_DELETE)|EV_UDATA_SPECIFIC;
@@ -150,18 +162,6 @@ static int cone_event_io_add(struct cone_event_io *set, struct cone_event_fd *st
 
 static void cone_event_io_del(struct cone_event_io *set, struct cone_event_fd *st) {
     mun_cant_fail(cone_event_io_mod(set, st, 0) MUN_RETHROW);
-}
-
-static int cone_event_io_init(struct cone_event_io *set) {
-    (void)set;
-    #if CONE_EVNOTIFIER == 1
-        if ((set->poller = epoll_create1(EPOLL_CLOEXEC)) < 0 MUN_RETHROW_OS)
-            return cone_event_io_fini(set), -1;
-    #elif CONE_EVNOTIFIER == 2
-        if ((set->poller = kqueue()) < 0 || fcntl(set->poller, F_SETFD, FD_CLOEXEC) < 0 MUN_RETHROW_OS)
-            return cone_event_io_fini(set), -1;
-    #endif
-    return 0;
 }
 
 static int cone_event_io_call(struct cone_event_io *set, struct cone_event_fd *e) {
