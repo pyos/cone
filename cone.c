@@ -78,12 +78,12 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev, size_t 
     if (cone_wake(&ev->yield, (size_t)-1) MUN_RETHROW)
         return -1;
     while (1) {
-        mun_usec now = mun_usec_monotonic();
-        for (; ev->later.size && ev->later.data->at <= now; mun_vec_erase(&ev->later, 0, 1))
+        mun_usec t = mun_usec_monotonic();
+        for (; ev->later.size && ev->later.data->at <= t; mun_vec_erase(&ev->later, 0, 1))
             if (ev->later.data->f.code(ev->later.data->f.data) MUN_RETHROW)
                 return -1;
         if (!ev->now.size)
-            return ev->yield.head ? 0 : ev->later.size ? ev->later.data->at - now : MUN_USEC_MAX;
+            return ev->yield.head ? 0 : ev->later.size ? ev->later.data->at - t : MUN_USEC_MAX;
         for (; ev->now.size; mun_vec_erase(&ev->now, 0, 1)) {
             if (!limit--)
                 return 0;
