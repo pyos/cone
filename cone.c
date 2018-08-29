@@ -371,10 +371,22 @@ void cone_drop(struct cone *c) {
     }
 }
 
-static int cone_schedule(struct cone *c) {
-    if (atomic_fetch_or(&c->flags, CONE_FLAG_SCHEDULED) & (CONE_FLAG_SCHEDULED | CONE_FLAG_FINISHED))
+static int cone_schedule(struct cone *c, int flags) {
+    if (atomic_fetch_or(&c->flags, CONE_FLAG_SCHEDULED | flags) & (CONE_FLAG_SCHEDULED | CONE_FLAG_FINISHED))
         return 0;
     return cone_event_schedule_ready(&c->loop->at, c) MUN_RETHROW;
+}
+
+static int cone_resume(struct cone *c) {
+    return cone_schedule(c, 0);
+}
+
+static int cone_timeout(struct cone *c) {
+    return cone_schedule(c, CONE_FLAG_TIMED_OUT);
+}
+
+int cone_cancel(struct cone *c) {
+    return cone_schedule(c, CONE_FLAG_CANCELLED) MUN_RETHROW; // extern function, add it to the traceback
 }
 
 static int cone_ensure_running(struct cone *c) {
@@ -408,18 +420,18 @@ int cone_wait(struct cone_event *ev, const cone_atom *uptr, unsigned u) {
 int cone_wake(struct cone_event *ev, size_t n) {
     // TODO thread-safety
     for (; n-- && ev->size; mun_vec_erase(ev, 0, 1))
-        if (cone_schedule(ev->data[0]) MUN_RETHROW)
+        if (cone_schedule(ev->data[0], 0) MUN_RETHROW)
             return -1;
     return 0;
 }
 
 int cone_iowait(int fd, int write) {
-    struct cone_event_fd ev = {fd, write, cone_bind(&cone_schedule, cone), NULL};
+    struct cone_event_fd ev = {fd, write, cone_bind(&cone_resume, cone), NULL};
     cone_pause(cone_event_io_add, cone_event_io_del, &cone->loop->io, &ev);
 }
 
 int cone_sleep_until(mun_usec t) {
-    cone_pause(cone_event_schedule_add, cone_event_schedule_del, &cone->loop->at, t, cone_bind(&cone_schedule, cone));
+    cone_pause(cone_event_schedule_add, cone_event_schedule_del, &cone->loop->at, t, cone_bind(&cone_resume, cone));
 }
 
 int cone_yield(void) {
@@ -436,16 +448,6 @@ int cone_cowait(struct cone *c, int norethrow) {
     if (!norethrow && atomic_fetch_or(&c->flags, CONE_FLAG_JOINED) & CONE_FLAG_FAILED)
         return *mun_last_error() = c->error, mun_error_up(MUN_CURRENT_FRAME);
     return 0;
-}
-
-int cone_cancel(struct cone *c) {
-    c->flags |= CONE_FLAG_CANCELLED;
-    return cone_schedule(c) MUN_RETHROW;
-}
-
-static int cone_timeout(struct cone *c) {
-    c->flags |= CONE_FLAG_TIMED_OUT;
-    return cone_schedule(c) MUN_RETHROW;
 }
 
 int cone_deadline(struct cone *c, mun_usec t) {
