@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <thread>
 
 extern "C" char *__cxa_demangle(const char *, char *, size_t *, int *);
 
@@ -72,6 +73,14 @@ struct cone {
         return cone_count();
     }
 
+    // Start an event loop on a separate thread.
+    template <typename F /* = bool() */, typename G = std::remove_reference_t<F>>
+    static std::thread thread(F&& f, size_t stack = 100UL * 1024) {
+        return std::thread{[f = std::make_unique<G>(std::forward<F>(f)), stack]() mutable {
+            mun_cant_fail(cone_loop(stack, cone_bind(&invoke<G>, f.release())) MUN_RETHROW);
+        }};
+    }
+
     struct ref {
         ref() noexcept {}
 
@@ -96,28 +105,13 @@ struct cone {
         }
 
     private:
-        template <typename F>
-        static int invoke(void *ptr) noexcept try {
-            return (*std::unique_ptr<F>(reinterpret_cast<F*>(ptr)))() ? 0 : -1;
-        } catch (const std::exception& e) {
-            std::unique_ptr<const char, void(*)(const void*)> name{typeid(e).name(), [](const void*) noexcept {}};
-            if (char *c = __cxa_demangle(name.get(), nullptr, nullptr, nullptr))
-                name = {c, [](const void *c) noexcept { free((void*)c); }};
-            // XXX perhaps mun_error should contain the whole name instead of a pointer?..
-            return mun_error_at(mun_errno_custom + 18293, "exception", MUN_CURRENT_FRAME, "[%s] %s", name.get(), e.what());
-        } catch (...) {
-            return mun_error_at(mun_errno_custom + 18293, "exception", MUN_CURRENT_FRAME, "unknown");
-        }
-
         std::unique_ptr<cone, void (*)(cone*) noexcept> r_{nullptr, cone_drop};
     };
 
+    using atom = cone_atom;
+
     struct event {
         event() noexcept {}
-
-        ~event() noexcept {
-            mun_vec_fini(&e_);
-        }
 
         event(event&& other) noexcept {
             std::swap(e_, other.e_);
@@ -128,10 +122,10 @@ struct cone {
         }
 
         bool wait() noexcept {
-            return wait(std::atomic<unsigned>{0}, 0);
+            return wait(atom{0}, 0);
         }
 
-        bool wait(const std::atomic<unsigned>& atom, unsigned expect) noexcept {
+        bool wait(const atom& atom, unsigned expect) noexcept {
             return !cone_wait(&e_, &atom, expect);
         }
 
@@ -181,7 +175,7 @@ struct cone {
         };
 
     private:
-        std::atomic<unsigned> v_{0};
+        atom v_{0};
         event e_;
     };
 
@@ -189,5 +183,18 @@ private:
     static inline mun_usec mun_usec_chrono(time t) noexcept {
         static const auto d = std::chrono::microseconds(mun_usec_monotonic()) - time::clock::now().time_since_epoch();
         return std::chrono::duration_cast<std::chrono::microseconds>((t + d).time_since_epoch()).count();
+    }
+
+    template <typename F>
+    static int invoke(void *ptr) noexcept try {
+        return (*std::unique_ptr<F>(reinterpret_cast<F*>(ptr)))() ? 0 : -1;
+    } catch (const std::exception& e) {
+        std::unique_ptr<const char, void(*)(const void*)> name{typeid(e).name(), [](const void*) noexcept {}};
+        if (char *c = __cxa_demangle(name.get(), nullptr, nullptr, nullptr))
+            name = {c, [](const void *c) noexcept { free((void*)c); }};
+        // XXX perhaps mun_error should contain the whole name instead of a pointer?..
+        return mun_error_at(mun_errno_custom + 18293, "exception", MUN_CURRENT_FRAME, "[%s] %s", name.get(), e.what());
+    } catch (...) {
+        return mun_error_at(mun_errno_custom + 18293, "exception", MUN_CURRENT_FRAME, "unknown");
     }
 };
