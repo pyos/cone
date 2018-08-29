@@ -73,7 +73,7 @@ static bool test_sleep_after_cancel(char *) {
     ::cone->cancel();
     auto a = cone::time::clock::now();
     return ASSERT(!cone::yield() && mun_errno == ECANCELED, "did not cancel itself")
-        && cone::sleep(100us) && ASSERT(cone::time::clock::now() - a >= 100us, "slept for too little");
+        && cone::sleep(10ms) && ASSERT(cone::time::clock::now() - a >= 10ms, "slept for too little");
 }
 
 static bool test_deadline(char *) {
