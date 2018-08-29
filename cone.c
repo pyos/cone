@@ -48,7 +48,7 @@ struct cone_event_at {
 };
 
 struct cone_event_schedule {
-    struct mun_vec(struct cone_closure) now;
+    struct mun_vec(struct cone *) now;
     struct mun_vec(struct cone_event_at) later;
     struct cone_event yield;
 };
@@ -59,9 +59,11 @@ static void cone_event_schedule_fini(struct cone_event_schedule *ev) {
     mun_vec_fini(&ev->yield);
 }
 
+static int cone_event_schedule_ready(struct cone_event_schedule *ev, struct cone *c) {
+    return mun_vec_append(&ev->now, &c);
+}
+
 static int cone_event_schedule_add(struct cone_event_schedule *ev, mun_usec at, struct cone_closure f) {
-    if (at == 0)
-        return mun_vec_append(&ev->now, &f);
     return mun_vec_insert(&ev->later, mun_vec_bisect(&ev->later, at < _->at), &((struct cone_event_at){at, f}));
 }
 
@@ -70,6 +72,8 @@ static void cone_event_schedule_del(struct cone_event_schedule *ev, mun_usec at,
         if (ev->later.data[i].f.code == f.code && ev->later.data[i].f.data == f.data)
             return mun_vec_erase(&ev->later, i, 1);
 }
+
+static int cone_run(struct cone *);
 
 static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev, size_t limit) {
     if (cone_wake(&ev->yield, (size_t)-1) MUN_RETHROW)
@@ -84,7 +88,7 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev, size_t 
         for (; ev->now.size; mun_vec_erase(&ev->now, 0, 1)) {
             if (!limit--)
                 return 0;
-            if (ev->now.data->code(ev->now.data->data) MUN_RETHROW)
+            if (cone_run(ev->now.data[0]) MUN_RETHROW)
                 return -1;
         }
     }
@@ -347,7 +351,7 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
     c->rsp[1] = NULL;               // %rbp: nothing; there's no previous frame yet
     c->rsp[2] = (void*)&cone_body;  // %rip: code to execute;
     c->rsp[3] = NULL;               // return address: nothing; same as for %rbp
-    if (cone_event_schedule_add(&loop->at, 0, cone_bind(&cone_run, c)) MUN_RETHROW)
+    if (cone_event_schedule_ready(&loop->at, c) MUN_RETHROW)
         return free(c), NULL;
     atomic_fetch_add_explicit(&loop->active, 1, memory_order_relaxed);
     return c;
@@ -370,7 +374,7 @@ void cone_drop(struct cone *c) {
 static int cone_schedule(struct cone *c) {
     if (atomic_fetch_or(&c->flags, CONE_FLAG_SCHEDULED) & (CONE_FLAG_SCHEDULED | CONE_FLAG_FINISHED))
         return 0;
-    return cone_event_schedule_add(&c->loop->at, 0, cone_bind(&cone_run, c)) MUN_RETHROW;
+    return cone_event_schedule_ready(&c->loop->at, c) MUN_RETHROW;
 }
 
 static int cone_ensure_running(struct cone *c) {
