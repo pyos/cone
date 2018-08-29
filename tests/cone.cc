@@ -247,7 +247,7 @@ static bool test_io_starvation(char *) {
     };
     cone::ref ca = [&]() { return wake_wait(b, a); };
     cone::ref cb = [&]() { return wake_wait(a, b); };
-    // yield is technically an I/O operation on an internal pipe
+    // yielding successfully implies completing an i/o peek (see test_yield_to_io)
     cone::ref cc = [&]() { return cone::yield() && (a.wake(), b.wake(), stop = true); };
     if (!ASSERT(cone::sleep(20ms), "sleep() failed")) return false;
     cc->cancel();
