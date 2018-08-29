@@ -9,7 +9,7 @@ tests/%: obj/tests/%
 	$<
 
 obj/tests/%: obj/tests/%.o obj/libcxxcone.a
-	$(CXX) -std=c++14 $(flags) $< -o $@ -Lobj -lcxxcone -ldl
+	$(CXX) -std=c++14 $(flags) $< -o $@ -Lobj -lcxxcone -ldl -pthread
 
 obj/tests/%.o: tests/%.cc tests/base.cc cone.h mun.h cone.hh
 	@mkdir -p $(dir $@)
