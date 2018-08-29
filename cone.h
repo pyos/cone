@@ -32,7 +32,11 @@ extern _Thread_local struct cone *cone;
 
 // A manually triggered event. Zero-initialized; no finalizer; trivially movable;
 // must not be destroyed if there are callbacks attached.
-struct cone_event { void *head, *tail; };
+#if __cplusplus
+struct cone_event { void *head, *tail; unsigned lk; };
+#else
+struct cone_event { void *head, *tail; volatile _Atomic(unsigned) lk; };
+#endif
 
 // Create a new coroutine that runs a given function with a single pointer argument.
 // The memory will be freed when the coroutine finishes and the returned reference is

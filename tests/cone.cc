@@ -262,6 +262,42 @@ static bool test_thread(char *) {
     return ASSERT(v == 1, "%d != 1", v);
 }
 
+static bool test_mt_event(char *) {
+    cone::atom a{0};
+    cone::event ev;
+    auto t = cone::thread([&]() {
+        if (!cone::sleep(100ms))
+            return false;
+        a = 1;
+        ev.wake();
+        return true;
+    });
+    return ev.wait(a, 0) && (t.join(), true);
+}
+
+static bool test_mt_mutex(char *) {
+    size_t r = 0;
+    cone::mutex m;
+    std::thread ts[4] = {};
+    for (auto& t : ts) {
+        t = cone::thread([&]() {
+            for (size_t i = 0; i < 100; i++) {
+                cone::ref{[&]() {
+                    for (size_t j = 0; j < 10000; j++) if (cone::mutex::guard g{m})
+                        r++;
+                    else
+                        return false;
+                    return true;
+                }};
+            }
+            return true;
+        });
+    }
+    for (auto& t : ts)
+        t.join();
+    return ASSERT(r == 4 * 100 * 10000, "%zu != %d", r, 4 * 100 * 10000);
+}
+
 export { "cone:yield", &test_yield }
      , { "cone:detach", &test_detach }
      , { "cone:wait", &test_wait }
@@ -286,3 +322,5 @@ export { "cone:yield", &test_yield }
      , { "cone:reader + writer on one fd", &test_concurrent_rw }
      , { "cone:io starvation", &test_io_starvation }
      , { "cone:thread", &test_thread }
+     , { "cone:thread waiting for another", &test_mt_event }
+     , { "cone:threads and a mutex", &test_mt_mutex }
