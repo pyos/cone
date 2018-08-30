@@ -64,7 +64,10 @@ enum {
 };
 
 static void cone_run(struct cone *);
-static void cone_schedule(struct cone *, int);
+
+// Returns the loop if it may need a ping to notice the change in its run queue.
+// If it is know that the loop is not blocked in a syscall, this can be ignored.
+static struct cone_loop *cone_schedule(struct cone *, int);
 
 struct cone_event_at {
     mun_usec at;
@@ -275,7 +278,7 @@ static int cone_runq_nonempty(struct cone_event *rq) {
     return ret;
 }
 
-static int cone_runq_emit(struct cone_event *rq, size_t limit) {
+static void cone_runq_emit(struct cone_event *rq, size_t limit) {
     cone_lock(&rq->lk);
     for (struct cone_event_it *it; limit-- && (it = rq->head);) {
         cone_event_del(rq, it);
@@ -284,7 +287,6 @@ static int cone_runq_emit(struct cone_event *rq, size_t limit) {
         cone_lock(&rq->lk);
     }
     cone_unlock(&rq->lk);
-    return 0;
 }
 
 struct cone_loop {
@@ -294,27 +296,22 @@ struct cone_loop {
     struct cone_event_schedule at;
 };
 
-static int cone_loop_init(struct cone_loop *loop) {
-    return cone_event_io_init(&loop->io);
-}
-
-static void cone_loop_fini(struct cone_loop *loop) {
-    cone_event_io_fini(&loop->io);
-    cone_event_schedule_fini(&loop->at);
-}
-
 static int cone_loop_run(struct cone_loop *loop) {
+    if (cone_event_io_init(&loop->io) MUN_RETHROW)
+        return -1;
     while (1) {
-        if (cone_runq_emit(&loop->now, 256) MUN_RETHROW)
-            return -1;
+        cone_runq_emit(&loop->now, 256);
         mun_usec next = cone_event_schedule_emit(&loop->at);
         if (next == MUN_USEC_MAX && !atomic_load_explicit(&loop->active, memory_order_acquire))
-            return 0;
+            break;
         if (next > 0 && cone_runq_nonempty(&loop->now))
             next = 0;
-        if (cone_event_io_emit(&loop->io, next) MUN_RETHROW)
-            return -1;
+        // If this fails, coroutines will get leaked.
+        mun_cant_fail(cone_event_io_emit(&loop->io, next) MUN_RETHROW);
     }
+    cone_event_io_fini(&loop->io);
+    cone_event_schedule_fini(&loop->at);
+    return 0;
 }
 
 struct cone {
@@ -432,24 +429,20 @@ void cone_drop(struct cone *c) {
     }
 }
 
-static void cone_schedule(struct cone *c, int flags) {
-    if (!(atomic_fetch_or(&c->flags, CONE_FLAG_SCHEDULED | flags) & (CONE_FLAG_SCHEDULED | CONE_FLAG_FINISHED)))
-        cone_runq_add(&c->loop->now, &c->runq);
-}
-
-static void cone_schedule_xthr(struct cone *c, int flags) {
-    int need_ping = !cone || cone->loop != c->loop;
-    cone_schedule(c, flags);
-    if (need_ping)
-        cone_event_io_ping(&c->loop->io);
-}
-
-static void cone_parking(struct cone *c) {
-    c->flags &= ~CONE_FLAG_SCHEDULED;
+static struct cone_loop *cone_schedule(struct cone *c, int flags) {
+    if (atomic_fetch_or(&c->flags, CONE_FLAG_SCHEDULED | flags) & (CONE_FLAG_SCHEDULED | CONE_FLAG_FINISHED))
+        return NULL; // loop is already aware of this, don't ping
+    struct cone_loop *loop = cone && cone->loop == c->loop ? NULL : c->loop;
+    // This may cause the coroutine to be destroyed concurrently by its loop.
+    // Meaning, accessing `c->loop` after the call returns is unsafe.
+    cone_runq_add(&c->loop->now, &c->runq);
+    return loop;
 }
 
 void cone_cancel(struct cone *c) {
-    cone_schedule_xthr(c, CONE_FLAG_CANCELLED);
+    struct cone_loop *loop = cone_schedule(c, CONE_FLAG_CANCELLED);
+    if (loop)
+        cone_event_io_ping(&loop->io);
 }
 
 static int cone_ensure_running(struct cone *c) {
@@ -458,20 +451,13 @@ static int cone_ensure_running(struct cone *c) {
          : state & CONE_FLAG_TIMED_OUT ? mun_error(timeout, "blocking call timed out") : 0;
 }
 
-// Note the place where CONE_FLAG_SCHEDULED is removed.
-//
-//   1. It must happen when we are 100% certain that the coroutine is going to be paused.
-//      Otherwise, another thread may cancel this coroutine and schedule it despite
-//      the fact that it is not paused, interrupting the *next* blocking call.
-//
-//   2. In case of `cone_wait`, it must also happen before releasing the event's spinlock,
-//      else another thread may attempt to `cone_wake` this coroutine while it still
-//      has the flag set; this leads to a deadlock, as the coroutine will not get scheduled,
-//      but will be removed from the queue.
-//
+// CONE_FLAG_SCHEDULED must only be removed once `cone_switch` is inevitable.
+// Otherwise, another thread may cancel this coroutine and schedule it despite
+// the fact that it is not paused, interrupting the *next* blocking call.
 #define cone_pause(ev_add, before_switch, ev_del) do {            \
     if (cone_ensure_running(cone) || ev_add MUN_RETHROW)          \
         return -1;                                                \
+    cone->flags &= ~CONE_FLAG_SCHEDULED;                          \
     before_switch;                                                \
     if (cone_switch(cone), cone_ensure_running(cone) MUN_RETHROW) \
         return ev_del, -1;                                        \
@@ -482,10 +468,12 @@ int cone_wait(struct cone_event *ev, const cone_atom *uptr, unsigned u) {
     struct cone_event_it it = { NULL, NULL, cone };
     cone_pause(({
         cone_lock(&ev->lk);
-        // intentionally not releasing the lock just yet on success -- see above
+        // On success, the lock must not be released until CONE_FLAG_SCHEDULED is removed;
+        // else there's a window where `cone_wake` will remove this coroutine from the queue,
+        // but will assume it has already been cancelled, and won't schedule it.
         *uptr == u ? (cone_event_add(ev, &it), 0)
                    : (cone_unlock(&ev->lk), mun_error(retry, "compare-and-sleep precondition failed"));
-    }), (cone_parking(cone), cone_unlock(&ev->lk)), ({
+    }), cone_unlock(&ev->lk), ({
         cone_lock(&ev->lk);
         cone_event_del(ev, &it);
         cone_unlock(&ev->lk);
@@ -497,19 +485,21 @@ void cone_wake(struct cone_event *ev, size_t n) {
     cone_lock(&ev->lk);
     for (struct cone_event_it *it, *nx; n-- && (it = ev->head); it = nx) {
         nx = cone_event_del(ev, it); // must be done before scheduling (else `it` may be deallocated concurrently)
-        cone_schedule_xthr(it->c, 0); // FIXME should not hold the lock while pinging
+        struct cone_loop *loop = cone_schedule(it->c, 0);
+        if (loop)
+            cone_event_io_ping(&loop->io); // FIXME should not hold the lock while pinging
     }
     cone_unlock(&ev->lk);
 }
 
 int cone_iowait(int fd, int write) {
     struct cone_event_fd ev = {fd, write, cone, NULL};
-    cone_pause(cone_event_io_add(&cone->loop->io, &ev), cone_parking(cone),
+    cone_pause(cone_event_io_add(&cone->loop->io, &ev), (void)0,
                cone_event_io_del(&cone->loop->io, &ev));
 }
 
 int cone_sleep_until(mun_usec t) {
-    cone_pause(cone_event_schedule_add(&cone->loop->at, t & ~(mun_usec)1, cone), cone_parking(cone),
+    cone_pause(cone_event_schedule_add(&cone->loop->at, t & ~(mun_usec)1, cone), (void)0,
                cone_event_schedule_del(&cone->loop->at, t & ~(mun_usec)1, cone));
 }
 
@@ -542,15 +532,8 @@ const cone_atom * cone_count(void) {
 
 int cone_loop(size_t size, struct cone_closure body) {
     struct cone_loop loop = {};
-    if (cone_loop_init(&loop) MUN_RETHROW)
-        return -1;
     struct cone *c = cone_spawn_on(&loop, size, body);
-    // FIXME if `cone_loop_run` fails, things get ugly and coroutines get leaked. in theory,
-    //       `memory` errors (the only kind possible right now) can be handled by freeing
-    //       some up and calling `cone_loop_run` again, though this function can't do that.
-    if (c == NULL || cone_loop_run(&loop) MUN_RETHROW)
-        return cone_drop(c), cone_loop_fini(&loop), -1;
-    return cone_loop_fini(&loop), cone_join(c, 0) MUN_RETHROW;
+    return c == NULL || cone_loop_run(&loop) || cone_join(c, 0) MUN_RETHROW;
 }
 
 static int cone_main_run(struct cone_loop *loop) {
@@ -560,7 +543,6 @@ static int cone_main_run(struct cone_loop *loop) {
 static struct cone_loop cone_main_loop = {};
 
 static void __attribute__((constructor)) cone_main_init(void) {
-    mun_cant_fail(cone_loop_init(&cone_main_loop) MUN_RETHROW);
     struct cone *c = cone_spawn_on(&cone_main_loop, CONE_DEFAULT_STACK, cone_bind(&cone_main_run, &cone_main_loop));
     mun_cant_fail(c == NULL MUN_RETHROW);
     cone_switch(c); // the loop will then switch back because the coroutine is scheduled to run
