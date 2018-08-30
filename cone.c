@@ -452,12 +452,22 @@ static int cone_ensure_running(struct cone *c) {
 }
 
 // CONE_FLAG_SCHEDULED must only be removed once `cone_switch` is inevitable.
-// Otherwise, another thread may cancel this coroutine and schedule it despite
-// the fact that it is not paused, interrupting the *next* blocking call.
+// Otherwise, the coroutine might get scheduled despite not being paused; if it then
+// terminates without another blocking call, `cone_run` will use-after-free.
+static void cone_deschedule(struct cone *c) {
+    unsigned flags = c->flags;
+    do if (flags & (CONE_FLAG_CANCELLED | CONE_FLAG_TIMED_OUT))
+        // There's a window between `cone_ensure_running` and `cone_deschedule` where
+        // `cone_cancel` will set the flag, but not schedule. Since a resumption callback
+        // has already been attached, we can't abort the switch anymore.
+        return cone_runq_add(&c->loop->now, &c->runq);
+    while (!atomic_compare_exchange_strong(&c->flags, &flags, flags & ~CONE_FLAG_SCHEDULED));
+}
+
 #define cone_pause(ev_add, before_switch, ev_del) do {            \
     if (cone_ensure_running(cone) || ev_add MUN_RETHROW)          \
         return -1;                                                \
-    cone->flags &= ~CONE_FLAG_SCHEDULED;                          \
+    cone_deschedule(cone);                                        \
     before_switch;                                                \
     if (cone_switch(cone), cone_ensure_running(cone) MUN_RETHROW) \
         return ev_del, -1;                                        \
