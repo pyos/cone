@@ -490,8 +490,11 @@ void cone_wake(struct cone_event *ev, size_t n) {
     for (struct cone_event_it *it; n-- && (it = ev->head);) {
         ev->head = it->next;
         it->next ? (it->next->prev = it->prev) : (ev->tail = it->prev);
-        // This should be done while holding the event lock so that the coroutine couldn't
-        // be cancelled, scheduled, and executed to completion in this tiny space.
+        // Note that the coroutine may still be concurrently cancelled. This means that 1.
+        // the item needs to be linked to itself so that removing it a second time is a no-op:
+        it->next = it->prev = it;
+        // 2. dereferencing the item *and* the coroutine must be done before releasing the
+        // lock, else one or both may get deallocated between `cone_unlock` and `cone_schedule`:
         struct cone_loop *loop = cone_schedule(it->c, CONE_FLAG_WOKEN);
         if (loop) {
             cone_unlock(&ev->lk);
