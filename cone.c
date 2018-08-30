@@ -58,7 +58,7 @@ enum {
 static void cone_run(struct cone *);
 
 // Returns the loop if it may need a ping to notice the change in its run queue.
-// If it is know that the loop is not blocked in a syscall, this can be ignored.
+// If it is known that the loop is not blocked in a syscall, this can be ignored.
 static struct cone_loop *cone_schedule(struct cone *, int);
 
 struct cone_event_at {
