@@ -64,7 +64,7 @@ struct cone {
     }
 
     // Wait for some time.
-    static bool sleep(timedelta t) noexcept {
+    static bool sleep_for(timedelta t) noexcept {
         return sleep(time::clock::now() + t);
     }
 
@@ -181,7 +181,8 @@ struct cone {
 
 private:
     static inline mun_usec mun_usec_chrono(time t) noexcept {
-        static const auto d = std::chrono::microseconds(mun_usec_monotonic()) - time::clock::now().time_since_epoch();
+        static const auto d = std::chrono::microseconds(mun_usec_monotonic()) - time::clock::now().time_since_epoch()
+                            + std::chrono::nanoseconds(999);
         return std::chrono::duration_cast<std::chrono::microseconds>((t + d).time_since_epoch()).count();
     }
 

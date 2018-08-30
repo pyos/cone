@@ -41,7 +41,7 @@ static bool test_cancel_atomic(char *) {
 }
 
 static bool test_cancel_sleeping(char *) {
-    cone::ref c = []() { return ASSERT(!cone::sleep(100ms) && mun_errno == ECANCELED, "not cancelled"); };
+    cone::ref c = []() { return ASSERT(!cone::sleep_for(100ms) && mun_errno == ECANCELED, "not cancelled"); };
     auto a = cone::time::clock::now();
     return (c->cancel(), c->wait()) && ASSERT(cone::time::clock::now() - a < 10ms, "shouldn't have slept");
 }
@@ -54,9 +54,9 @@ static bool test_wait_no_rethrow(char *) {
 
 template <bool cancel>
 static bool test_sleep(char *msg) {
-    cone::ref a = []() { return cone::sleep(50ms); };
-    cone::ref b = []() { return cone::sleep(100ms); };
     auto start = cone::time::clock::now();
+    cone::ref a = [=]() { return cone::sleep(start + 50ms); };
+    cone::ref b = [=]() { return cone::sleep(start + 100ms); };
     if (!a->wait())
         return false;
     if (cancel)
@@ -65,7 +65,7 @@ static bool test_sleep(char *msg) {
         return false;
     auto end = cone::time::clock::now();
     sprintf(msg, "%fs", std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count());
-    return ASSERT((end - start) > (cancel ? 50ms : 100ms), "did not sleep enough")
+    return ASSERT((end - start) >= (cancel ? 50ms : 100ms), "did not sleep enough")
         && ASSERT(!cancel || (end - start) < 75ms, "slept too much");
 }
 
@@ -73,17 +73,17 @@ static bool test_sleep_after_cancel(char *) {
     ::cone->cancel();
     auto a = cone::time::clock::now();
     return ASSERT(!cone::yield() && mun_errno == ECANCELED, "did not cancel itself")
-        && cone::sleep(10ms) && ASSERT(cone::time::clock::now() - a >= 10ms, "slept for too little");
+        && cone::sleep(a + 10ms) && ASSERT(cone::time::clock::now() - a >= 10ms, "slept for too little");
 }
 
 static bool test_deadline(char *) {
     cone::deadline d(::cone, 0us);
-    return ASSERT(!cone::sleep(1ms) && mun_errno == ETIMEDOUT, "deadline did not trigger");
+    return ASSERT(!cone::sleep_for(1ms) && mun_errno == ETIMEDOUT, "deadline did not trigger");
 }
 
 static bool test_deadline_lifting(char *) {
     cone::deadline{::cone, 0us};
-    return cone::sleep(1ms);
+    return cone::sleep_for(1ms);
 }
 
 static bool test_count(char *) {
@@ -250,7 +250,7 @@ static bool test_io_starvation(char *) {
     cone::ref cb = [&]() { return wake_wait(a, b); };
     // yielding successfully implies completing an i/o peek (see test_yield_to_io)
     cone::ref cc = [&]() { return cone::yield() && (a.wake(), b.wake(), stop = true); };
-    if (!ASSERT(cone::sleep(20ms), "sleep() failed")) return false;
+    if (!ASSERT(cone::sleep_for(20ms), "sleep() failed")) return false;
     cc->cancel();
     ca->cancel();
     cb->cancel();
@@ -267,7 +267,7 @@ static bool test_mt_event(char *) {
     cone::atom a{0};
     cone::event ev;
     auto t = cone::thread([&]() {
-        if (!cone::sleep(100ms))
+        if (!cone::sleep_for(100ms))
             return false;
         a = 1;
         ev.wake();
