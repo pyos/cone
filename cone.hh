@@ -144,13 +144,13 @@ struct cone {
 
         bool lock() noexcept {
             while (!try_lock())
-                if (!e_.wait(v_, 1) && mun_errno != EAGAIN)
-                    return v_ == 0 && (e_.wake(1), false); // could be us who got woken by unlock()
+                if (!e_.wait(v_, 1) && mun_errno != EAGAIN) // could be us who got woken by unlock() though
+                    return v_.load(std::memory_order_acquire) == 0 && (e_.wake(1), false);
             return true;
         }
 
         void unlock() noexcept {
-            v_ = 0;
+            v_.store(0, std::memory_order_release);
             e_.wake(1);
         }
 

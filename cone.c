@@ -248,26 +248,25 @@ struct cone_runq {
 
 static void cone_runq_add(struct cone_runq *rq, struct cone_runq_it *it, int init) {
     if (init && rq->tail == NULL)
-        rq->head = rq->tail = &rq->stub;
-    it->next = NULL;
-    atomic_exchange(&rq->head, it)->next = it;
+        atomic_store_explicit(&rq->head, rq->tail = &rq->stub, memory_order_relaxed);
+    atomic_store_explicit(&it->next, NULL, memory_order_relaxed);
+    atomic_store_explicit(&atomic_exchange(&rq->head, it)->next, it, memory_order_release);
 }
 
 static struct cone *cone_runq_next(struct cone_runq *rq, int pop) {
     struct cone_runq_it *tail = rq->tail;
-    struct cone_runq_it *next = tail->next;
+    struct cone_runq_it *next = atomic_load_explicit(&tail->next, memory_order_acquire);
     if (tail == &rq->stub) {
         if (next == NULL)
             return NULL; // empty or blocked while pushing first element
         tail = rq->tail = next;
-        next = next->next;
+        next = atomic_load_explicit(&tail->next, memory_order_acquire);
     }
     if (!next) { // last element or blocked while pushing next element
-        struct cone_runq_it *head = rq->head;
-        if (tail != head)
+        if (tail != atomic_load_explicit(&rq->head, memory_order_acquire))
             return NULL; // definitely blocked
         cone_runq_add(rq, &rq->stub, 0);
-        next = tail->next;
+        next = atomic_load_explicit(&tail->next, memory_order_acquire);
         if (!next)
             return NULL; // another push happened before the one above (and is now blocked)
     }
