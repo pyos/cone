@@ -438,27 +438,15 @@ static int cone_ensure_running(struct cone *c) {
          : state & CONE_FLAG_TIMED_OUT ? mun_error(timeout, "blocking call timed out") : 0;
 }
 
-// CONE_FLAG_SCHEDULED must only be removed once `cone_switch` is inevitable.
-// Otherwise, the coroutine might get scheduled despite not being paused; if it then
-// terminates without another blocking call, `cone_run` will use-after-free.
-static void cone_deschedule(struct cone *c) {
+static int cone_deschedule(struct cone *c) {
     unsigned flags = c->flags;
     do if (flags & (CONE_FLAG_CANCELLED | CONE_FLAG_TIMED_OUT | CONE_FLAG_WOKEN))
-        // There's a window between `cone_ensure_running` and `cone_deschedule` where
-        // `cone_cancel`/`cone_wake` will set the flag, but not schedule. Since a resumption
-        // callback has already been attached, we can't abort the switch anymore.
-        return cone_runq_add(&c->loop->now, &c->runq, 0);
+        // Don't even yield if cancelled by another thread while registering the wakeup callback.
+        return cone_ensure_running(c);
     while (!atomic_compare_exchange_weak(&c->flags, &flags, flags & ~CONE_FLAG_SCHEDULED));
+    cone_switch(c);
+    return cone_ensure_running(c);
 }
-
-#define cone_pause(ev_add, ev_del) do {                           \
-    if (cone_ensure_running(cone) || ev_add MUN_RETHROW)          \
-        return -1;                                                \
-    cone_deschedule(cone);                                        \
-    if (cone_switch(cone), cone_ensure_running(cone) MUN_RETHROW) \
-        return ev_del, -1;                                        \
-    return 0;                                                     \
-} while (0)
 
 struct cone_event_it {
     struct cone_event_it *next, *prev;
@@ -476,23 +464,24 @@ static inline void cone_unlock(void **a) {
 
 int cone_wait(struct cone_event *ev, const cone_atom *uptr, unsigned u) {
     struct cone_event_it it = { NULL, NULL, cone };
-    cone_pause(({
+    if (cone_ensure_running(cone) MUN_RETHROW)
+        return -1;
+    cone_lock(&ev->lk);
+    if (*uptr != u)
+        return cone_unlock(&ev->lk), mun_error(retry, "compare-and-sleep precondition failed");
+    it.next = NULL;
+    it.prev = ev->tail;
+    it.prev ? (it.prev->next = &it) : (ev->head = &it);
+    ev->tail = &it;
+    cone_unlock(&ev->lk);
+    if (cone_deschedule(cone) MUN_RETHROW) {
         cone_lock(&ev->lk);
-        if (*uptr != u)
-            return cone_unlock(&ev->lk), mun_error(retry, "compare-and-sleep precondition failed");
-        it.next = NULL;
-        it.prev = ev->tail;
-        it.prev ? (it.prev->next = &it) : (ev->head = &it);
-        ev->tail = &it;
-        cone_unlock(&ev->lk);
-        0;
-    }), ({
-        cone_lock(&ev->lk);
-        // This'd be easier if it was a circular list, but then `cone_event` would not be movable.
         it.prev ? (it.prev->next = it.next) : (ev->head = it.next);
         it.next ? (it.next->prev = it.prev) : (ev->tail = it.prev);
         cone_unlock(&ev->lk);
-    }));
+        return -1;
+    }
+    return 0;
 }
 
 void cone_wake(struct cone_event *ev, size_t n) {
@@ -515,13 +504,19 @@ void cone_wake(struct cone_event *ev, size_t n) {
 
 int cone_iowait(int fd, int write) {
     struct cone_event_fd ev = {fd, write, cone, NULL};
-    cone_pause(cone_event_io_add(&cone->loop->io, &ev),
-               cone_event_io_del(&cone->loop->io, &ev));
+    if (cone_event_io_add(&cone->loop->io, &ev) MUN_RETHROW)
+        return -1;
+    if (cone_deschedule(cone) MUN_RETHROW)
+        return cone_event_io_del(&cone->loop->io, &ev), -1;
+    return 0;
 }
 
 int cone_sleep_until(mun_usec t) {
-    cone_pause(cone_event_schedule_add(&cone->loop->at, t, cone, 0),
-               cone_event_schedule_del(&cone->loop->at, t, cone, 0));
+    if (cone_event_schedule_add(&cone->loop->at, t, cone, 0) MUN_RETHROW)
+        return -1;
+    if (cone_deschedule(cone) MUN_RETHROW)
+        return cone_event_schedule_del(&cone->loop->at, t, cone, 0), -1;
+    return 0;
 }
 
 int cone_yield(void) {
