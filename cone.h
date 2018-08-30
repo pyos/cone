@@ -80,7 +80,6 @@ int cone_yield(void) mun_throws(cancelled, timeout);
 // If the value at the address is the same as the one passed as an argument, sleep until
 // `cone_wake` is called with the same event. If not, return EAGAIN. This behavior
 // is intended to replicate the futex API (specifically, FUTEX_WAIT and FUTEX_WAKE).
-// NOTE: unfortunately, atomicity of a `cone_event` is not yet implemented.
 int cone_wait(struct cone_event *, const cone_atom *, unsigned) mun_throws(cancelled, timeout, retry);
 
 // Wake up at most N coroutines paused with `cone_wait`.
