@@ -71,7 +71,7 @@ static struct cone_loop *cone_schedule(struct cone *, int);
 
 struct cone_event_at {
     mun_usec at;
-    struct cone *c;
+    uintptr_t c;
 };
 
 struct cone_event_schedule mun_vec(struct cone_event_at);
@@ -80,13 +80,13 @@ static void cone_event_schedule_fini(struct cone_event_schedule *ev) {
     mun_vec_fini(ev);
 }
 
-static int cone_event_schedule_add(struct cone_event_schedule *ev, mun_usec at, struct cone *c) {
-    return mun_vec_insert(ev, mun_vec_bisect(ev, at < _->at), &((struct cone_event_at){at, c}));
+static int cone_event_schedule_add(struct cone_event_schedule *ev, mun_usec at, struct cone *c, int deadline) {
+    return mun_vec_insert(ev, mun_vec_bisect(ev, at < _->at), &((struct cone_event_at){at, (uintptr_t)c|deadline}));
 }
 
-static void cone_event_schedule_del(struct cone_event_schedule *ev, mun_usec at, struct cone *c) {
+static void cone_event_schedule_del(struct cone_event_schedule *ev, mun_usec at, struct cone *c, int deadline) {
     for (size_t i = mun_vec_bisect(ev, at < _->at); i-- && ev->data[i].at == at; )
-        if (ev->data[i].c == c)
+        if (ev->data[i].c == ((uintptr_t)c|deadline))
             return mun_vec_erase(ev, i, 1);
 }
 
@@ -96,7 +96,7 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev) {
         if (ev->data->at > t)
             return ev->data->at - t;
         for (; ev->size && ev->data->at <= t; mun_vec_erase(ev, 0, 1))
-            cone_schedule(ev->data->c, ev->data->at & 1 ? CONE_FLAG_TIMED_OUT : 0);
+            cone_schedule((struct cone *)(ev->data->c & ~1ul), ev->data->c & 1 ? CONE_FLAG_TIMED_OUT : 0);
     }
     return MUN_USEC_MAX;
 }
@@ -256,13 +256,19 @@ static int cone_event_add(struct cone_event *ev, struct cone_event_it *it) {
     return 0;
 }
 
-static struct cone_event_it *cone_event_del(struct cone_event *ev, struct cone_event_it *it) {
+static void cone_event_del(struct cone_event *ev, struct cone_event_it *it) {
     // This'd be easier if it was a circular list, but then `cone_event` would not be movable.
-    struct cone_event_it *ret = it->prev ? (it->prev->next = it->next) : (ev->head = it->next);
+    it->prev ? (it->prev->next = it->next) : (ev->head = it->next);
     it->next ? (it->next->prev = it->prev) : (ev->tail = it->prev);
     it->next = it;
     it->prev = it;
-    return ret;
+}
+
+static struct cone *cone_event_pop(struct cone_event *ev) {
+    struct cone_event_it *it = ev->head;
+    if (!it)
+        return NULL;
+    return cone_event_del(ev, it), it->c;
 }
 
 static void cone_runq_add(struct cone_event *rq, struct cone_event_it *it) {
@@ -280,10 +286,9 @@ static int cone_runq_nonempty(struct cone_event *rq) {
 
 static void cone_runq_emit(struct cone_event *rq, size_t limit) {
     cone_lock(&rq->lk);
-    for (struct cone_event_it *it; limit-- && (it = rq->head);) {
-        cone_event_del(rq, it);
+    for (struct cone *c; limit-- && (c = cone_event_pop(rq));) {
         cone_unlock(&rq->lk);
-        cone_run(it->c);
+        cone_run(c);
         cone_lock(&rq->lk);
     }
     cone_unlock(&rq->lk);
@@ -493,11 +498,15 @@ int cone_wait(struct cone_event *ev, const cone_atom *uptr, unsigned u) {
 void cone_wake(struct cone_event *ev, size_t n) {
     // XXX check if nobody is waiting and don't even lock? (that's what FUTEX_WAKE does, dunno if it helps)
     cone_lock(&ev->lk);
-    for (struct cone_event_it *it, *nx; n-- && (it = ev->head); it = nx) {
-        nx = cone_event_del(ev, it); // must be done before scheduling (else `it` may be deallocated concurrently)
-        struct cone_loop *loop = cone_schedule(it->c, 0);
-        if (loop)
-            cone_event_io_ping(&loop->io); // FIXME should not hold the lock while pinging
+    for (struct cone *c; n-- && (c = cone_event_pop(ev));) {
+        // This should be done while holding the event lock so that the coroutine couldn't
+        // be cancelled, scheduled, and executed to completion in this tiny space.
+        struct cone_loop *loop = cone_schedule(c, 0);
+        if (loop) {
+            cone_unlock(&ev->lk);
+            cone_event_io_ping(&loop->io);
+            cone_lock(&ev->lk);
+        }
     }
     cone_unlock(&ev->lk);
 }
@@ -509,8 +518,8 @@ int cone_iowait(int fd, int write) {
 }
 
 int cone_sleep_until(mun_usec t) {
-    cone_pause(cone_event_schedule_add(&cone->loop->at, t & ~(mun_usec)1, cone), (void)0,
-               cone_event_schedule_del(&cone->loop->at, t & ~(mun_usec)1, cone));
+    cone_pause(cone_event_schedule_add(&cone->loop->at, t, cone, 0), (void)0,
+               cone_event_schedule_del(&cone->loop->at, t, cone, 0));
 }
 
 int cone_yield(void) {
@@ -529,11 +538,11 @@ int cone_cowait(struct cone *c, int norethrow) {
 }
 
 int cone_deadline(struct cone *c, mun_usec t) {
-    return cone_event_schedule_add(&c->loop->at, t|1, c) MUN_RETHROW;
+    return cone_event_schedule_add(&c->loop->at, t, c, 1) MUN_RETHROW;
 }
 
 void cone_complete(struct cone *c, mun_usec t) {
-    cone_event_schedule_del(&c->loop->at, t|1, c);
+    cone_event_schedule_del(&c->loop->at, t, c, 1);
 }
 
 const cone_atom * cone_count(void) {
