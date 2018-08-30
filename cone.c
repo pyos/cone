@@ -44,13 +44,13 @@ _Static_assert(0, "stack switching is only supported on x86-64 UNIX");
 #include <sys/select.h>
 #endif
 
-static inline void cone_lock(cone_atom *a) {
-    while (atomic_exchange(a, 1))
+static inline void cone_lock(void **a) {
+    while (atomic_exchange((volatile _Atomic(uintptr_t) *)a, 1))
         sched_yield();
 }
 
-static inline void cone_unlock(cone_atom *a) {
-    atomic_store_explicit(a, 0, memory_order_release);
+static inline void cone_unlock(void **a) {
+    atomic_store_explicit((volatile _Atomic(uintptr_t) *)a, 0, memory_order_release);
 }
 
 enum {
