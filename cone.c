@@ -56,6 +56,7 @@ static inline void cone_unlock(void **a) {
 enum {
     CONE_FLAG_LAST_REF  = 0x01,
     CONE_FLAG_SCHEDULED = 0x02,
+    CONE_FLAG_WOKEN     = 0x04,
     CONE_FLAG_FINISHED  = 0x08,
     CONE_FLAG_FAILED    = 0x10,
     CONE_FLAG_CANCELLED = 0x20,
@@ -96,7 +97,7 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev) {
         if (ev->data->at > t)
             return ev->data->at - t;
         for (; ev->size && ev->data->at <= t; mun_vec_erase(ev, 0, 1))
-            cone_schedule((struct cone *)(ev->data->c & ~1ul), ev->data->c & 1 ? CONE_FLAG_TIMED_OUT : 0);
+            cone_schedule((struct cone *)(ev->data->c & ~1ul), ev->data->c & 1 ? CONE_FLAG_TIMED_OUT : CONE_FLAG_WOKEN);
     }
     return MUN_USEC_MAX;
 }
@@ -192,7 +193,7 @@ static void cone_event_io_ping(struct cone_event_io *set) {
 }
 
 static void cone_event_io_call(struct cone_event_io *set, struct cone_event_fd *e) {
-    cone_schedule(e->c, 0);
+    cone_schedule(e->c, CONE_FLAG_WOKEN);
     cone_event_io_del(set, e); // `e` is still allocated & `e->link` points to next element
 }
 
@@ -285,13 +286,14 @@ static int cone_runq_nonempty(struct cone_event *rq) {
 }
 
 static void cone_runq_emit(struct cone_event *rq, size_t limit) {
-    cone_lock(&rq->lk);
-    for (struct cone *c; limit-- && (c = cone_event_pop(rq));) {
-        cone_unlock(&rq->lk);
-        cone_run(c);
+    while (limit--) {
         cone_lock(&rq->lk);
+        struct cone *c = cone_event_pop(rq);
+        cone_unlock(&rq->lk);
+        if (!c)
+            break;
+        cone_run(c);
     }
-    cone_unlock(&rq->lk);
 }
 
 struct cone_loop {
@@ -451,7 +453,7 @@ void cone_cancel(struct cone *c) {
 }
 
 static int cone_ensure_running(struct cone *c) {
-    int state = atomic_fetch_and(&c->flags, ~CONE_FLAG_CANCELLED & ~CONE_FLAG_TIMED_OUT);
+    int state = atomic_fetch_and(&c->flags, ~CONE_FLAG_CANCELLED & ~CONE_FLAG_TIMED_OUT & ~CONE_FLAG_WOKEN);
     return state & CONE_FLAG_CANCELLED ? mun_error(cancelled, "blocking call aborted")
          : state & CONE_FLAG_TIMED_OUT ? mun_error(timeout, "blocking call timed out") : 0;
 }
@@ -461,19 +463,18 @@ static int cone_ensure_running(struct cone *c) {
 // terminates without another blocking call, `cone_run` will use-after-free.
 static void cone_deschedule(struct cone *c) {
     unsigned flags = c->flags;
-    do if (flags & (CONE_FLAG_CANCELLED | CONE_FLAG_TIMED_OUT))
+    do if (flags & (CONE_FLAG_CANCELLED | CONE_FLAG_TIMED_OUT | CONE_FLAG_WOKEN))
         // There's a window between `cone_ensure_running` and `cone_deschedule` where
-        // `cone_cancel` will set the flag, but not schedule. Since a resumption callback
-        // has already been attached, we can't abort the switch anymore.
+        // `cone_cancel`/`cone_wake` will set the flag, but not schedule. Since a resumption
+        // callback has already been attached, we can't abort the switch anymore.
         return cone_runq_add(&c->loop->now, &c->runq);
-    while (!atomic_compare_exchange_strong(&c->flags, &flags, flags & ~CONE_FLAG_SCHEDULED));
+    while (!atomic_compare_exchange_weak(&c->flags, &flags, flags & ~CONE_FLAG_SCHEDULED));
 }
 
-#define cone_pause(ev_add, before_switch, ev_del) do {            \
+#define cone_pause(ev_add, ev_del) do {                           \
     if (cone_ensure_running(cone) || ev_add MUN_RETHROW)          \
         return -1;                                                \
     cone_deschedule(cone);                                        \
-    before_switch;                                                \
     if (cone_switch(cone), cone_ensure_running(cone) MUN_RETHROW) \
         return ev_del, -1;                                        \
     return 0;                                                     \
@@ -483,12 +484,9 @@ int cone_wait(struct cone_event *ev, const cone_atom *uptr, unsigned u) {
     struct cone_event_it it = { NULL, NULL, cone };
     cone_pause(({
         cone_lock(&ev->lk);
-        // On success, the lock must not be released until CONE_FLAG_SCHEDULED is removed;
-        // else there's a window where `cone_wake` will remove this coroutine from the queue,
-        // but will assume it has already been cancelled, and won't schedule it.
-        *uptr == u ? (cone_event_add(ev, &it), 0)
+        *uptr == u ? (cone_event_add(ev, &it), cone_unlock(&ev->lk), 0)
                    : (cone_unlock(&ev->lk), mun_error(retry, "compare-and-sleep precondition failed"));
-    }), cone_unlock(&ev->lk), ({
+    }), ({
         cone_lock(&ev->lk);
         cone_event_del(ev, &it);
         cone_unlock(&ev->lk);
@@ -501,7 +499,7 @@ void cone_wake(struct cone_event *ev, size_t n) {
     for (struct cone *c; n-- && (c = cone_event_pop(ev));) {
         // This should be done while holding the event lock so that the coroutine couldn't
         // be cancelled, scheduled, and executed to completion in this tiny space.
-        struct cone_loop *loop = cone_schedule(c, 0);
+        struct cone_loop *loop = cone_schedule(c, CONE_FLAG_WOKEN);
         if (loop) {
             cone_unlock(&ev->lk);
             cone_event_io_ping(&loop->io);
@@ -513,12 +511,12 @@ void cone_wake(struct cone_event *ev, size_t n) {
 
 int cone_iowait(int fd, int write) {
     struct cone_event_fd ev = {fd, write, cone, NULL};
-    cone_pause(cone_event_io_add(&cone->loop->io, &ev), (void)0,
+    cone_pause(cone_event_io_add(&cone->loop->io, &ev),
                cone_event_io_del(&cone->loop->io, &ev));
 }
 
 int cone_sleep_until(mun_usec t) {
-    cone_pause(cone_event_schedule_add(&cone->loop->at, t, cone, 0), (void)0,
+    cone_pause(cone_event_schedule_add(&cone->loop->at, t, cone, 0),
                cone_event_schedule_del(&cone->loop->at, t, cone, 0));
 }
 
