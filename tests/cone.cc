@@ -191,7 +191,8 @@ static bool test_yield_to_io(char *) {
         return !(cold_read(fds[0].i, buf, 1) < 0 MUN_RETHROW_OS) && (v++, true);
     };
     return cone::yield() && !(write(fds[1].i, "k", 1) < 0 MUN_RETHROW_OS)
-        && cone::yield() && ASSERT(v == 1, "%d != 1", v);
+        // one to schedule, one to run
+        && cone::yield() && cone::yield() && ASSERT(v == 1, "%d != 1", v);
 }
 
 static bool test_rdwr(char *) {

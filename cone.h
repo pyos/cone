@@ -88,12 +88,12 @@ int cone_yield(void) mun_throws(cancelled, timeout);
 int cone_wait(struct cone_event *, const cone_atom *, unsigned) mun_throws(cancelled, timeout, retry);
 
 // Wake up at most N coroutines paused with `cone_wait`.
-int cone_wake(struct cone_event *, size_t) mun_throws(memory);
+void cone_wake(struct cone_event *, size_t);
 
 // Make the next (or current, if any) call to `cone_wait`, `cone_iowait`, `cone_sleep_until`,
 // `cone_sleep`, or `cone_yield` from the specified coroutine fail with ECANCELED.
 // No-op if the coroutine has already finished.
-int cone_cancel(struct cone *) mun_throws(memory);
+void cone_cancel(struct cone *);
 
 // See `cone_cancel`, but replace "ECANCELED" with "ETIMEDOUT" and "next"
 // with "next after the specified point in time (according to the monotonic clock)".

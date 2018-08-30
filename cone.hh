@@ -22,7 +22,7 @@ struct cone {
     // Make the next (or current, if any) call to `wait`, `iowait`, `sleep_until`, `sleep`,
     // or `yield` from this coroutine fail with ECANCELED. No-op if the coroutine has finished.
     void cancel() noexcept {
-        mun_cant_fail(cone_cancel(this) MUN_RETHROW);
+        cone_cancel(this);
     }
 
     struct deadline {
@@ -130,7 +130,7 @@ struct cone {
         }
 
         void wake(size_t n = std::numeric_limits<size_t>::max()) noexcept {
-            mun_cant_fail(cone_wake(&e_, n) MUN_RETHROW);
+            cone_wake(&e_, n);
         }
 
     private:
