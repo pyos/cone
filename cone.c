@@ -44,15 +44,6 @@ _Static_assert(0, "stack switching is only supported on x86-64 UNIX");
 #include <sys/select.h>
 #endif
 
-static inline void cone_lock(void **a) {
-    while (atomic_exchange((volatile _Atomic(uintptr_t) *)a, 1))
-        sched_yield();
-}
-
-static inline void cone_unlock(void **a) {
-    atomic_store_explicit((volatile _Atomic(uintptr_t) *)a, 0, memory_order_release);
-}
-
 enum {
     CONE_FLAG_LAST_REF  = 0x01,
     CONE_FLAG_SCHEDULED = 0x02,
@@ -244,61 +235,50 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
     return 0;
 }
 
-struct cone_event_it {
-    struct cone_event_it *next, *prev;
-    struct cone *c;
+struct cone_runq_it {
+    volatile _Atomic(struct cone_runq_it *) next;
 };
 
-static int cone_event_add(struct cone_event *ev, struct cone_event_it *it) {
+// http://www.1024cores.net/home/lock-free-algorithms/queues/intrusive-mpsc-node-based-queue
+struct cone_runq {
+    volatile _Atomic(struct cone_runq_it *) head;
+    struct cone_runq_it *tail;
+    struct cone_runq_it stub;
+};
+
+static void cone_runq_add(struct cone_runq *rq, struct cone_runq_it *it, int init) {
+    if (init && rq->tail == NULL)
+        rq->head = rq->tail = &rq->stub;
     it->next = NULL;
-    it->prev = ev->tail;
-    it->prev ? (it->prev->next = it) : (ev->head = it);
-    ev->tail = it;
-    return 0;
+    atomic_exchange(&rq->head, it)->next = it;
 }
 
-static void cone_event_del(struct cone_event *ev, struct cone_event_it *it) {
-    // This'd be easier if it was a circular list, but then `cone_event` would not be movable.
-    it->prev ? (it->prev->next = it->next) : (ev->head = it->next);
-    it->next ? (it->next->prev = it->prev) : (ev->tail = it->prev);
-    it->next = it;
-    it->prev = it;
-}
-
-static struct cone *cone_event_pop(struct cone_event *ev) {
-    struct cone_event_it *it = ev->head;
-    if (!it)
-        return NULL;
-    return cone_event_del(ev, it), it->c;
-}
-
-static void cone_runq_add(struct cone_event *rq, struct cone_event_it *it) {
-    cone_lock(&rq->lk);
-    cone_event_add(rq, it);
-    cone_unlock(&rq->lk);
-}
-
-static int cone_runq_nonempty(struct cone_event *rq) {
-    cone_lock(&rq->lk);
-    int ret = !!rq->head; // XXX does this REALLY need a lock?
-    cone_unlock(&rq->lk);
-    return ret;
-}
-
-static void cone_runq_emit(struct cone_event *rq, size_t limit) {
-    while (limit--) {
-        cone_lock(&rq->lk);
-        struct cone *c = cone_event_pop(rq);
-        cone_unlock(&rq->lk);
-        if (!c)
-            break;
-        cone_run(c);
+static struct cone *cone_runq_next(struct cone_runq *rq, int pop) {
+    struct cone_runq_it *tail = rq->tail;
+    struct cone_runq_it *next = tail->next;
+    if (tail == &rq->stub) {
+        if (next == NULL)
+            return NULL; // empty or blocked while pushing first element
+        tail = rq->tail = next;
+        next = next->next;
     }
+    if (!next) { // last element or blocked while pushing next element
+        struct cone_runq_it *head = rq->head;
+        if (tail != head)
+            return NULL; // definitely blocked
+        cone_runq_add(rq, &rq->stub, 0);
+        next = tail->next;
+        if (!next)
+            return NULL; // another push happened before the one above (and is now blocked)
+    }
+    if (pop)
+        rq->tail = next;
+    return (struct cone *)tail;
 }
 
 struct cone_loop {
     cone_atom active;
-    struct cone_event now;
+    struct cone_runq now;
     struct cone_event_io io;
     struct cone_event_schedule at;
 };
@@ -307,11 +287,13 @@ static int cone_loop_run(struct cone_loop *loop) {
     if (cone_event_io_init(&loop->io) MUN_RETHROW)
         return -1;
     while (1) {
-        cone_runq_emit(&loop->now, 256);
+        struct cone *c;
+        for (size_t limit = 256; limit-- && (c = cone_runq_next(&loop->now, 1));)
+            cone_run(c);
         mun_usec next = cone_event_schedule_emit(&loop->at);
         if (next == MUN_USEC_MAX && !atomic_load_explicit(&loop->active, memory_order_acquire))
             break;
-        if (next > 0 && cone_runq_nonempty(&loop->now))
+        if (next > 0 && cone_runq_next(&loop->now, 0))
             next = 0;
         // If this fails, coroutines will get leaked.
         mun_cant_fail(cone_event_io_emit(&loop->io, next) MUN_RETHROW);
@@ -322,10 +304,10 @@ static int cone_loop_run(struct cone_loop *loop) {
 }
 
 struct cone {
+    struct cone_runq_it runq;
     cone_atom flags;
     void **rsp;
     struct cone_loop *loop;
-    struct cone_event_it runq;
     struct cone_closure body;
     struct cone_event done;
     #if CONE_ASAN
@@ -407,7 +389,6 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
     c->flags = CONE_FLAG_SCHEDULED;
     c->loop = loop;
     c->body = body;
-    c->runq = (struct cone_event_it){NULL, NULL, c};
     c->done = (struct cone_event){};
     #if CONE_ASAN
         c->target_stack = c->stack;
@@ -418,7 +399,7 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
     c->rsp[1] = NULL;               // %rbp: nothing; there's no previous frame yet
     c->rsp[2] = (void*)&cone_body;  // %rip: code to execute;
     c->rsp[3] = NULL;               // return address: nothing; same as for %rbp
-    cone_runq_add(&loop->now, &c->runq);
+    cone_runq_add(&loop->now, &c->runq, 1);
     atomic_fetch_add_explicit(&loop->active, 1, memory_order_relaxed);
     return c;
 }
@@ -442,7 +423,7 @@ static struct cone_loop *cone_schedule(struct cone *c, int flags) {
     struct cone_loop *loop = cone && cone->loop == c->loop ? NULL : c->loop;
     // This may cause the coroutine to be destroyed concurrently by its loop.
     // Meaning, accessing `c->loop` after the call returns is unsafe.
-    cone_runq_add(&c->loop->now, &c->runq);
+    cone_runq_add(&c->loop->now, &c->runq, 0);
     return loop;
 }
 
@@ -467,7 +448,7 @@ static void cone_deschedule(struct cone *c) {
         // There's a window between `cone_ensure_running` and `cone_deschedule` where
         // `cone_cancel`/`cone_wake` will set the flag, but not schedule. Since a resumption
         // callback has already been attached, we can't abort the switch anymore.
-        return cone_runq_add(&c->loop->now, &c->runq);
+        return cone_runq_add(&c->loop->now, &c->runq, 0);
     while (!atomic_compare_exchange_weak(&c->flags, &flags, flags & ~CONE_FLAG_SCHEDULED));
 }
 
@@ -480,15 +461,37 @@ static void cone_deschedule(struct cone *c) {
     return 0;                                                     \
 } while (0)
 
+struct cone_event_it {
+    struct cone_event_it *next, *prev;
+    struct cone *c;
+};
+
+static inline void cone_lock(void **a) {
+    while (atomic_exchange((volatile _Atomic(uintptr_t) *)a, 1))
+        sched_yield();
+}
+
+static inline void cone_unlock(void **a) {
+    atomic_store_explicit((volatile _Atomic(uintptr_t) *)a, 0, memory_order_release);
+}
+
 int cone_wait(struct cone_event *ev, const cone_atom *uptr, unsigned u) {
     struct cone_event_it it = { NULL, NULL, cone };
     cone_pause(({
         cone_lock(&ev->lk);
-        *uptr == u ? (cone_event_add(ev, &it), cone_unlock(&ev->lk), 0)
-                   : (cone_unlock(&ev->lk), mun_error(retry, "compare-and-sleep precondition failed"));
+        if (*uptr != u)
+            return cone_unlock(&ev->lk), mun_error(retry, "compare-and-sleep precondition failed");
+        it.next = NULL;
+        it.prev = ev->tail;
+        it.prev ? (it.prev->next = &it) : (ev->head = &it);
+        ev->tail = &it;
+        cone_unlock(&ev->lk);
+        0;
     }), ({
         cone_lock(&ev->lk);
-        cone_event_del(ev, &it);
+        // This'd be easier if it was a circular list, but then `cone_event` would not be movable.
+        it.prev ? (it.prev->next = it.next) : (ev->head = it.next);
+        it.next ? (it.next->prev = it.prev) : (ev->tail = it.prev);
         cone_unlock(&ev->lk);
     }));
 }
@@ -496,10 +499,12 @@ int cone_wait(struct cone_event *ev, const cone_atom *uptr, unsigned u) {
 void cone_wake(struct cone_event *ev, size_t n) {
     // XXX check if nobody is waiting and don't even lock? (that's what FUTEX_WAKE does, dunno if it helps)
     cone_lock(&ev->lk);
-    for (struct cone *c; n-- && (c = cone_event_pop(ev));) {
+    for (struct cone_event_it *it; n-- && (it = ev->head);) {
+        ev->head = it->next;
+        it->next ? (it->next->prev = it->prev) : (ev->tail = it->prev);
         // This should be done while holding the event lock so that the coroutine couldn't
         // be cancelled, scheduled, and executed to completion in this tiny space.
-        struct cone_loop *loop = cone_schedule(c, CONE_FLAG_WOKEN);
+        struct cone_loop *loop = cone_schedule(it->c, CONE_FLAG_WOKEN);
         if (loop) {
             cone_unlock(&ev->lk);
             cone_event_io_ping(&loop->io);
