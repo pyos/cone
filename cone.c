@@ -452,22 +452,26 @@ static _Thread_local struct cone_mcs_lock {
     volatile _Atomic(char) locked;
 } lki;
 
+#ifndef CONE_SPIN_INTERVAL
+#define CONE_SPIN_INTERVAL 512
+#endif
+
 static inline void cone_spin_lock(void **h) {
     struct cone_mcs_lock *p = atomic_exchange((volatile _Atomic(void *) *)h, &lki);
     if (!p)
         return;
     atomic_store_explicit(&lki.locked, 1, memory_order_relaxed);
     atomic_store_explicit(&p->next, &lki, memory_order_release);
-    while (atomic_load_explicit(&lki.locked, memory_order_acquire))
-        __asm__ __volatile__("pause");
+    for (size_t __n = 0; atomic_load_explicit(&lki.locked, memory_order_acquire);)
+        if (++__n % CONE_SPIN_INTERVAL) __asm__ __volatile__("pause"); else sched_yield();
 }
 
 static inline void cone_spin_unlock(void **h) {
     if (atomic_compare_exchange_strong((volatile _Atomic(void *) *)h, &(void *){&lki}, NULL))
         return;
     struct cone_mcs_lock *n;
-    while (!(n = atomic_load_explicit(&lki.next, memory_order_acquire)))
-        __asm__ __volatile__("pause");
+    for (size_t __n = 0; !(n = atomic_load_explicit(&lki.next, memory_order_acquire));)
+        if (++__n % CONE_SPIN_INTERVAL) __asm__ __volatile__("pause"); else sched_yield();
     atomic_store_explicit(&n->locked, 0, memory_order_release);
     atomic_store_explicit(&lki.next, NULL, memory_order_relaxed);
 }
