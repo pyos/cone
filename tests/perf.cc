@@ -31,7 +31,7 @@ static bool test_spawn(char *msg) {
 
 template <size_t cones>
 static bool test_spawn_many(char *msg) {
-    cone::ref spawned[cones];
+    std::vector<cone::ref> spawned(cones);
     return run<cones>(msg, [&](unsigned i) { spawned[i] = []() { return true; }; return true; },
                            [&](unsigned i) { return spawned[i]->wait(); },
                            [&](unsigned i) { spawned[i] = cone::ref(); return true; });
@@ -39,7 +39,7 @@ static bool test_spawn_many(char *msg) {
 
 template <size_t cones, size_t yields_per_cone>
 static bool test_spawn_many_yielding(char *msg) {
-    cone::ref spawned[cones];
+    std::vector<cone::ref> spawned(cones);
     return run<cones>(msg,
         [&](unsigned i) {
             spawned[i] = []() {
@@ -58,7 +58,7 @@ template <size_t cones, size_t yields_per_cone>
 static bool test_mutex(char *msg) {
     size_t r = 0;
     cone::mutex m;
-    cone::ref spawned[cones];
+    std::vector<cone::ref> spawned(cones);
     return run<cones>(msg,
         [&](unsigned i) {
             spawned[i] = [&]() {

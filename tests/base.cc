@@ -4,6 +4,7 @@
 #include "../cone.hh"
 #include <stdio.h>
 #include <stdlib.h>
+#include <vector>
 
 using namespace std::literals::chrono_literals;
 
@@ -11,7 +12,7 @@ using namespace std::literals::chrono_literals;
 
 template <size_t N, typename T = cone::ref, typename F>
 static inline bool spawn_and_wait(F&& f) {
-    T cs[N];
+    std::vector<T> cs(N);
     for (auto& c : cs)
         c = std::forward<F>(f);
     for (auto& c : cs)
