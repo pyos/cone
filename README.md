@@ -65,6 +65,10 @@ Some options (`CFLAGS="... -DOPTION=VALUE"`):
     the library (for performance, simplicity, and also because that makes both the
     storage and the futex word movable since their addresses aren't used as keys).
 
+    (Note that the locks are kind of bad, though. My advice is to only use events
+    in non performance critical or low contention places. Or even better, don't
+    share events between threads.)
+
   * **Thread-safety**: `cone_drop` is atomic. The coroutine will be freed
     either by the calling thread, or by the thread to which it is pinned. `cone_cowait`,
     aka `cone_join`, is implemented in terms of `cone_event` and therefore allows
