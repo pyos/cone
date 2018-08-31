@@ -549,10 +549,21 @@ const cone_atom * cone_count(void) {
     return cone ? &cone->loop->active : NULL;
 }
 
-int cone_loop(size_t size, struct cone_closure body) {
-    struct cone_loop loop = {};
-    struct cone *c = cone_spawn_on(&loop, size, body);
-    return c == NULL || cone_loop_run(&loop) || cone_join(c, 0) MUN_RETHROW;
+static int cone_fork(struct cone_loop *loop) {
+    mun_cant_fail(cone_loop_run(loop) MUN_RETHROW);
+    return free(loop), 0;
+}
+
+struct cone *cone_loop(size_t size, struct cone_closure body, int (*run)(struct cone_closure)) {
+    struct cone_loop *loop = calloc(sizeof(struct cone_loop), 1);
+    if (loop == NULL MUN_RETHROW_OS)
+        return NULL;
+    struct cone *c = cone_spawn_on(loop, size, body);
+    if (c == NULL MUN_RETHROW)
+        return free(loop), NULL;
+    if (run(cone_bind(&cone_fork, loop)) MUN_RETHROW)
+        return free(loop), free(c), NULL;
+    return c;
 }
 
 static int cone_main_run(struct cone_loop *loop) {

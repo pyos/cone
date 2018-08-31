@@ -73,23 +73,14 @@ struct cone {
         return cone_count();
     }
 
-    // Start an event loop on a separate thread.
-    template <typename F /* = bool() */, typename G = std::remove_reference_t<F>>
-    static std::thread thread(F&& f, size_t stack = 100UL * 1024) {
-        return std::thread{[f = std::make_unique<G>(std::forward<F>(f)), stack]() mutable {
-            mun_cant_fail(cone_loop(stack, cone_bind(&invoke<G>, f.release())) MUN_RETHROW);
-        }};
-    }
-
     struct ref {
         ref() noexcept {}
 
         template <typename F /* = bool() */, typename G = std::remove_reference_t<F>>
-        ref(F&& f, size_t stack = 100UL * 1024) noexcept
+        ref(F&& f, size_t stack = 100UL * 1024) noexcept {
             // XXX if F is trivially copyable and fits into one `void*`, we can pass it by value.
-            : r_(cone_spawn(stack, cone_bind(&invoke<G>, new G(std::forward<F>(f)))), cone_drop)
-        {
-            mun_cant_fail(!r_.get() MUN_RETHROW);
+            r_.reset(cone_spawn(stack, cone_bind(&invoke<G>, new G(std::forward<F>(f)))));
+            mun_cant_fail(!r_ MUN_RETHROW);
         }
 
         operator cone*() const noexcept {
@@ -104,8 +95,20 @@ struct cone {
             return r_.get();
         }
 
-    private:
+    protected:
         std::unique_ptr<cone, void (*)(cone*) noexcept> r_{nullptr, cone_drop};
+    };
+
+    struct thread : ref {
+        thread() noexcept {}
+
+        template <typename F /* = bool() */, typename G = std::remove_reference_t<F>>
+        thread(F&& f, size_t stack = 100UL * 1024) noexcept {
+            r_.reset(cone_loop(stack, cone_bind(&invoke<G>, new G(std::forward<F>(f))), [](cone_closure c) {
+                return std::thread{[=](){ mun_cant_fail(c.code(c.data) MUN_RETHROW); }}.detach(), 0;
+            }));
+            mun_cant_fail(!r_ MUN_RETHROW);
+        }
     };
 
     using atom = cone_atom;

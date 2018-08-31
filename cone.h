@@ -41,6 +41,11 @@ struct cone *cone_spawn(size_t stack, struct cone_closure) mun_throws(memory);
 
 #define cone(f, arg) cone_spawn(CONE_DEFAULT_STACK, cone_bind(f, arg))
 
+// Like `cone_spawn`, but also creates a new event loop and passes to the provided function
+// a callback that runs it to completion. The loop terminates when all coroutines on it
+// finish. (The function can, for example, create a new detached thread.)
+struct cone *cone_loop(size_t stack, struct cone_closure, int (*run)(struct cone_closure)) mun_throws(memory);
+
 // Drop the reference to a coroutine returned by `cone_spawn`. No-op if the pointer is NULL.
 void cone_drop(struct cone *);
 
@@ -97,11 +102,6 @@ int cone_deadline(struct cone *, mun_usec) mun_throws(memory);
 
 // Undo *one* previous call to `cone_deadline` with the same arguments.
 void cone_complete(struct cone *, mun_usec);
-
-// Create a coroutine on a new event loop, then block until all coroutines on it complete.
-// Note that `main()` is already running within an event loop; this is only useful in
-// newly created threads (or if you don't want to `cone_join` everything `main` spawns).
-int cone_loop(size_t stack, struct cone_closure) mun_throws(memory);
 
 // Return the live counter of coroutines active in the running coroutine's event loop.
 const cone_atom * cone_count(void);

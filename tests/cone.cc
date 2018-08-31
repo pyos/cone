@@ -259,44 +259,33 @@ static bool test_io_starvation(char *) {
 
 static bool test_thread(char *) {
     int v = 0;
-    cone::thread([&]() { return cone::ref{[&]() { return v++, true; }}->wait(); }).join();
-    return ASSERT(v == 1, "%d != 1", v);
+    return cone::thread([&]() { return cone::sleep_for(100ms) && cone::ref{[&]() { return ++v; }}->wait(); })->wait()
+        && ASSERT(v == 1, "%d != 1", v);
 }
 
-static bool test_mt_event(char *) {
-    cone::atom a{0};
-    cone::event ev;
-    auto t = cone::thread([&]() {
-        if (!cone::sleep_for(100ms))
+template <size_t N, typename T = cone::ref, typename F>
+static bool spawn_and_wait(F&& f) {
+    T cs[N];
+    for (auto& c : cs)
+        c = std::forward<F>(f);
+    for (auto& c : cs)
+        if (!c->wait())
             return false;
-        a = 1;
-        ev.wake();
-        return true;
-    });
-    return ev.wait(a, 0) && (t.join(), true);
+    return true;
 }
 
 static bool test_mt_mutex(char *) {
     size_t r = 0;
     cone::mutex m;
-    std::thread ts[4] = {};
-    for (auto& t : ts) {
-        t = cone::thread([&]() {
-            for (size_t i = 0; i < 100; i++) {
-                cone::ref{[&]() {
-                    for (size_t j = 0; j < 10000; j++) if (cone::mutex::guard g{m})
-                        r++;
-                    else
-                        return false;
-                    return true;
-                }};
-            }
+    return spawn_and_wait<4, cone::thread>([&]() {
+        return spawn_and_wait<100>([&]() {
+            for (size_t j = 0; j < 10000; j++) if (cone::mutex::guard g{m})
+                r++;
+            else
+                return false;
             return true;
         });
-    }
-    for (auto& t : ts)
-        t.join();
-    return ASSERT(r == 4 * 100 * 10000, "%zu != %d", r, 4 * 100 * 10000);
+    }) && ASSERT(r == 4 * 100 * 10000, "%zu != %d", r, 4 * 100 * 10000);
 }
 
 export { "cone:yield", &test_yield }
@@ -323,5 +312,4 @@ export { "cone:yield", &test_yield }
      , { "cone:reader + writer on one fd", &test_concurrent_rw }
      , { "cone:io starvation", &test_io_starvation }
      , { "cone:thread", &test_thread }
-     , { "cone:thread waiting for another", &test_mt_event }
      , { "cone:threads and a mutex", &test_mt_mutex }
