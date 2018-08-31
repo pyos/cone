@@ -189,6 +189,9 @@ static void cone_event_io_call(struct cone_event_io *set, struct cone_event_fd *
 }
 
 static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
+    if (timeout == 0 && atomic_exchange(&set->pinged, 1))
+        // No need to interrupt an instant call; leave one more slot for useful events.
+        read(set->selfpipe[0], (char[4]){}, 4);
     if (timeout > 60000000ll)
         timeout = 60000000ll;
     #if CONE_EVNOTIFIER == 1
@@ -196,19 +199,12 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
         int got = epoll_wait(set->poller, evs, 64, timeout / 1000ul);
         if (got < 0)
             return errno != EINTR MUN_RETHROW_OS;
-        for (int i = 0; i < got; i++)
-            for (struct cone_event_fd *st = evs[i].data.ptr, *e = st; e && e->fd == st->fd; e = e->link)
-                if (evs[i].events & ((e->write ? EPOLLOUT : EPOLLIN|EPOLLRDHUP)|EPOLLERR|EPOLLHUP))
-                    cone_event_io_call(set, e);
     #elif CONE_EVNOTIFIER == 2
         struct kevent evs[64];
         struct timespec ns = {timeout / 1000000ull, timeout % 1000000ull * 1000};
         int got = kevent(set->poller, NULL, 0, evs, 64, &ns);
         if (got < 0)
             return errno != EINTR MUN_RETHROW_OS;
-        for (int i = 0; i < got; i++)
-            if (evs[i].udata)
-                cone_event_io_call(set, evs[i].udata);
     #else
         fd_set fds[2] = {};
         FD_SET(set->selfpipe[0], &fds[0]);
@@ -223,15 +219,26 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
         struct timeval us = {timeout / 1000000ull, timeout % 1000000ull};
         if (select(max_fd, &fds[0], &fds[1], NULL, &us) < 0)
             return errno != EINTR MUN_RETHROW_OS;
+    #endif
+    // Leave the state at 1 so that pings have no effect while the loop is still checking
+    // the run queue. (The paired store of 0 is in `cone_loop_run`.)
+    if (timeout != 0 && atomic_exchange(&set->pinged, 1))
+        read(set->selfpipe[0], (char[4]){}, 4);
+    #if CONE_EVNOTIFIER == 1
+        for (int i = 0; i < got; i++)
+            for (struct cone_event_fd *st = evs[i].data.ptr, *e = st; e && e->fd == st->fd; e = e->link)
+                if (evs[i].events & ((e->write ? EPOLLOUT : EPOLLIN|EPOLLRDHUP)|EPOLLERR|EPOLLHUP))
+                    cone_event_io_call(set, e);
+    #elif CONE_EVNOTIFIER == 2
+        for (int i = 0; i < got; i++)
+            if (evs[i].udata)
+                cone_event_io_call(set, evs[i].udata);
+    #else
         for (size_t i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++)
             for (struct cone_event_fd *e = set->fds[i]; e; e = e->link)
                 if (FD_ISSET(e->fd, &fds[!!e->write]))
                     cone_event_io_call(set, e);
     #endif
-    if (atomic_load_explicit(&set->pinged, memory_order_acquire)) {
-        read(set->selfpipe[0], (char[4]){}, 4);
-        atomic_store_explicit(&set->pinged, 0, memory_order_release);
-    }
     return 0;
 }
 
@@ -292,6 +299,10 @@ static int cone_loop_run(struct cone_loop *loop) {
         mun_usec next = cone_event_schedule_emit(&loop->at);
         if (next == MUN_USEC_MAX && !atomic_load_explicit(&loop->active, memory_order_acquire))
             break;
+        // So much for separation of concerns. This has to be done before checking the queue
+        // to avoid leaving a window where adding an item and pinging will not force zero
+        // timeout. (The paired store of 1 is in `cone_event_io_emit`.)
+        atomic_store_explicit(&loop->io.pinged, 0, memory_order_release);
         if (next > 0 && cone_runq_next(&loop->now, 0))
             next = 0;
         // If this fails, coroutines will get leaked.
@@ -513,8 +524,13 @@ void cone_wake(struct cone_event *ev, size_t n) {
         // lock, else one or both may get deallocated between `cone_spin_unlock` and `cone_schedule`:
         struct cone_loop *loop = cone_schedule(it->c, CONE_FLAG_WOKEN);
         if (loop) {
+            int should_continue = n && ev->head;
             cone_spin_unlock(&ev->lk);
             cone_event_io_ping(&loop->io);
+            if (!should_continue)
+                // Another item might have been added already, but we don't care,
+                // we pretend to see the old state.
+                return;
             cone_spin_lock(&ev->lk);
         }
     }
