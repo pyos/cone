@@ -432,20 +432,14 @@ void cone_cancel(struct cone *c) {
         cone_event_io_ping(&loop->io);
 }
 
-static int cone_ensure_running(struct cone *c) {
+static int cone_deschedule(struct cone *c) {
+    // Don't even yield if cancelled by another thread while registering the wakeup callback.
+    for (unsigned flags = c->flags; !(flags & (CONE_FLAG_CANCELLED | CONE_FLAG_TIMED_OUT | CONE_FLAG_WOKEN));)
+        if (atomic_compare_exchange_weak(&c->flags, &flags, flags & ~CONE_FLAG_SCHEDULED))
+            cone_switch(c);
     int state = atomic_fetch_and(&c->flags, ~CONE_FLAG_CANCELLED & ~CONE_FLAG_TIMED_OUT & ~CONE_FLAG_WOKEN);
     return state & CONE_FLAG_CANCELLED ? mun_error(cancelled, "blocking call aborted")
          : state & CONE_FLAG_TIMED_OUT ? mun_error(timeout, "blocking call timed out") : 0;
-}
-
-static int cone_deschedule(struct cone *c) {
-    unsigned flags = c->flags;
-    do if (flags & (CONE_FLAG_CANCELLED | CONE_FLAG_TIMED_OUT | CONE_FLAG_WOKEN))
-        // Don't even yield if cancelled by another thread while registering the wakeup callback.
-        return cone_ensure_running(c);
-    while (!atomic_compare_exchange_weak(&c->flags, &flags, flags & ~CONE_FLAG_SCHEDULED));
-    cone_switch(c);
-    return cone_ensure_running(c);
 }
 
 struct cone_event_it {
@@ -463,15 +457,12 @@ static inline void cone_unlock(void **a) {
 }
 
 int cone_wait(struct cone_event *ev, const cone_atom *uptr, unsigned u) {
-    struct cone_event_it it = { NULL, NULL, cone };
-    if (cone_ensure_running(cone) MUN_RETHROW)
-        return -1;
+    // XXX is it faster to check for cancellation before locking or not?
     cone_lock(&ev->lk);
     if (*uptr != u)
         return cone_unlock(&ev->lk), mun_error(retry, "compare-and-sleep precondition failed");
-    it.next = NULL;
-    it.prev = ev->tail;
-    it.prev ? (it.prev->next = &it) : (ev->head = &it);
+    struct cone_event_it it = { NULL, ev->tail, cone };
+    ev->tail ? (it.prev->next = &it) : (ev->head = &it);
     ev->tail = &it;
     cone_unlock(&ev->lk);
     if (cone_deschedule(cone) MUN_RETHROW) {
