@@ -150,7 +150,7 @@ struct cone {
         }
 
         bool lock() noexcept {
-            while (!e_.wait_if_not([this]() { return try_lock(); }))
+            if (!try_lock()) while (!e_.wait_if_not([this]() { return try_lock(); }))
                 if (mun_errno != EAGAIN) // could still be us who got woken by unlock() though
                     return !v_.load(std::memory_order_acquire) && (e_.wake(1), false);
             return true;
