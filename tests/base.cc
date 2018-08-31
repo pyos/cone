@@ -5,6 +5,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+using namespace std::literals::chrono_literals;
+
+#define ASSERT(x, ...) ((x) || !mun_error(assert, __VA_ARGS__))
+
+template <size_t N, typename T = cone::ref, typename F>
+static inline bool spawn_and_wait(F&& f) {
+    T cs[N];
+    for (auto& c : cs)
+        c = std::forward<F>(f);
+    for (auto& c : cs)
+        if (!c->wait())
+            return false;
+    return true;
+}
+
 #define export struct { const char *name; bool (*impl)(char *); } __tests[] = {
 #define __s1(x) #x
 #define __s2(x) __s1(x)

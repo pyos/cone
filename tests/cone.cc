@@ -1,10 +1,6 @@
 #include <unistd.h>
 #include <sys/socket.h>
 
-using namespace std::literals::chrono_literals;
-
-#define ASSERT(x, ...) ((x) || !mun_error(assert, __VA_ARGS__))
-
 static bool test_yield(char *) {
     int v = 0;
     cone::ref _ = [&]() { return (v++, true); };
@@ -261,17 +257,6 @@ static bool test_thread(char *) {
     int v = 0;
     return cone::thread([&]() { return cone::sleep_for(100ms) && cone::ref{[&]() { return ++v; }}->wait(); })->wait()
         && ASSERT(v == 1, "%d != 1", v);
-}
-
-template <size_t N, typename T = cone::ref, typename F>
-static bool spawn_and_wait(F&& f) {
-    T cs[N];
-    for (auto& c : cs)
-        c = std::forward<F>(f);
-    for (auto& c : cs)
-        if (!c->wait())
-            return false;
-    return true;
 }
 
 static bool test_mt_mutex(char *) {
