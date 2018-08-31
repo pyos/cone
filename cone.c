@@ -447,13 +447,29 @@ struct cone_event_it {
     struct cone *c;
 };
 
-static inline void cone_spin_lock(void **a) {
-    while (atomic_exchange((volatile _Atomic(uintptr_t) *)a, 1))
-        sched_yield();
+static _Thread_local struct cone_mcs_lock {
+    volatile _Atomic(struct cone_mcs_lock *) next;
+    volatile _Atomic(char) locked;
+} lki;
+
+static inline void cone_spin_lock(void **h) {
+    struct cone_mcs_lock *p = atomic_exchange((volatile _Atomic(void *) *)h, &lki);
+    if (!p)
+        return;
+    atomic_store_explicit(&lki.locked, 1, memory_order_relaxed);
+    atomic_store_explicit(&p->next, &lki, memory_order_release);
+    while (atomic_load_explicit(&lki.locked, memory_order_acquire))
+        __asm__ __volatile__("pause");
 }
 
-static inline void cone_spin_unlock(void **a) {
-    atomic_store_explicit((volatile _Atomic(uintptr_t) *)a, 0, memory_order_release);
+static inline void cone_spin_unlock(void **h) {
+    if (atomic_compare_exchange_strong((volatile _Atomic(void *) *)h, &(void *){&lki}, NULL))
+        return;
+    struct cone_mcs_lock *n;
+    while (!(n = atomic_load_explicit(&lki.next, memory_order_acquire)))
+        __asm__ __volatile__("pause");
+    atomic_store_explicit(&n->locked, 0, memory_order_release);
+    atomic_store_explicit(&lki.next, NULL, memory_order_relaxed);
 }
 
 int cone_wait_nocheck(struct cone_event *ev) {
