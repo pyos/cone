@@ -447,12 +447,12 @@ struct cone_event_it {
     struct cone *c;
 };
 
-static inline void cone_lock(void **a) {
+static inline void cone_spin_lock(void **a) {
     while (atomic_exchange((volatile _Atomic(uintptr_t) *)a, 1))
         sched_yield();
 }
 
-static inline void cone_unlock(void **a) {
+static inline void cone_spin_unlock(void **a) {
     atomic_store_explicit((volatile _Atomic(uintptr_t) *)a, 0, memory_order_release);
 }
 
@@ -460,12 +460,12 @@ int cone_wait_nocheck(struct cone_event *ev) {
     struct cone_event_it it = { NULL, ev->tail, cone };
     ev->tail ? (it.prev->next = &it) : (ev->head = &it);
     ev->tail = &it;
-    cone_unlock(&ev->lk);
+    cone_spin_unlock(&ev->lk);
     if (cone_deschedule(cone) MUN_RETHROW) {
-        cone_lock(&ev->lk);
+        cone_spin_lock(&ev->lk);
         it.prev ? (it.prev->next = it.next) : (ev->head = it.next);
         it.next ? (it.next->prev = it.prev) : (ev->tail = it.prev);
-        cone_unlock(&ev->lk);
+        cone_spin_unlock(&ev->lk);
         return -1;
     }
     return 0;
@@ -473,22 +473,22 @@ int cone_wait_nocheck(struct cone_event *ev) {
 
 int cone_wait(struct cone_event *ev, const cone_atom *a, unsigned expect) {
     // XXX is it faster to check for cancellation before locking or not?
-    cone_lock(&ev->lk);
+    cone_spin_lock(&ev->lk);
     if (*a != expect)
-        return cone_unlock(&ev->lk), mun_error(retry, "compare-and-sleep precondition failed");
+        return cone_spin_unlock(&ev->lk), mun_error(retry, "compare-and-sleep precondition failed");
     return cone_wait_nocheck(ev);
 }
 
 int cone_cas(struct cone_event *ev, cone_atom *a, unsigned expect, unsigned write) {
-    cone_lock(&ev->lk);
+    cone_spin_lock(&ev->lk);
     if (atomic_compare_exchange_strong(a, &expect, write))
-        return cone_unlock(&ev->lk), 0;
+        return cone_spin_unlock(&ev->lk), 0;
     return cone_wait_nocheck(ev) ? -1 : mun_error(retry, "compare-and-swap precondition failed");
 }
 
 void cone_wake(struct cone_event *ev, size_t n) {
     // XXX check if nobody is waiting and don't even lock? (that's what FUTEX_WAKE does, dunno if it helps)
-    cone_lock(&ev->lk);
+    cone_spin_lock(&ev->lk);
     for (struct cone_event_it *it; n-- && (it = ev->head);) {
         ev->head = it->next;
         it->next ? (it->next->prev = it->prev) : (ev->tail = it->prev);
@@ -496,15 +496,15 @@ void cone_wake(struct cone_event *ev, size_t n) {
         // the item needs to be linked to itself so that removing it a second time is a no-op:
         it->next = it->prev = it;
         // 2. dereferencing the item *and* the coroutine must be done before releasing the
-        // lock, else one or both may get deallocated between `cone_unlock` and `cone_schedule`:
+        // lock, else one or both may get deallocated between `cone_spin_unlock` and `cone_schedule`:
         struct cone_loop *loop = cone_schedule(it->c, CONE_FLAG_WOKEN);
         if (loop) {
-            cone_unlock(&ev->lk);
+            cone_spin_unlock(&ev->lk);
             cone_event_io_ping(&loop->io);
-            cone_lock(&ev->lk);
+            cone_spin_lock(&ev->lk);
         }
     }
-    cone_unlock(&ev->lk);
+    cone_spin_unlock(&ev->lk);
 }
 
 int cone_iowait(int fd, int write) {
