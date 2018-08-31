@@ -132,6 +132,10 @@ struct cone {
             return !cone_wait(&e_, &atom, expect);
         }
 
+        bool cas(atom& atom, unsigned expect, unsigned write) noexcept {
+            return !cone_cas(&e_, &atom, expect, write);
+        }
+
         void wake(size_t n = std::numeric_limits<size_t>::max()) noexcept {
             cone_wake(&e_, n);
         }
@@ -146,8 +150,8 @@ struct cone {
         }
 
         bool lock() noexcept {
-            while (!try_lock())
-                if (!e_.wait(v_, 1) && mun_errno != EAGAIN) // could be us who got woken by unlock() though
+            while (!e_.cas(v_, 0, 1))
+                if (mun_errno != EAGAIN) // could still be us who got woken by unlock() though
                     return v_.load(std::memory_order_acquire) == 0 && (e_.wake(1), false);
             return true;
         }

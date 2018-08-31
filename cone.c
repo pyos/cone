@@ -456,11 +456,7 @@ static inline void cone_unlock(void **a) {
     atomic_store_explicit((volatile _Atomic(uintptr_t) *)a, 0, memory_order_release);
 }
 
-int cone_wait(struct cone_event *ev, const cone_atom *uptr, unsigned u) {
-    // XXX is it faster to check for cancellation before locking or not?
-    cone_lock(&ev->lk);
-    if (*uptr != u)
-        return cone_unlock(&ev->lk), mun_error(retry, "compare-and-sleep precondition failed");
+int cone_wait_nocheck(struct cone_event *ev) {
     struct cone_event_it it = { NULL, ev->tail, cone };
     ev->tail ? (it.prev->next = &it) : (ev->head = &it);
     ev->tail = &it;
@@ -473,6 +469,21 @@ int cone_wait(struct cone_event *ev, const cone_atom *uptr, unsigned u) {
         return -1;
     }
     return 0;
+}
+
+int cone_wait(struct cone_event *ev, const cone_atom *a, unsigned expect) {
+    // XXX is it faster to check for cancellation before locking or not?
+    cone_lock(&ev->lk);
+    if (*a != expect)
+        return cone_unlock(&ev->lk), mun_error(retry, "compare-and-sleep precondition failed");
+    return cone_wait_nocheck(ev);
+}
+
+int cone_cas(struct cone_event *ev, cone_atom *a, unsigned expect, unsigned write) {
+    cone_lock(&ev->lk);
+    if (atomic_compare_exchange_strong(a, &expect, write))
+        return cone_unlock(&ev->lk), 0;
+    return cone_wait_nocheck(ev) ? -1 : mun_error(retry, "compare-and-swap precondition failed");
 }
 
 void cone_wake(struct cone_event *ev, size_t n) {

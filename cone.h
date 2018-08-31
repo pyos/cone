@@ -82,10 +82,15 @@ static inline int cone_sleep(mun_usec t) mun_throws(cancelled, timeout, memory) 
 // it returns. (`cone_sleep` may or may not poll for I/O).
 int cone_yield(void) mun_throws(cancelled, timeout);
 
-// If the value at the address is the same as the one passed as an argument, sleep until
-// `cone_wake` is called with the same event. If not, return EAGAIN. This behavior
-// is intended to replicate the futex API (specifically, FUTEX_WAIT and FUTEX_WAKE).
-int cone_wait(struct cone_event *, const cone_atom *, unsigned) mun_throws(cancelled, timeout, retry);
+// If the value at the address is the same as the expected one, sleep until
+// `cone_wake` is called on the same event. If not, fail with EAGAIN. This operation is
+// atomic and totally ordered w.r.t. other operations on the event and the atom.
+int cone_wait(struct cone_event *, const cone_atom *, unsigned expect) mun_throws(cancelled, timeout, retry);
+
+// If the value at the address is the same as the expected one, replace it with another.
+// Otherwise, sleep until `cone_wake` is called on the same event, then fail with
+// EAGAIN. This operation has same atomicity and ordering as `cone_wait`.
+int cone_cas(struct cone_event *, cone_atom *, unsigned expect, unsigned write) mun_throws(cancelled, timeout, retry);
 
 // Wake up at most N coroutines paused with `cone_wait`.
 void cone_wake(struct cone_event *, size_t);
