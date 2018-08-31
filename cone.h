@@ -10,12 +10,6 @@
 extern "C" {
 #endif
 
-#if __cplusplus
-typedef std::atomic<unsigned> cone_atom;
-#else
-typedef volatile _Atomic(unsigned) cone_atom;
-#endif
-
 struct cone_closure {
     int (*code)(void*);
     void *data;
@@ -29,10 +23,6 @@ extern thread_local struct cone *cone;
 #else
 extern _Thread_local struct cone *cone;
 #endif
-
-// A manually triggered event. Zero-initialized; no finalizer; trivially movable;
-// must not be destroyed if there are callbacks attached.
-struct cone_event { void *head, *tail, *lk; };
 
 // Create a new coroutine that runs a given function with a single pointer argument.
 // The memory will be freed when the coroutine finishes and the returned reference is
@@ -82,15 +72,26 @@ static inline int cone_sleep(mun_usec t) mun_throws(cancelled, timeout, memory) 
 // it returns. (`cone_sleep` may or may not poll for I/O).
 int cone_yield(void) mun_throws(cancelled, timeout);
 
-// If the value at the address is the same as the expected one, sleep until
-// `cone_wake` is called on the same event. If not, fail with EAGAIN. This operation is
-// atomic and totally ordered w.r.t. other operations on the event and the atom.
-int cone_wait(struct cone_event *, const cone_atom *, unsigned expect) mun_throws(cancelled, timeout, retry);
+// A manually triggered event. Zero-initialized; no finalizer; trivially movable.
+struct cone_event { void *head, *tail, *lk; };
 
-// If the value at the address is the same as the expected one, replace it with another.
-// Otherwise, sleep until `cone_wake` is called on the same event, then fail with
-// EAGAIN. This operation has same atomicity and ordering as `cone_wait`.
-int cone_cas(struct cone_event *, cone_atom *, unsigned expect, unsigned write) mun_throws(cancelled, timeout, retry);
+// Prepare to wait for an event. MUST be followed by `cone_evfinish` without yielding
+// or calling `cone_evprepare` on another event!
+void cone_evprepare(struct cone_event *ev);
+
+// If `success` is the same as `sleep_if`, wait for `cone_wake`. Otherwise, undo `cone_evprepare`.
+// If `success` is 0, instead of returning normally, fail with EAGAIN. Everything between `cone_evprepare`
+// and `cone_evfinish` is atomic and totally ordered w.r.t. other pairs of calls and `cone_wake`.
+int cone_evfinish(struct cone_event *ev, int success, int sleep_if) mun_throws(cancelled, timeout, retry);
+
+// If the second argument evaluates to true, wait for `cone_wake`. Otherwise, fail with EAGAIN.
+#define cone_wait_if(ev, x) (cone_evprepare(ev), cone_evfinish(ev, !!(x), 1))
+
+// If the second argument evaluates to false, wait for `cone_wake` and then fail with EAGAIN.
+#define cone_wait_if_not(ev, x) (cone_evprepare(ev), cone_evfinish(ev, x, 0))
+
+// Compatibility alias: sleep on `*x == y`, else fail with EAGAIN.
+#define cone_wait(ev, x, y) cone_wait_if(ev, *(x) == y)
 
 // Wake up at most N coroutines paused with `cone_wait`.
 void cone_wake(struct cone_event *, size_t);
@@ -109,7 +110,11 @@ int cone_deadline(struct cone *, mun_usec) mun_throws(memory);
 void cone_complete(struct cone *, mun_usec);
 
 // Return the live counter of coroutines active in the running coroutine's event loop.
-const cone_atom * cone_count(void);
+#if __cplusplus
+const std::atomic<unsigned> *cone_count(void);
+#else
+const volatile _Atomic(unsigned) *cone_count(void);
+#endif
 
 #if __cplusplus
 } // extern "C"

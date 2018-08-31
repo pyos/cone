@@ -103,7 +103,7 @@ struct cone_event_fd {
 struct cone_event_io {
     int poller;
     int selfpipe[2];
-    cone_atom pinged;
+    volatile _Atomic(char) pinged;
     #if CONE_EVNOTIFIER != 2
         struct cone_event_fd *fds[127];
     #endif
@@ -276,7 +276,7 @@ static struct cone *cone_runq_next(struct cone_runq *rq, int pop) {
 }
 
 struct cone_loop {
-    cone_atom active;
+    volatile _Atomic(unsigned) active;
     struct cone_runq now;
     struct cone_event_io io;
     struct cone_event_schedule at;
@@ -304,7 +304,7 @@ static int cone_loop_run(struct cone_loop *loop) {
 
 struct cone {
     struct cone_runq_it runq;
-    cone_atom flags;
+    volatile _Atomic(unsigned) flags;
     void **rsp;
     struct cone_loop *loop;
     struct cone_closure body;
@@ -476,34 +476,28 @@ static inline void cone_spin_unlock(void **h) {
     atomic_store_explicit(&lki.next, NULL, memory_order_relaxed);
 }
 
-int cone_wait_nocheck(struct cone_event *ev) {
-    struct cone_event_it it = { NULL, ev->tail, cone };
-    ev->tail ? (it.prev->next = &it) : (ev->head = &it);
-    ev->tail = &it;
-    cone_spin_unlock(&ev->lk);
-    if (cone_deschedule(cone) MUN_RETHROW) {
-        cone_spin_lock(&ev->lk);
-        it.prev ? (it.prev->next = it.next) : (ev->head = it.next);
-        it.next ? (it.next->prev = it.prev) : (ev->tail = it.prev);
-        cone_spin_unlock(&ev->lk);
-        return -1;
-    }
-    return 0;
-}
-
-int cone_wait(struct cone_event *ev, const cone_atom *a, unsigned expect) {
+void cone_evprepare(struct cone_event *ev) {
     // XXX is it faster to check for cancellation before locking or not?
     cone_spin_lock(&ev->lk);
-    if (*a != expect)
-        return cone_spin_unlock(&ev->lk), mun_error(retry, "compare-and-sleep precondition failed");
-    return cone_wait_nocheck(ev);
 }
 
-int cone_cas(struct cone_event *ev, cone_atom *a, unsigned expect, unsigned write) {
-    cone_spin_lock(&ev->lk);
-    if (atomic_compare_exchange_strong(a, &expect, write))
-        return cone_spin_unlock(&ev->lk), 0;
-    return cone_wait_nocheck(ev) ? -1 : mun_error(retry, "compare-and-swap precondition failed");
+int cone_evfinish(struct cone_event *ev, int success, int sleep_if) {
+    if (sleep_if == success) {
+        struct cone_event_it it = { NULL, ev->tail, cone };
+        ev->tail ? (it.prev->next = &it) : (ev->head = &it);
+        ev->tail = &it;
+        cone_spin_unlock(&ev->lk);
+        if (cone_deschedule(cone) MUN_RETHROW) {
+            cone_spin_lock(&ev->lk);
+            it.prev ? (it.prev->next = it.next) : (ev->head = it.next);
+            it.next ? (it.next->prev = it.prev) : (ev->tail = it.prev);
+            cone_spin_unlock(&ev->lk);
+            return -1;
+        }
+    } else {
+        cone_spin_unlock(&ev->lk);
+    }
+    return success ? 0 : mun_error(retry, "precondition failed");
 }
 
 void cone_wake(struct cone_event *ev, size_t n) {
@@ -567,7 +561,7 @@ void cone_complete(struct cone *c, mun_usec t) {
     cone_event_schedule_del(&c->loop->at, t, c, 1);
 }
 
-const cone_atom * cone_count(void) {
+const volatile _Atomic(unsigned) * cone_count(void) {
     return cone ? &cone->loop->active : NULL;
 }
 

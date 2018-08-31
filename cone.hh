@@ -111,8 +111,6 @@ struct cone {
         }
     };
 
-    using atom = cone_atom;
-
     struct event {
         event() noexcept {}
 
@@ -125,15 +123,17 @@ struct cone {
         }
 
         bool wait() noexcept {
-            return wait(atom{0}, 0);
+            return !cone_wait_if(&e_, 1);
         }
 
-        bool wait(const atom& atom, unsigned expect) noexcept {
-            return !cone_wait(&e_, &atom, expect);
+        template <typename F /* = bool() noexcept */>
+        bool wait_if(F&& f) noexcept {
+            return !cone_wait_if(&e_, f());
         }
 
-        bool cas(atom& atom, unsigned expect, unsigned write) noexcept {
-            return !cone_cas(&e_, &atom, expect, write);
+        template <typename F /* = bool() noexcept */>
+        bool wait_if_not(F&& f) noexcept {
+            return !cone_wait_if_not(&e_, f());
         }
 
         void wake(size_t n = std::numeric_limits<size_t>::max()) noexcept {
@@ -146,18 +146,18 @@ struct cone {
 
     struct mutex {
         bool try_lock() noexcept {
-            return v_.exchange(1) == 0;
+            return !v_.exchange(true);
         }
 
         bool lock() noexcept {
-            while (!e_.cas(v_, 0, 1))
+            while (!e_.wait_if_not([this]() { return try_lock(); }))
                 if (mun_errno != EAGAIN) // could still be us who got woken by unlock() though
-                    return v_.load(std::memory_order_acquire) == 0 && (e_.wake(1), false);
+                    return !v_.load(std::memory_order_acquire) && (e_.wake(1), false);
             return true;
         }
 
         void unlock() noexcept {
-            v_.store(0, std::memory_order_release);
+            v_.store(false, std::memory_order_release);
             e_.wake(1);
         }
 
@@ -182,8 +182,8 @@ struct cone {
         };
 
     private:
-        atom v_{0};
         event e_;
+        std::atomic<bool> v_{false};
     };
 
 private:
