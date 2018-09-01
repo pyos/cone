@@ -444,9 +444,12 @@ void cone_cancel(struct cone *c) {
 
 static int cone_deschedule(struct cone *c) {
     // Don't even yield if cancelled by another thread while registering the wakeup callback.
-    for (unsigned flags = c->flags; !(flags & (CONE_FLAG_CANCELLED | CONE_FLAG_TIMED_OUT | CONE_FLAG_WOKEN));)
-        if (atomic_compare_exchange_weak(&c->flags, &flags, flags & ~CONE_FLAG_SCHEDULED))
+    for (unsigned flags = c->flags; !(flags & (CONE_FLAG_CANCELLED | CONE_FLAG_TIMED_OUT | CONE_FLAG_WOKEN));) {
+        if (atomic_compare_exchange_weak(&c->flags, &flags, flags & ~CONE_FLAG_SCHEDULED)) {
             cone_switch(c);
+            break;
+        }
+    }
     int state = atomic_fetch_and(&c->flags, ~CONE_FLAG_CANCELLED & ~CONE_FLAG_TIMED_OUT & ~CONE_FLAG_WOKEN);
     return state & CONE_FLAG_CANCELLED ? mun_error(cancelled, "blocking call aborted")
          : state & CONE_FLAG_TIMED_OUT ? mun_error(timeout, "blocking call timed out") : 0;
