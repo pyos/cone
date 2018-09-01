@@ -29,10 +29,9 @@ struct cone {
         // `cone_deadline` and `cone_complete`, but in RAII form. This object must not
         // outlive the `cone`. (Don't tell me to rewrite this in Rust.)
         deadline(cone *c, time t) noexcept
-            : c_(c)
-            , t_(t)
+            : r_(c, deleter{mun_usec_chrono(t)})
         {
-            mun_cant_fail(cone_deadline(c_, mun_usec_chrono(t_)) MUN_RETHROW);
+            mun_cant_fail(cone_deadline(c, mun_usec_chrono(t)) MUN_RETHROW);
         }
 
         // Same as above, but relative to now.
@@ -41,16 +40,16 @@ struct cone {
         {
         }
 
-        ~deadline() {
-            cone_complete(c_, mun_usec_chrono(t_));
-        }
-
-        deadline(const deadline&) = delete;
-        deadline& operator=(const deadline&) = delete;
-
     private:
-        cone *c_;
-        time t_;
+        struct deleter {
+            mun_usec t_;
+
+            void operator()(cone *c) noexcept {
+                cone_complete(c, t_);
+            }
+        };
+
+        std::unique_ptr<cone, deleter> r_;
     };
 
     // Wait until the next iteration of the event loop.
