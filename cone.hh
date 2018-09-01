@@ -149,20 +149,24 @@ struct cone {
         }
 
         bool lock() noexcept {
-            if (!try_lock()) while (!e_.wait_if_not([this]() { return try_lock(); }))
+            if (!try_lock()) while (!e_.wait_if_not([this]() { return try_lock(); })) {
                 if (mun_errno != EAGAIN) // could still be us who got woken by unlock() though
-                    return !v_.load(std::memory_order_acquire) && (e_.wake(1), false);
+                    return try_lock() && (unlock(), false);
+                for (unsigned n = n_; n > 1 && !n_.compare_exchange_weak(n, n / 2);) {}
+            }
             return true;
         }
 
         void unlock() noexcept {
             v_.store(false, std::memory_order_release);
-            // FIXME this works really bad if the critical section rarely yields: if many
-            //       coroutines are waiting on the lock, a simple `wake()` would make
-            //       the loop run them one after another. `wake(1)`, meanwhile, forces the
-            //       next cone to wait until the run queue is drained. On the other hand,
-            //       if the critical section yields, `wake()` creates a thundering herd...
-            e_.wake(1);
+            // `wake(1)` works really bad if the critical section rarely yields: if many
+            // coroutines are waiting on the lock, a simple `wake()` would make
+            // the loop run them one after another. `wake(1)`, meanwhile, forces the
+            // next cone to wait until the run queue is drained. On the other hand,
+            // if the critical section yields, `wake()` creates a thundering herd.
+            unsigned n = n_;
+            while (n < 2048 && !n_.compare_exchange_weak(n, n * 2)) {}
+            e_.wake(n);
         }
 
         struct guard {
@@ -188,6 +192,7 @@ struct cone {
     private:
         event e_;
         std::atomic<bool> v_{false};
+        std::atomic<unsigned> n_{32};
     };
 
 private:
