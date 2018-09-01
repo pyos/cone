@@ -184,9 +184,6 @@ static void cone_event_io_ping(struct cone_event_io *set) {
 }
 
 static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
-    if (timeout == 0 && atomic_exchange(&set->pinged, 1))
-        // No need to interrupt an instant call; leave one more slot for useful events.
-        read(set->selfpipe[0], (char[4]){}, 4);
     if (timeout > 60000000ll)
         timeout = 60000000ll;
     #if CONE_EVNOTIFIER == 1
@@ -293,12 +290,18 @@ static int cone_loop_run(struct cone_loop *loop) {
         mun_usec next = cone_event_schedule_emit(&loop->at);
         if (next == MUN_USEC_MAX && !atomic_load_explicit(&loop->active, memory_order_acquire))
             break;
-        // So much for separation of concerns. This has to be done before checking the queue
-        // to avoid leaving a window where adding an item and pinging will not force zero
-        // timeout. (The paired store of 1 is in `cone_event_io_emit`.)
-        atomic_store_explicit(&loop->io.pinged, 0, memory_order_release);
-        if (next > 0 && cone_runq_next(&loop->now, 0))
-            next = 0;
+        if (next > 0) {
+            // So much for separation of concerns. This has to be done before checking the queue
+            // to avoid leaving a window where adding an item and pinging will not force zero
+            // timeout. (The paired store of 1 is in `cone_event_io_emit`.)
+            atomic_store_explicit(&loop->io.pinged, 0, memory_order_release);
+            if (cone_runq_next(&loop->now, 0)) {
+                if (atomic_exchange(&loop->io.pinged, 1))
+                    // No need to interrupt an instant call; leave one more slot for useful events.
+                    read(loop->io.selfpipe[0], (char[4]){}, 4);
+                next = 0;
+            }
+        }
         // If this fails, coroutines will get leaked.
         mun_cant_fail(cone_event_io_emit(&loop->io, next) MUN_RETHROW);
     }
