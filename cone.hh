@@ -157,6 +157,11 @@ struct cone {
 
         void unlock() noexcept {
             v_.store(false, std::memory_order_release);
+            // FIXME this works really bad if the critical section rarely yields: if many
+            //       coroutines are waiting on the lock, a simple `wake()` would make
+            //       the loop run them one after another. `wake(1)`, meanwhile, forces the
+            //       next cone to wait until the run queue is drained. On the other hand,
+            //       if the critical section yields, `wake()` creates a thundering herd...
             e_.wake(1);
         }
 
