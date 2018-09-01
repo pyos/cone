@@ -246,7 +246,6 @@ struct cone_runq_it {
     volatile _Atomic(struct cone_runq_it *) next;
 };
 
-// http://www.1024cores.net/home/lock-free-algorithms/queues/intrusive-mpsc-node-based-queue
 struct cone_runq {
     volatile _Atomic(struct cone_runq_it *) head;
     struct cone_runq_it *tail;
@@ -257,6 +256,7 @@ static void cone_runq_add(struct cone_runq *rq, struct cone_runq_it *it, int ini
     if (init && rq->tail == NULL)
         atomic_store_explicit(&rq->head, rq->tail = &rq->stub, memory_order_relaxed);
     atomic_store_explicit(&it->next, NULL, memory_order_relaxed);
+    // *Almost* wait-free - blocking between xchg and store blocks the consumer too.
     atomic_store_explicit(&atomic_exchange(&rq->head, it)->next, it, memory_order_release);
 }
 
@@ -292,8 +292,7 @@ struct cone_loop {
 static int cone_loop_run(struct cone_loop *loop) {
     if (cone_event_io_init(&loop->io) MUN_RETHROW)
         return -1;
-    while (1) {
-        struct cone *c;
+    for (struct cone *c;;) {
         for (size_t limit = 256; limit-- && (c = cone_runq_next(&loop->now, 1));)
             cone_run(c);
         mun_usec next = cone_event_schedule_emit(&loop->at);
@@ -517,19 +516,23 @@ void cone_wake(struct cone_event *ev, size_t n) {
     for (struct cone_event_it *it; n-- && (it = ev->head);) {
         ev->head = it->next;
         it->next ? (it->next->prev = it->prev) : (ev->tail = it->prev);
-        // Note that the coroutine may still be concurrently cancelled. This means that 1.
-        // the item needs to be linked to itself so that removing it a second time is a no-op:
+        // The coroutine may still be concurrently cancelled. This means that
+        // 1. the item needs to be linked to itself so that removing it twice is a no-op:
         it->next = it->prev = it;
-        // 2. dereferencing the item *and* the coroutine must be done before releasing the
-        // lock, else one or both may get deallocated between `cone_spin_unlock` and `cone_schedule`:
+        // 2. dereferencing the item and the coroutine must be done before releasing the lock,
+        // else one or both may get deallocated between `cone_spin_unlock` and `cone_schedule`:
         struct cone_loop *loop = cone_schedule(it->c, CONE_FLAG_WOKEN);
         if (loop) {
             int should_continue = n && ev->head;
+            // This unlock introduces an anomaly in `cone_cancel`: if A and B are waiting
+            // on this event and they are cancelled in the same order while we're busy
+            // pinging a loop of some coroutine between them, it'll look like B was
+            // cancelled before `cone_wake`, while A was cancelled after.
             cone_spin_unlock(&ev->lk);
             cone_event_io_ping(&loop->io);
             if (!should_continue)
-                // Another item might have been added already, but we don't care,
-                // we pretend to see the old state.
+                // Another item might have been added already, but we don't care, we
+                // pretend to see the old state.
                 return;
             cone_spin_lock(&ev->lk);
         }
@@ -561,15 +564,18 @@ int cone_yield(void) {
 int cone_cowait(struct cone *c, int norethrow) {
     if (c == cone) // maybe detect more complicated deadlocks too?..
         return mun_error(deadlock, "coroutine waiting on itself");
-    for (unsigned f; !((f = c->flags) & CONE_FLAG_FINISHED); )
-        if (cone_wait(&c->done, &c->flags, f) && mun_errno != EAGAIN MUN_RETHROW)
+    // XXX `while (!c) if (wait_if !c)` or `if (!c) while (wait_if_not c)`?
+    while (!(c->flags & CONE_FLAG_FINISHED))
+        if (cone_wait_if(&c->done, !(c->flags & CONE_FLAG_FINISHED)) && mun_errno != EAGAIN MUN_RETHROW)
             return -1;
+    // XXX the ordering here doesn't actually matter.
     if (!norethrow && atomic_fetch_or(&c->flags, CONE_FLAG_JOINED) & CONE_FLAG_FAILED)
         return *mun_last_error() = c->error, mun_error_up(MUN_CURRENT_FRAME);
     return 0;
 }
 
 int cone_deadline(struct cone *c, mun_usec t) {
+    // XXX were the user required to supply a storage, this could be a bst...
     return cone_event_schedule_add(&c->loop->at, t, c, 1) MUN_RETHROW;
 }
 
@@ -614,4 +620,6 @@ static void __attribute__((destructor)) cone_main_fini(void) {
     mun_assert(!cone || cone->loop->active == 1,
         "main() returned, but %u more coroutine(s) are still alive. They may attempt to use "
         "destroyed global data. main() should join all coroutines it spawns.", cone->loop->active - 1);
+    // Sure, there's the priority parameter of __attribute__((destructor)), but we can't
+    // guarantee nobody else will use it. Also, we can't wait for other threads here.
 }
