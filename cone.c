@@ -140,18 +140,18 @@ static int cone_event_io_init(struct cone_event_io *set) {
 
 static int cone_event_io_mod(struct cone_event_io *set, struct cone_event_fd *st, int add) {
     #if CONE_EVNOTIFIER == 2
-        uint16_t flags = (add ? EV_ADD : EV_DELETE)|EV_UDATA_SPECIFIC;
+        uint16_t flags = (add ? EV_ADD|EV_ONESHOT : EV_DELETE)|EV_UDATA_SPECIFIC;
         struct kevent ev = {st->fd, st->write ? EVFILT_WRITE : EVFILT_READ, flags, 0, 0, st};
-        return kevent(set->poller, &ev, 1, NULL, 0, NULL) && errno != ENOENT MUN_RETHROW_OS;
+        return kevent(set->poller, &ev, 1, NULL, 0, NULL) && (add || errno != ENOENT) MUN_RETHROW_OS;
     #else
         struct cone_event_fd **b = &set->fds[st->fd % (sizeof(set->fds) / sizeof(set->fds[0]))];
         while (*b && (*b)->fd != st->fd)
             b = &(*b)->link;
-        struct cone_event_fd **c = b;
         if (add) {
-            st->link = *c;
-            *c = st;
+            st->link = *b;
+            *b = st;
         } else {
+            struct cone_event_fd **c = b;
             while (*c && (*c)->fd == st->fd && *c != st)
                 c = &(*c)->link;
             if (*c != st)
@@ -181,11 +181,6 @@ static void cone_event_io_del(struct cone_event_io *set, struct cone_event_fd *s
 static void cone_event_io_ping(struct cone_event_io *set) {
     if (!atomic_exchange(&set->pinged, 1))
         write(set->selfpipe[1], "", 1);
-}
-
-static void cone_event_io_call(struct cone_event_io *set, struct cone_event_fd *e) {
-    cone_schedule(e->c, CONE_FLAG_WOKEN);
-    cone_event_io_del(set, e); // `e` is still allocated & `e->link` points to next element
 }
 
 static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
@@ -228,16 +223,16 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
         for (int i = 0; i < got; i++)
             for (struct cone_event_fd *st = evs[i].data.ptr, *e = st; e && e->fd == st->fd; e = e->link)
                 if (evs[i].events & ((e->write ? EPOLLOUT : EPOLLIN|EPOLLRDHUP)|EPOLLERR|EPOLLHUP))
-                    cone_event_io_call(set, e);
+                    cone_event_io_del(set, e), cone_schedule(e->c, CONE_FLAG_WOKEN);
     #elif CONE_EVNOTIFIER == 2
         for (int i = 0; i < got; i++)
-            if (evs[i].udata)
-                cone_event_io_call(set, evs[i].udata);
+            if (evs[i].udata) // oneshot event, removed automatically
+                cone_schedule(((struct cone_event_fd *)evs[i].udata)->c, CONE_FLAG_WOKEN);
     #else
         for (size_t i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++)
             for (struct cone_event_fd *e = set->fds[i]; e; e = e->link)
                 if (FD_ISSET(e->fd, &fds[!!e->write]))
-                    cone_event_io_call(set, e);
+                    cone_event_io_del(set, e), cone_schedule(e->c, CONE_FLAG_WOKEN);
     #endif
     return 0;
 }
