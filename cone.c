@@ -38,7 +38,6 @@ _Static_assert(0, "stack switching is only supported on x86-64 UNIX");
 #if CONE_EVNOTIFIER == 1
 #include <sys/epoll.h>
 #elif CONE_EVNOTIFIER == 2
-#include <fcntl.h>
 #include <sys/event.h>
 #else
 #include <sys/select.h>
