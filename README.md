@@ -57,13 +57,15 @@ Some options (`CFLAGS="... -DOPTION=VALUE"`):
 
   * **Shadow call stacks**: will break everything. Don't use them.
 
-  * **Parallelism**: the scheduler is NOT n:m. Each event loop is bound to a thread,
+  * **Parallelism**: the scheduler is N:1. Each event loop is bound to a thread,
     and coroutines spawned on that loop will stay on it. `cone_event` can be used to
     synchronize coroutines even on different threads. `cone_wait` and `cone_wake` have
     semantics similar to Linux's `FUTEX_WAIT` and `FUTEX_WAKE`, except the storage for
     "implementation artifacts", as the kernel calls them, is provided by the user of
     the library (for performance, simplicity, and also because that makes both the
     storage and the futex word movable since their addresses aren't used as keys).
+    More generic `cone_wait_if` and `cone_wait_if_not` allow using an arbitrary
+    expression to determine if the precondition for sleeping still holds.
 
     (Note that the locks are kind of bad, though. My advice is to only use events
     in non performance critical or low contention places. Or even better, don't
