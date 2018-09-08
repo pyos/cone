@@ -108,6 +108,7 @@ void cone_cancel(struct cone *);
 // See `cone_cancel`, but replace "ECANCELED" with "ETIMEDOUT" and "next"
 // with "next after the specified point in time (according to the monotonic clock)".
 // If one call would fail with both ECANCELED and ETIMEDOUT, the former takes priority.
+// XXX exactly how useful it is to set deadlines on other coroutines?
 int cone_deadline(struct cone *, mun_usec) mun_throws(memory);
 
 // Undo *one* previous call to `cone_deadline` with the same arguments.

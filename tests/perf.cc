@@ -62,7 +62,7 @@ static bool test_mutex(char *msg) {
     return run<cones>(msg,
         [&](unsigned i) {
             spawned[i] = [&]() {
-                for (size_t n = yields_per_cone; n--;) if (cone::mutex::guard g{m}) {
+                for (size_t n = yields_per_cone; n--;) if (auto g = m.guard()) {
                     size_t c = r;
                     if (!cone::yield())
                         return false;
@@ -79,7 +79,15 @@ static bool test_mutex(char *msg) {
      && !mun_assert(r == cones * yields_per_cone, "%zu != %zu", r, cones * yields_per_cone);
 }
 
-template <size_t threads, size_t cones, size_t iters, typename M, typename G>
+static inline auto guard(cone::mutex &m) {
+    return m.guard();
+}
+
+static inline auto guard(std::mutex &m) {
+    return std::unique_lock<std::mutex>(m);
+}
+
+template <size_t threads, size_t cones, size_t iters, typename M>
 static bool test_mt_mutex(char *msg) {
     M m;
     size_t r = 0;
@@ -88,7 +96,7 @@ static bool test_mt_mutex(char *msg) {
     bool k = spawn_and_wait<threads, cone::thread>([&]() {
         return spawn_and_wait<cones>([&]() {
             for (size_t j = 0; j < iters; j++) {
-                if (G g{m})
+                if (auto g = guard(m))
                     r++;
                 else
                     return false;
@@ -106,7 +114,7 @@ export { "perf:yield x 3m", &test_yield<3000000> }
      , { "perf:spawn(nop) x 1m, wait x 1m, drop x 1m", &test_spawn_many<1000000> }
      , { "perf:spawn(yield x 100) x 100k, wait x 100k, drop x 100k", &test_spawn_many_yielding<100000, 100> }
      , { "perf:spawn((lock, yield, unlock) x 100) x 20k, wait x 20k, drop x 20k", &test_mutex<20000, 100> }
-     , { "perf:8 threads * 100 cones * 1k locked increments (cone::mutex)", &test_mt_mutex<8, 100, 1000, cone::mutex, cone::mutex::guard> }
-     , { "perf:8 threads * 100 cones * 1k locked increments (std::mutex)", &test_mt_mutex<8, 100, 1000, std::mutex, std::unique_lock<std::mutex>> }
-     , { "perf:8 threads * 1 cone * 100k locked increments (cone::mutex)", &test_mt_mutex<8, 1, 100000, cone::mutex, cone::mutex::guard> }
-     , { "perf:8 threads * 1 cone * 100k locked increments (std::mutex)", &test_mt_mutex<8, 1, 100000, std::mutex, std::unique_lock<std::mutex>> }
+     , { "perf:8 threads * 100 cones * 1k locked increments (cone::mutex)", &test_mt_mutex<8, 100, 1000, cone::mutex> }
+     , { "perf:8 threads * 100 cones * 1k locked increments (std::mutex)", &test_mt_mutex<8, 100, 1000, std::mutex> }
+     , { "perf:8 threads * 1 cone * 100k locked increments (cone::mutex)", &test_mt_mutex<8, 1, 100000, cone::mutex> }
+     , { "perf:8 threads * 1 cone * 100k locked increments (std::mutex)", &test_mt_mutex<8, 1, 100000, std::mutex> }

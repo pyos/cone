@@ -25,32 +25,23 @@ struct cone {
         cone_cancel(this);
     }
 
-    struct deadline {
-        // `cone_deadline` and `cone_complete`, but in RAII form. This object must not
-        // outlive the `cone`. (Don't tell me to rewrite this in Rust.)
-        deadline(cone *c, time t) noexcept
-            : r_(c, deleter{mun_usec_chrono(t)})
-        {
-            mun_cant_fail(cone_deadline(c, mun_usec_chrono(t)) MUN_RETHROW);
-        }
-
-        // Same as above, but relative to now.
-        deadline(cone *c, timedelta t) noexcept
-            : deadline(c, time::clock::now() + t)
-        {
-        }
-
-    private:
+    // `cone_deadline` and `cone_complete`, but in RAII form.
+    auto deadline(time t) noexcept {
         struct deleter {
             mun_usec t_;
 
             void operator()(cone *c) noexcept {
                 cone_complete(c, t_);
             }
-        };
+        } d{mun_usec_chrono(t)};
+        mun_cant_fail(cone_deadline(this, d.t_) MUN_RETHROW);
+        return std::unique_ptr<cone, deleter>{this, d};
+    }
 
-        std::unique_ptr<cone, deleter> r_;
-    };
+    // Same as above, but relative to now.
+    auto deadline(timedelta t) noexcept {
+        return deadline(time::clock::now() + t);
+    }
 
     // Delay cancellation and deadlines until the end of the function.
     template <bool state = false, typename F>
@@ -82,47 +73,32 @@ struct cone {
         return cone_count();
     }
 
-    struct ref {
-        ref() noexcept = default;
+    struct deleter {
+        void operator()(cone* c) const noexcept {
+            cone_drop(c);
+        }
+    };
+
+    struct ref : std::unique_ptr<cone, deleter> {
+        using std::unique_ptr<cone, deleter>::unique_ptr;
 
         template <typename F /* = bool() */, typename G = std::remove_reference_t<F>>
         ref(F&& f, size_t stack = 100UL * 1024) noexcept {
             // XXX if F is trivially copyable and fits into one `void*`, we can pass it by value.
-            r_.reset(cone_spawn(stack, cone_bind(&invoke<G>, new G(std::forward<F>(f)))));
-            mun_cant_fail(!r_ MUN_RETHROW);
+            reset(cone_spawn(stack, cone_bind(&invoke<G>, new G(std::forward<F>(f)))));
+            mun_cant_fail(!*this MUN_RETHROW);
         }
-
-        operator cone*() const noexcept {
-            return r_.get();
-        }
-
-        cone& operator*() const noexcept {
-            return *r_;
-        }
-
-        cone* operator->() const noexcept {
-            return r_.get();
-        }
-
-    protected:
-        struct deleter {
-            void operator()(cone* c) const noexcept {
-                cone_drop(c);
-            }
-        };
-
-        std::unique_ptr<cone, deleter> r_;
     };
 
     struct thread : ref {
-        thread() noexcept = default;
+        using ref::ref;
 
         template <typename F /* = bool() */, typename G = std::remove_reference_t<F>>
         thread(F&& f, size_t stack = 100UL * 1024) noexcept {
-            r_.reset(cone_loop(stack, cone_bind(&invoke<G>, new G(std::forward<F>(f))), [](cone_closure c) {
+            reset(cone_loop(stack, cone_bind(&invoke<G>, new G(std::forward<F>(f))), [](cone_closure c) {
                 return std::thread{[=](){ mun_cant_fail(c.code(c.data) MUN_RETHROW); }}.detach(), 0;
             }));
-            mun_cant_fail(!r_ MUN_RETHROW);
+            mun_cant_fail(!*this MUN_RETHROW);
         }
     };
 
@@ -180,25 +156,14 @@ struct cone {
             e_.wake(n);
         }
 
-        struct guard {
-            guard(mutex &m)
-                : r_(m.lock() ? &m : nullptr)
-            {
-            }
-
-            explicit operator bool() const {
-                return !!r_;
-            }
-
-        private:
-            struct mutex_unlock {
+        auto guard() noexcept {
+            struct deleter {
                 void operator()(mutex *m) const {
                     m->unlock();
                 }
             };
-
-            std::unique_ptr<mutex, mutex_unlock> r_;
-        };
+            return std::unique_ptr<mutex, deleter>{lock() ? this : nullptr};
+        }
 
     private:
         event e_;

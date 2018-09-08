@@ -83,12 +83,12 @@ static bool test_sleep_after_cancel(char *) {
 }
 
 static bool test_deadline(char *) {
-    cone::deadline d(::cone, 0us);
+    auto d = ::cone->deadline(0us);
     return ASSERT(!cone::sleep_for(1ms) && mun_errno == ETIMEDOUT, "deadline did not trigger");
 }
 
 static bool test_deadline_lifting(char *) {
-    cone::deadline{::cone, 0us};
+    ::cone->deadline(0us);
     return cone::sleep_for(1ms);
 }
 
@@ -123,7 +123,7 @@ static bool test_mutex(char *) {
     int last = 0;
     cone::mutex m;
     cone::ref a = [&]() {
-        if (cone::mutex::guard g{m})
+        if (auto g = m.guard())
             if (cone::yield() && cone::yield() && cone::yield() && cone::yield())
                 return last = 1, true;
         return false;
@@ -274,7 +274,7 @@ static bool test_mt_mutex(char *) {
     cone::mutex m;
     return spawn_and_wait<4, cone::thread>([&]() {
         return spawn_and_wait<100>([&]() {
-            for (size_t j = 0; j < 10000; j++) if (cone::mutex::guard g{m})
+            for (size_t j = 0; j < 10000; j++) if (auto g = m.guard())
                 r++;
             else
                 return false;
