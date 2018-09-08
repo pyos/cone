@@ -36,6 +36,16 @@ static bool test_cancel_atomic(char *) {
     return cone::yield() && ASSERT(v == 1, "%d != 1", v);
 }
 
+static bool test_cancel_uninterruptible(char *) {
+    int v = 0;
+    cone::ref c = [&]() { return cone::intr<false>([&]() { return cone::yield() && (v++, true); })
+                              && cone::yield() && (v++, true); };
+    c->cancel();
+    return ASSERT(!c->wait(), "cancelled coroutine succeeded")
+        && ASSERT(mun_errno == ECANCELED, "unexpected error %d", mun_errno)
+        && ASSERT(v == 1, "%d != 1", v);
+}
+
 static bool test_cancel_sleeping(char *) {
     cone::ref c = []() { return ASSERT(!cone::sleep_for(100ms) && mun_errno == ECANCELED, "not cancelled"); };
     auto a = cone::time::clock::now();
@@ -278,6 +288,7 @@ export { "cone:yield", &test_yield }
      , { "cone:wait", &test_wait }
      , { "cone:wait on cancelled", &test_cancel }
      , { "cone:wait on cancelled, but atomic", &test_cancel_atomic }
+     , { "cone:wait on cancelled, but uninterruptible", &test_cancel_uninterruptible }
      , { "cone:wait on cancelled before sleeping", &test_cancel_sleeping }
      , { "cone:wait(rethrow=false)", &test_wait_no_rethrow }
      , { "cone:sleep 50ms concurrent with 100ms)", &test_sleep<false> }

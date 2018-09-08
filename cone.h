@@ -96,6 +96,10 @@ int cone_evfinish(struct cone_event *ev, int success, int sleep_if) mun_throws(c
 // Wake up at most N coroutines paused with `cone_wait`.
 void cone_wake(struct cone_event *, size_t);
 
+// Enable or disable cancellation and deadlines for this coroutine. If disabled, their effect
+// is postponed until they are re-enabled. Returns the previous state.
+int cone_intr(int enable);
+
 // Make the next (or current, if any) call to `cone_wait`, `cone_iowait`, `cone_sleep_until`,
 // `cone_sleep`, or `cone_yield` from the specified coroutine fail with ECANCELED.
 // No-op if the coroutine has already finished.

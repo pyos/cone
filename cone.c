@@ -52,6 +52,7 @@ enum {
     CONE_FLAG_CANCELLED = 0x20,
     CONE_FLAG_TIMED_OUT = 0x40,
     CONE_FLAG_JOINED    = 0x80,
+    CONE_FLAG_NO_INTR   = 0x100,
 };
 
 static void cone_run(struct cone *);
@@ -433,12 +434,6 @@ static struct cone_loop *cone_schedule(struct cone *c, int flags) {
     return loop;
 }
 
-void cone_cancel(struct cone *c) {
-    struct cone_loop *loop = cone_schedule(c, CONE_FLAG_CANCELLED);
-    if (loop)
-        cone_event_io_ping(&loop->io);
-}
-
 static int cone_deschedule(struct cone *c) {
     // Don't even yield if cancelled by another thread while registering the wakeup callback.
     for (unsigned flags = c->flags; !(flags & (CONE_FLAG_CANCELLED | CONE_FLAG_TIMED_OUT | CONE_FLAG_WOKEN));) {
@@ -447,7 +442,10 @@ static int cone_deschedule(struct cone *c) {
             break;
         }
     }
-    int state = atomic_fetch_and(&c->flags, ~CONE_FLAG_CANCELLED & ~CONE_FLAG_TIMED_OUT & ~CONE_FLAG_WOKEN);
+    int state = atomic_fetch_and(&c->flags, ~CONE_FLAG_WOKEN);
+    if (state & CONE_FLAG_NO_INTR)
+        return 0;
+    c->flags &= ~CONE_FLAG_CANCELLED & ~CONE_FLAG_TIMED_OUT;
     return state & CONE_FLAG_CANCELLED ? mun_error(cancelled, "blocking call aborted")
          : state & CONE_FLAG_TIMED_OUT ? mun_error(timeout, "blocking call timed out") : 0;
 }
@@ -572,6 +570,18 @@ int cone_cowait(struct cone *c, int norethrow) {
     if (!norethrow && atomic_fetch_or(&c->flags, CONE_FLAG_JOINED) & CONE_FLAG_FAILED)
         return *mun_last_error() = c->error, mun_error_up(MUN_CURRENT_FRAME);
     return 0;
+}
+
+int cone_intr(int enable) {
+    int prev = enable ? atomic_fetch_and(&cone->flags, ~CONE_FLAG_NO_INTR)
+                      : atomic_fetch_or(&cone->flags, CONE_FLAG_NO_INTR);
+    return !(prev & CONE_FLAG_NO_INTR);
+}
+
+void cone_cancel(struct cone *c) {
+    struct cone_loop *loop = cone_schedule(c, CONE_FLAG_CANCELLED);
+    if (loop)
+        cone_event_io_ping(&loop->io);
 }
 
 int cone_deadline(struct cone *c, mun_usec t) {

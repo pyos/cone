@@ -52,6 +52,16 @@ struct cone {
         std::unique_ptr<cone, deleter> r_;
     };
 
+    // Delay cancellation and deadlines until the end of the function.
+    template <bool state = false, typename F>
+    static auto intr(F&& f) {
+        if (cone_intr(state) == state)
+            return f();
+        auto d = [](const char *) noexcept { cone_intr(!state); };
+        auto g = std::unique_ptr<const char, void(*)(const char*) noexcept>{"-", d};
+        return f();
+    };
+
     // Wait until the next iteration of the event loop.
     static bool yield() noexcept {
         return !cone_yield();
