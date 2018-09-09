@@ -44,7 +44,7 @@ struct cone {
     }
 
     // Delay cancellation and deadlines until the end of the function.
-    template <bool state = false, typename F>
+    template <bool state, typename F>
     static auto intr(F&& f) {
         if (cone_intr(state) == state)
             return f();
@@ -73,14 +73,14 @@ struct cone {
         return cone_count();
     }
 
-    struct deleter {
-        void operator()(cone* c) const noexcept {
+    struct dropper {
+        void operator()(cone *c) const noexcept {
             cone_drop(c);
         }
     };
 
-    struct ref : std::unique_ptr<cone, deleter> {
-        using std::unique_ptr<cone, deleter>::unique_ptr;
+    struct ref : std::unique_ptr<cone, dropper> {
+        using std::unique_ptr<cone, dropper>::unique_ptr;
 
         template <typename F /* = bool() */, typename G = std::remove_reference_t<F>>
         ref(F&& f, size_t stack = 100UL * 1024) noexcept {
@@ -99,6 +99,22 @@ struct cone {
                 return std::thread{[=](){ mun_cant_fail(c.code(c.data) MUN_RETHROW); }}.detach(), 0;
             }));
             mun_cant_fail(!*this MUN_RETHROW);
+        }
+    };
+
+    struct aborter {
+        void operator()(cone *c) const noexcept {
+            intr<false>([c]() {
+                cone_cancel(c);
+                cone_join(c, 1);
+            });
+        }
+    };
+
+    struct guard : std::unique_ptr<cone, aborter> {
+        guard(ref r = {})
+            : std::unique_ptr<cone, aborter>::unique_ptr(r.release())
+        {
         }
     };
 

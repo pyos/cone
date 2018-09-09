@@ -52,6 +52,11 @@ static bool test_cancel_sleeping(char *) {
     return (c->cancel(), c->wait()) && ASSERT(cone::time::clock::now() - a < 10ms, "shouldn't have slept");
 }
 
+static bool test_cancel_by_guard(char *) {
+    cone::guard{[&]() { return cone::sleep_for(100s); }};
+    return true; // test framework will abort if the coroutine didn't finish
+}
+
 static bool test_wait_no_rethrow(char *) {
     cone::ref c = [&]() { return cone::yield(); };
     c->cancel();
@@ -290,6 +295,7 @@ export { "cone:yield", &test_yield }
      , { "cone:wait on cancelled, but atomic", &test_cancel_atomic }
      , { "cone:wait on cancelled, but uninterruptible", &test_cancel_uninterruptible }
      , { "cone:wait on cancelled before sleeping", &test_cancel_sleeping }
+     , { "cone:wait on cancelled by scope guard", &test_cancel_by_guard }
      , { "cone:wait(rethrow=false)", &test_wait_no_rethrow }
      , { "cone:sleep 50ms concurrent with 100ms)", &test_sleep<false> }
      , { "cone:sleep 50ms concurrent with cancelled 100ms", &test_sleep<true> }
