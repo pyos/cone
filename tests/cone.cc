@@ -128,15 +128,11 @@ static bool test_mutex(char *) {
     int last = 0;
     cone::mutex m;
     cone::ref a = [&]() {
-        if (auto g = m.guard())
-            if (cone::yield() && cone::yield() && cone::yield() && cone::yield())
-                return last = 1, true;
-        return false;
+        auto g = m.guard(/*cancellable=*/false);
+        return cone::yield() && cone::yield() && cone::yield() && cone::yield() && (last = 1, true);
     };
     cone::ref b = [&]() {
-        if (!m.lock())
-            return false;
-        return last = 2, m.unlock(), true;
+        return m.lock(), last = 2, m.unlock(), true;
     };
     return a->wait() && b->wait() && ASSERT(last == 2, "%d != 2", last);
 }

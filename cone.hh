@@ -151,7 +151,13 @@ struct cone {
             return !v_.exchange(true);
         }
 
-        bool lock() noexcept {
+        void lock() noexcept {
+            intr<false>([this]() { lock_cancellable(); });
+        }
+
+        bool lock_cancellable() noexcept {
+            // FIXME this is unfair; if one coroutine waits and is then waken, another
+            //       can take the lock while the first one is still in the run queue.
             if (!try_lock()) while (!e_.wait_if<false>([this]() { return try_lock(); })) {
                 if (mun_errno != EAGAIN) // could still be us who got woken by unlock() though
                     return try_lock() && (unlock(), false);
@@ -172,13 +178,13 @@ struct cone {
             e_.wake(n);
         }
 
-        auto guard() noexcept {
+        auto guard(bool cancellable = true) noexcept {
             struct deleter {
                 void operator()(mutex *m) const {
                     m->unlock();
                 }
             };
-            return std::unique_ptr<mutex, deleter>{lock() ? this : nullptr};
+            return std::unique_ptr<mutex, deleter>{!cancellable ? (lock(), this) : lock_cancellable() ? this : nullptr};
         }
 
     private:
