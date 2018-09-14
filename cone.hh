@@ -156,7 +156,7 @@ struct cone {
         }
 
         bool lock_cancellable() noexcept {
-            // FIXME this is unfair; if one coroutine waits and is then waken, another
+            // FIXME this is unfair; if one coroutine waits and is then woken, another
             //       can take the lock while the first one is still in the run queue.
             if (!try_lock()) while (!e_.wait_if<false>([this]() { return try_lock(); })) {
                 if (mun_errno != EAGAIN) // could still be us who got woken by unlock() though
