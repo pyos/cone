@@ -110,18 +110,18 @@ static bool test_count(char *) {
 
 static bool test_event(char *) {
     cone::event ev;
-    cone::ref _ = [&]() { return ev.wake(), true; };
-    return ev.wait();
+    cone::ref _1 = [&]() { size_t w = ev.wake(); return ASSERT(w == 1u, "%zu != 1", w); };
+    return ev.wait() && _1->wait();
 }
 
 static bool test_event_wake(char *) {
     int v = 0;
     cone::event ev;
     cone::ref _1 = [&]() { return ev.wait() && (v++, true); };
-    cone::ref _2 = [&]() { return ev.wake(1), true; };
+    cone::ref _2 = [&]() { size_t w = ev.wake(1); return ASSERT(w == 1u, "%zu != 1", w); };
     // _1 has not started running yet, so this coroutine will be the first in queue.
     return ev.wait() && ASSERT(v == 0, "%d != 0", v)
-        && (ev.wake(), cone::yield() && ASSERT(v == 1, "%d != 1", v));
+        && (ev.wake(), cone::yield() && ASSERT(v == 1, "%d != 1", v)) && _2->wait();
 }
 
 static bool test_mutex(char *) {

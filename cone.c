@@ -507,10 +507,11 @@ int cone_evfinish(struct cone_event *ev, int success, int sleep_if) {
     return success ? 0 : mun_error(retry, "precondition failed");
 }
 
-void cone_wake(struct cone_event *ev, size_t n) {
+size_t cone_wake(struct cone_event *ev, size_t n) {
+    size_t r = 0;
     // XXX check if nobody is waiting and don't even lock? (that's what FUTEX_WAKE does, dunno if it helps)
     cone_spin_lock(&ev->lk);
-    for (struct cone_event_it *it; n-- && (it = ev->head);) {
+    for (struct cone_event_it *it; n-- && (it = ev->head); r++) {
         ev->head = it->next;
         it->next ? (it->next->prev = it->prev) : (ev->tail = it->prev);
         // The coroutine may still be concurrently cancelled. This means that
@@ -530,11 +531,12 @@ void cone_wake(struct cone_event *ev, size_t n) {
             if (!should_continue)
                 // Another item might have been added already, but we don't care, we
                 // pretend to see the old state.
-                return;
+                return r + 1;
             cone_spin_lock(&ev->lk);
         }
     }
     cone_spin_unlock(&ev->lk);
+    return r;
 }
 
 int cone_iowait(int fd, int write) {

@@ -138,8 +138,8 @@ struct cone {
             return b ? !cone_wait_if(&e_, f()) : !cone_wait_if_not(&e_, f());
         }
 
-        void wake(size_t n = std::numeric_limits<size_t>::max()) noexcept {
-            cone_wake(&e_, n);
+        size_t wake(size_t n = std::numeric_limits<size_t>::max()) noexcept {
+            return cone_wake(&e_, n);
         }
 
     private:
