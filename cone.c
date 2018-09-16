@@ -252,7 +252,11 @@ static void cone_runq_add(struct cone_runq *rq, struct cone_runq_it *it, int ini
     atomic_store_explicit(&atomic_exchange(&rq->head, it)->next, it, memory_order_release);
 }
 
-static struct cone *cone_runq_next(struct cone_runq *rq, int pop) {
+static int cone_runq_is_empty(struct cone_runq *rq) {
+    return rq->tail == &rq->stub && !atomic_load_explicit(&rq->tail->next, memory_order_acquire);
+}
+
+static struct cone *cone_runq_next(struct cone_runq *rq) {
     struct cone_runq_it *tail = rq->tail;
     struct cone_runq_it *next = atomic_load_explicit(&tail->next, memory_order_acquire);
     if (tail == &rq->stub) {
@@ -269,8 +273,7 @@ static struct cone *cone_runq_next(struct cone_runq *rq, int pop) {
         if (!next)
             return NULL; // another push happened before the one above (and is now blocked)
     }
-    if (pop)
-        rq->tail = next;
+    rq->tail = next;
     return (struct cone *)tail;
 }
 
@@ -285,7 +288,7 @@ static int cone_loop_run(struct cone_loop *loop) {
     if (cone_event_io_init(&loop->io) MUN_RETHROW)
         return -1;
     for (struct cone *c;;) {
-        for (size_t limit = 256; limit-- && (c = cone_runq_next(&loop->now, 1));)
+        for (size_t limit = 256; limit-- && (c = cone_runq_next(&loop->now));)
             cone_run(c);
         mun_usec next = cone_event_schedule_emit(&loop->at);
         if (next == MUN_USEC_MAX && !atomic_load_explicit(&loop->active, memory_order_acquire))
@@ -295,7 +298,7 @@ static int cone_loop_run(struct cone_loop *loop) {
             // to avoid leaving a window where adding an item and pinging will not force zero
             // timeout. (The paired store of 1 is in `cone_event_io_emit`.)
             atomic_store_explicit(&loop->io.pinged, 0, memory_order_release);
-            if (cone_runq_next(&loop->now, 0)) {
+            if (!cone_runq_is_empty(&loop->now)) {
                 if (atomic_exchange(&loop->io.pinged, 1))
                     // No need to interrupt an instant call; leave one more slot for useful events.
                     read(loop->io.selfpipe[0], (char[4]){}, 4);
