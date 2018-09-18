@@ -147,11 +147,11 @@ static int cone_event_io_mod(struct cone_event_io *set, struct cone_event_fd *st
         struct cone_event_fd **b = &set->fds[st->fd % (sizeof(set->fds) / sizeof(set->fds[0]))];
         while (*b && (*b)->fd != st->fd)
             b = &(*b)->link;
+        struct cone_event_fd **c = b;
         if (add) {
             st->link = *b;
             *b = st;
         } else {
-            struct cone_event_fd **c = b;
             while (*c && (*c)->fd == st->fd && *c != st)
                 c = &(*c)->link;
             if (*c != st)
