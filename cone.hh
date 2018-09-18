@@ -80,7 +80,7 @@ struct cone {
     };
 
     struct ref : std::unique_ptr<cone, dropper> {
-        using std::unique_ptr<cone, dropper>::unique_ptr;
+        ref() = default;
 
         template <typename F /* = bool() */, typename G = std::remove_reference_t<F>>
         ref(F&& f, size_t stack = 100UL * 1024) noexcept {
@@ -91,7 +91,7 @@ struct cone {
     };
 
     struct thread : ref {
-        using ref::ref;
+        thread() = default;
 
         template <typename F /* = bool() */, typename G = std::remove_reference_t<F>>
         thread(F&& f, size_t stack = 100UL * 1024) noexcept {

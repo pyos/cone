@@ -14,7 +14,7 @@ struct msghdr;
 #if COLD_NO_OVERRIDE
 #define cold_fwd(ret, f, args) ret cold_##f args
 #else
-#define cold_fwd(ret, f, args) static ret (*const cold_##f) args = &f
+#define cold_fwd(ret, f, args) ret f args; static ret (*const cold_##f) args = &f
 #endif
 
 // Switch a file descriptor into non-blocking mode. See fcntl(2) for error codes.
