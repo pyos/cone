@@ -1,10 +1,8 @@
 #include "cone.h"
+#include "cold.h"
 
 #include <time.h>
 #include <fcntl.h>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <sys/uio.h>
 
 #if COLD_NO_OVERRIDE
 #define cold_fcn(f) cold_##f
