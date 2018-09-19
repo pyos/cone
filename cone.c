@@ -559,10 +559,6 @@ int cone_sleep_until(mun_usec t) {
     return 0;
 }
 
-int cone_yield(void) {
-    return cone_sleep_until(mun_usec_monotonic()) MUN_RETHROW;
-}
-
 int cone_cowait(struct cone *c, int norethrow) {
     if (c == cone) // maybe detect more complicated deadlocks too?..
         return mun_error(deadlock, "coroutine waiting on itself");

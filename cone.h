@@ -67,10 +67,10 @@ static inline int cone_sleep(mun_usec t) mun_throws(cancelled, timeout, memory) 
     return cone_sleep_until(mun_usec_monotonic() + t);
 }
 
-// Wait until the next iteration of the event loop. Unlike `cone_sleep(0)`, if this
-// call isn't cancelled, pending I/O events are guaranteed to be consumed before
-// it returns. (`cone_sleep` may or may not poll for I/O).
-int cone_yield(void) mun_throws(cancelled, timeout);
+// Wait until the next iteration of the event loop.
+static inline int cone_yield(void) mun_throws(cancelled, timeout, memory) {
+    return cone_sleep_until(mun_usec_monotonic());
+}
 
 // A manually triggered event. Zero-initialized; no finalizer; trivially movable.
 struct cone_event { void *head, *tail, *lk; };
