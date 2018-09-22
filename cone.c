@@ -542,6 +542,36 @@ size_t cone_wake(struct cone_event *ev, size_t n) {
     return r;
 }
 
+#define A(p) ((volatile _Atomic(__typeof__(*p)) *)(p))
+
+int cone_try_lock(struct cone_mutex *m) {
+    return atomic_exchange(A(&m->lk), 1) ? mun_error(retry, "mutex already locked") : 0;
+}
+
+int cone_lock(struct cone_mutex *m) {
+    // FIXME this is unfair; if one coroutine waits and is then woken, another
+    //       can take the lock while the first one is still in the run queue.
+    if (atomic_exchange(A(&m->lk), 1)) while (cone_wait_if_not(&m->e, !atomic_exchange(A(&m->lk), 1))) {
+        if (mun_errno != EAGAIN MUN_RETHROW) { // could still be us who got woken by unlock() though
+            if (!atomic_exchange(A(&m->lk), 1))
+                cone_unlock(m);
+            return -1;
+        }
+        unsigned n = atomic_load_explicit(A(&m->st), memory_order_relaxed);
+        while (n > 1 && !atomic_compare_exchange_weak(A(&m->st), &n, n / 2)) {}
+    }
+    return 0;
+}
+
+void cone_unlock(struct cone_mutex *m) {
+    atomic_store_explicit((volatile _Atomic(char) *)&m->lk, 0, memory_order_release);
+    // This somewhat compensates for the unfairness by scheduling a bunch of waiters
+    // at once if the lock is used from one thread and the critical section rarely yields.
+    unsigned n = atomic_load_explicit(A(&m->st), memory_order_relaxed);
+    while (n < 2048 && !atomic_compare_exchange_weak(A(&m->st), &n, n * 2)) {}
+    cone_wake(&m->e, n + 1);
+}
+
 int cone_iowait(int fd, int write) {
     struct cone_event_fd ev = {fd, write, cone, NULL};
     if (cone_event_io_add(&cone->loop->io, &ev) MUN_RETHROW)

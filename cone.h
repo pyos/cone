@@ -96,6 +96,15 @@ int cone_evfinish(struct cone_event *ev, int success, int sleep_if) mun_throws(c
 // Wake up at most N coroutines paused with `cone_wait`, return the actual number.
 size_t cone_wake(struct cone_event *, size_t);
 
+// A coroutine-owned mutex.
+struct cone_mutex { struct cone_event e; unsigned st; char lk; };
+
+int cone_try_lock(struct cone_mutex *) mun_throws(retry);
+
+int cone_lock(struct cone_mutex *) mun_throws(cancelled, timeout);
+
+void cone_unlock(struct cone_mutex *);
+
 // Enable or disable cancellation and deadlines for this coroutine. If disabled, their effect
 // is postponed until they are re-enabled. Returns the previous state.
 int cone_intr(int enable);

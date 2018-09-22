@@ -118,37 +118,38 @@ struct cone {
         }
     };
 
-    struct event {
-        event() noexcept {}
+    struct event : cone_event {
+        event() noexcept : cone_event{} {}
 
         event(event&& other) noexcept {
-            std::swap(e_, other.e_);
+            std::swap(*this, other);
         }
 
         event& operator=(event&& other) noexcept {
-            return std::swap(e_, other.e_), *this;
+            return std::swap(*this, other), *this;
         }
 
         bool wait() noexcept {
-            return !cone_wait_if(&e_, 1);
+            return !cone_wait_if(this, 1);
         }
 
         template <bool b = true, typename F /* = bool() noexcept */>
         bool wait_if(F&& f) noexcept {
-            return b ? !cone_wait_if(&e_, f()) : !cone_wait_if_not(&e_, f());
+            return b ? !cone_wait_if(this, f()) : !cone_wait_if_not(this, f());
         }
 
         size_t wake(size_t n = std::numeric_limits<size_t>::max()) noexcept {
-            return cone_wake(&e_, n);
+            return cone_wake(this, n);
         }
-
-    private:
-        cone_event e_ = {};
     };
 
-    struct mutex {
+    struct mutex : cone_mutex {
+        mutex() noexcept : cone_mutex{} {}
+        mutex(const mutex&) = delete;
+        mutex& operator=(const mutex&) = delete;
+
         bool try_lock() noexcept {
-            return !v_.exchange(true);
+            return !cone_try_lock(this);
         }
 
         void lock() noexcept {
@@ -156,26 +157,11 @@ struct cone {
         }
 
         bool lock_cancellable() noexcept {
-            // FIXME this is unfair; if one coroutine waits and is then woken, another
-            //       can take the lock while the first one is still in the run queue.
-            if (!try_lock()) while (!e_.wait_if<false>([this]() { return try_lock(); })) {
-                if (mun_errno != EAGAIN) // could still be us who got woken by unlock() though
-                    return try_lock() && (unlock(), false);
-                for (unsigned n = n_; n > 1 && !n_.compare_exchange_weak(n, n / 2);) {}
-            }
-            return true;
+            return !cone_lock(this);
         }
 
         void unlock() noexcept {
-            v_.store(false, std::memory_order_release);
-            // `wake(1)` works really bad if the critical section rarely yields: if many
-            // coroutines are waiting on the lock, a simple `wake()` would make
-            // the loop run them one after another. `wake(1)`, meanwhile, forces the
-            // next cone to wait until the run queue is drained. On the other hand,
-            // if the critical section yields, `wake()` creates a thundering herd.
-            unsigned n = n_;
-            while (n < 2048 && !n_.compare_exchange_weak(n, n * 2)) {}
-            e_.wake(n);
+            cone_unlock(this);
         }
 
         auto guard(bool cancellable = true) noexcept {
@@ -186,11 +172,6 @@ struct cone {
             };
             return std::unique_ptr<mutex, deleter>{!cancellable ? (lock(), this) : lock_cancellable() ? this : nullptr};
         }
-
-    private:
-        event e_;
-        std::atomic<bool> v_{false};
-        std::atomic<unsigned> n_{32};
     };
 
 private:
