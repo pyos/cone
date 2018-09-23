@@ -12,9 +12,10 @@ using namespace std::literals::chrono_literals;
 
 template <size_t N, typename T = cone::ref, typename F>
 static inline bool spawn_and_wait(F&& f) {
-    std::vector<T> cs(N);
-    for (auto& c : cs)
-        c = std::forward<F>(f);
+    std::vector<T> cs;
+    cs.reserve(N);
+    for (size_t i = 0; i < N; i++)
+        cs.emplace_back(f);
     for (auto& c : cs)
         if (!c->wait())
             return false;

@@ -1,90 +1,73 @@
 #include <mutex>
 
-template <unsigned N, typename... Fs>
-static bool run(char *msg, Fs&&... fs) {
+static const char *suffixes[] = {"s", "ms", "us", "ns"};
+
+template <size_t n = 1, typename F>
+static auto measure(char *msg, F&& f) {
     auto a = cone::time::clock::now();
-    bool results[] = {
-        [](auto&& f){
-            for (unsigned i = 0; i < N; i++)
-                if (!f(i))
-                    return false;
-            return true;
-        }(fs)...
-    };
-    for (bool c : results)
-        if (!c)
-            return false;
+    auto r = f();
     auto b = cone::time::clock::now();
-    sprintf(msg, "%f us/iter", (double)std::chrono::duration_cast<std::chrono::microseconds>(b - a).count() / N);
-    return true;
+    auto t = std::chrono::duration_cast<std::chrono::duration<double>>(b - a).count() / n;
+    unsigned i = 0;
+    for (; i + 1 < sizeof(suffixes) / sizeof(suffixes[0]) && t < 0.1; i++)
+        t *= 1000;
+    sprintf(msg, n == 1 ? "%f %s" : "%f %s/iter", t, suffixes[i]);
+    return r;
 }
 
 template <size_t yields>
 static bool test_yield(char *msg) {
-    return run<yields>(msg, [](unsigned) { return cone::yield(); });
+    return measure<yields>(msg, [] {
+        for (size_t i = 0; i < yields; i++)
+            if (!cone::yield())
+                return false;
+        return true;
+    });
 }
 
 template <size_t cones>
 static bool test_spawn(char *msg) {
-    return run<cones>(msg, [](unsigned) { return cone::ref{[](){ return true; }}->wait(); });
+    return measure<cones>(msg, [] {
+        for (size_t i = 0; i < cones; i++)
+            if (!cone::ref{[](){ return true; }}->wait())
+                return false;
+        return true;
+    });
 }
 
 template <size_t cones>
 static bool test_spawn_many(char *msg) {
-    std::vector<cone::ref> spawned(cones);
-    return run<cones>(msg, [&](unsigned i) { spawned[i] = []() { return true; }; return true; },
-                           [&](unsigned i) { return spawned[i]->wait(); },
-                           [&](unsigned i) { spawned[i] = cone::ref(); return true; });
+    return measure<cones>(msg, []() { return spawn_and_wait<cones>([]() { return true; }); });
 }
 
 template <size_t cones, size_t yields_per_cone>
 static bool test_spawn_many_yielding(char *msg) {
-    std::vector<cone::ref> spawned(cones);
-    return run<cones>(msg,
-        [&](unsigned i) {
-            spawned[i] = []() {
-                for (size_t n = yields_per_cone; n--;)
-                    if (!cone::yield())
-                        return false;
-                return true;
-            };
+    return measure<cones>(msg, []() {
+        return spawn_and_wait<cones>([]() {
+            for (size_t n = yields_per_cone; n--;)
+                if (!cone::yield())
+                    return false;
             return true;
-        },
-        [&](unsigned i) { return spawned[i]->wait(); },
-        [&](unsigned i) { spawned[i] = cone::ref(); return true; });
+        });
+    });
 }
 
 template <size_t cones, size_t yields_per_cone>
 static bool test_mutex(char *msg) {
     size_t r = 0;
     cone::mutex m;
-    std::vector<cone::ref> spawned(cones);
-    return run<cones>(msg,
-        [&](unsigned i) {
-            spawned[i] = [&]() {
-                for (size_t n = yields_per_cone; n--;) if (auto g = m.guard()) {
-                    size_t c = r;
-                    if (!cone::yield())
-                        return false;
-                    r = c + 1;
-                } else {
+    return measure<cones>(msg, [&]() {
+        return spawn_and_wait<cones>([&]() {
+            for (size_t n = yields_per_cone; n--;) {
+                std::unique_lock<cone::mutex> g(m);
+                size_t c = r;
+                if (!cone::yield())
                     return false;
-                }
-                return true;
-            };
+                r = c + 1;
+            }
             return true;
-        },
-        [&](unsigned i) { return spawned[i]->wait(); },
-        [&](unsigned i) { spawned[i] = cone::ref(); return true; })
-     && !mun_assert(r == cones * yields_per_cone, "%zu != %zu", r, cones * yields_per_cone);
-}
-
-static inline auto guard(cone::mutex &m) {
-    return m.guard();
-}
-
-static inline auto guard(std::mutex &m) {
-    return std::unique_lock<std::mutex>(m);
+        });
+    }) && !mun_assert(r == cones * yields_per_cone, "%zu != %zu", r, cones * yields_per_cone);
 }
 
 template <size_t threads, size_t cones, size_t iters, typename M>
@@ -92,21 +75,17 @@ static bool test_mt_mutex(char *msg) {
     M m;
     size_t r = 0;
     size_t e = threads * cones * iters;
-    auto a = cone::time::clock::now();
-    bool k = spawn_and_wait<threads, cone::thread>([&]() {
-        return spawn_and_wait<cones>([&]() {
-            for (size_t j = 0; j < iters; j++) {
-                if (auto g = guard(m))
+    return measure(msg, [&]() {
+        return spawn_and_wait<threads, cone::thread>([&]() {
+            return spawn_and_wait<cones>([&]() {
+                for (size_t j = 0; j < iters; j++) {
+                    std::unique_lock<M> g(m);
                     r++;
-                else
-                    return false;
-            }
-            return true;
+                }
+                return true;
+            });
         });
     }) && ASSERT(r == e, "%zu != %zu", r, e);
-    auto b = cone::time::clock::now();
-    sprintf(msg, "%fs", std::chrono::duration_cast<std::chrono::duration<double>>(b - a).count());
-    return k;
 }
 
 export { "perf:yield x 3m", &test_yield<3000000> }
