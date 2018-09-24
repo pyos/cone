@@ -184,7 +184,7 @@ static void cone_event_io_ping(struct cone_event_io *set) {
 }
 
 static void cone_event_io_allow_ping(struct cone_event_io *set) {
-    atomic_store_explicit(&set->interruptible, 1, memory_order_release);
+    set->interruptible = 1; // seq-cst so that it is not reordered after `cone_runq_is_empty`
 }
 
 static void cone_event_io_consume_ping(struct cone_event_io *set) {
@@ -260,7 +260,7 @@ static void cone_runq_add(struct cone_runq *rq, struct cone_runq_it *it, int ini
 }
 
 static int cone_runq_is_empty(struct cone_runq *rq) {
-    return rq->tail == &rq->stub && !atomic_load_explicit(&rq->tail->next, memory_order_acquire);
+    return rq->tail == &rq->stub && !atomic_load_explicit(&rq->stub.next, memory_order_acquire);
 }
 
 static struct cone *cone_runq_next(struct cone_runq *rq) {
