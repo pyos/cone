@@ -466,8 +466,10 @@ static _Thread_local struct cone_mcs_lock {
 #define CONE_SPIN_INTERVAL 512
 #endif
 
+#define A(p) ((volatile _Atomic(__typeof__(*p)) *)(p))
+
 static inline void cone_spin_lock(void **h) {
-    struct cone_mcs_lock *p = atomic_exchange((volatile _Atomic(void *) *)h, &lki);
+    struct cone_mcs_lock *p = atomic_exchange(A(h), &lki);
     if (!p)
         return;
     atomic_store_explicit(&lki.locked, 1, memory_order_relaxed);
@@ -477,7 +479,7 @@ static inline void cone_spin_lock(void **h) {
 }
 
 static inline void cone_spin_unlock(void **h) {
-    if (atomic_compare_exchange_strong((volatile _Atomic(void *) *)h, &(void *){&lki}, NULL))
+    if (atomic_compare_exchange_strong(A(h), &(void *){&lki}, NULL))
         return;
     struct cone_mcs_lock *n;
     for (size_t __n = 0; !(n = atomic_load_explicit(&lki.next, memory_order_acquire));)
@@ -542,8 +544,6 @@ size_t cone_wake(struct cone_event *ev, size_t n) {
     return r;
 }
 
-#define A(p) ((volatile _Atomic(__typeof__(*p)) *)(p))
-
 int cone_try_lock(struct cone_mutex *m) {
     return atomic_exchange(A(&m->lk), 1) ? mun_error(retry, "mutex already locked") : 0;
 }
@@ -564,7 +564,7 @@ int cone_lock(struct cone_mutex *m) {
 }
 
 void cone_unlock(struct cone_mutex *m) {
-    atomic_store_explicit((volatile _Atomic(char) *)&m->lk, 0, memory_order_release);
+    atomic_store_explicit(A(&m->lk), 0, memory_order_release);
     // This somewhat compensates for the unfairness by scheduling a bunch of waiters
     // at once if the lock is used from one thread and the critical section rarely yields.
     unsigned n = atomic_load_explicit(A(&m->st), memory_order_relaxed);
