@@ -120,14 +120,8 @@ struct cone {
 
     struct event : cone_event {
         event() noexcept : cone_event{} {}
-
-        event(event&& other) noexcept {
-            std::swap(*this, other);
-        }
-
-        event& operator=(event&& other) noexcept {
-            return std::swap(*this, other), *this;
-        }
+        event(const event&) = delete;
+        event& operator=(const event&) = delete;
 
         bool wait() noexcept {
             return !cone_wait_if(this, 1);

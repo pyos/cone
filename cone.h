@@ -72,7 +72,7 @@ static inline int cone_yield(void) mun_throws(cancelled, timeout, memory) {
     return cone_sleep_until(mun_usec_monotonic());
 }
 
-// A manually triggered event. Zero-initialized; no finalizer; trivially movable.
+// A manually triggered event. Zero-initialized.
 struct cone_event { void *head, *tail, *lk; };
 
 // Prepare to wait for an event. MUST be followed by `cone_evfinish` without yielding
@@ -96,7 +96,7 @@ int cone_evfinish(struct cone_event *ev, int success, int sleep_if) mun_throws(c
 // Wake up at most N coroutines paused with `cone_wait`, return the actual number.
 size_t cone_wake(struct cone_event *, size_t);
 
-// A coroutine-owned mutex.
+// A coroutine-owned mutex. Zero-initialized.
 struct cone_mutex { struct cone_event e; unsigned st; char lk; };
 
 int cone_try_lock(struct cone_mutex *) mun_throws(retry);
