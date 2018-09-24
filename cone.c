@@ -550,26 +550,32 @@ int cone_try_lock(struct cone_mutex *m) {
 }
 
 int cone_lock(struct cone_mutex *m) {
-    // TODO fair handoff: on unlock, don't set `lk` to 0, make this call return a special marker instead
-    for (int r; atomic_exchange(A(&m->lk), 1) && (r = cone_wait(&m->e, atomic_exchange(A(&m->lk), 1))) != 0;) {
-        if (r < 0 MUN_RETHROW) {
-            if (r == -2) // may be the last one woken by `cone_unlock`, need to wake more
-                cone_wake(&m->e, 1, 1);
-            return -1;
-        }
+    int r = 0;
+    // 0 = xchg succeeded, 1 = fair handoff, 2 = retry xchg
+    if (atomic_exchange(A(&m->lk), 1)) while ((r = cone_wait(&m->e, atomic_exchange(A(&m->lk), 1))) == 2) {
         unsigned n = atomic_load_explicit(A(&m->st), memory_order_relaxed);
         while (!atomic_compare_exchange_weak(A(&m->st), &n, n >> 1)) {}
+    }
+    if (r < 0 MUN_RETHROW) {
+        if (r == ~1) // acquired the lock by direct handoff, but also cancelled
+            cone_unlock(m, 1);
+        if (r == ~2) // signal more to retry in case this was the last one woken
+            cone_wake(&m->e, 1, 2);
+        return -1;
     }
     return 0;
 }
 
-void cone_unlock(struct cone_mutex *m) {
+void cone_unlock(struct cone_mutex *m, int fair) {
+    if (fair && cone_wake(&m->e, 1, 1))
+        return;
+    // (Some waiters may queue here, so wake(n, 2) after a store is needed even on a fair unlock.)
     atomic_store_explicit(A(&m->lk), 0, memory_order_release);
     // This somewhat compensates for the unfairness by scheduling a bunch of waiters
     // at once if the lock is used from one thread and the critical section rarely yields.
     unsigned n = atomic_load_explicit(A(&m->st), memory_order_relaxed);
     while (!atomic_compare_exchange_weak(A(&m->st), &n, n << 1 | 1)) {}
-    cone_wake(&m->e, n | 1, 1);
+    cone_wake(&m->e, n | 1, 2);
 }
 
 int cone_iowait(int fd, int write) {

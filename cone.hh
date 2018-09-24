@@ -151,8 +151,8 @@ struct cone {
             return !cone_lock(this);
         }
 
-        void unlock() noexcept {
-            cone_unlock(this);
+        void unlock(bool fair = false) noexcept {
+            cone_unlock(this, fair);
         }
 
         auto guard(bool cancellable = true) noexcept {
