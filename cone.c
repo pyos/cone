@@ -103,7 +103,7 @@ struct cone_event_fd {
 struct cone_event_io {
     int poller;
     int selfpipe[2];
-    volatile _Atomic(char) pinged;
+    volatile _Atomic(char) interruptible;
     #if CONE_EVNOTIFIER != 2
         struct cone_event_fd *fds[127];
     #endif
@@ -179,8 +179,17 @@ static void cone_event_io_del(struct cone_event_io *set, struct cone_event_fd *s
 }
 
 static void cone_event_io_ping(struct cone_event_io *set) {
-    if (!atomic_exchange(&set->pinged, 1))
+    if (atomic_exchange(&set->interruptible, 0))
         write(set->selfpipe[1], "", 1);
+}
+
+static void cone_event_io_allow_ping(struct cone_event_io *set) {
+    atomic_store_explicit(&set->interruptible, 1, memory_order_release);
+}
+
+static void cone_event_io_consume_ping(struct cone_event_io *set) {
+    if (!atomic_exchange(&set->interruptible, 0))
+        read(set->selfpipe[0], (char[4]){}, 4);
 }
 
 static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
@@ -212,10 +221,8 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
         if (select(max_fd, &fds[0], &fds[1], NULL, &us) < 0)
             return errno != EINTR MUN_RETHROW_OS;
     #endif
-    // Leave the state at 1 so that pings have no effect while the loop is still checking
-    // the run queue. (The paired store of 0 is in `cone_loop_run`.)
-    if (timeout != 0 && atomic_exchange(&set->pinged, 1))
-        read(set->selfpipe[0], (char[4]){}, 4);
+    if (timeout != 0) // else pings were not allowed in the first place (see `cone_loop_run`).
+        cone_event_io_consume_ping(set);
     #if CONE_EVNOTIFIER == 1
         for (int i = 0; i < got; i++)
             for (struct cone_event_fd *st = evs[i].data.ptr, *e = st; e && e->fd == st->fd; e = e->link)
@@ -294,16 +301,10 @@ static int cone_loop_run(struct cone_loop *loop) {
         if (next == MUN_USEC_MAX && !atomic_load_explicit(&loop->active, memory_order_acquire))
             break;
         if (next > 0) {
-            // So much for separation of concerns. This has to be done before checking the queue
-            // to avoid leaving a window where adding an item and pinging will not force zero
-            // timeout. (The paired store of 1 is in `cone_event_io_emit`.)
-            atomic_store_explicit(&loop->io.pinged, 0, memory_order_release);
-            if (!cone_runq_is_empty(&loop->now)) {
-                if (atomic_exchange(&loop->io.pinged, 1))
-                    // No need to interrupt an instant call; leave one more slot for useful events.
-                    read(loop->io.selfpipe[0], (char[4]){}, 4);
-                next = 0;
-            }
+            cone_event_io_allow_ping(&loop->io);
+            if (!cone_runq_is_empty(&loop->now))
+                cone_event_io_consume_ping(&loop->io), next = 0;
+            // else the paired `cone_event_io_consume_ping` is in `cone_event_io_emit`.
         }
         // If this fails, coroutines will get leaked.
         mun_cant_fail(cone_event_io_emit(&loop->io, next) MUN_RETHROW);
