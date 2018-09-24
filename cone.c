@@ -558,7 +558,7 @@ int cone_lock(struct cone_mutex *m) {
             return -1;
         }
         unsigned n = atomic_load_explicit(A(&m->st), memory_order_relaxed);
-        while (n > 1 && !atomic_compare_exchange_weak(A(&m->st), &n, n / 2)) {}
+        while (!atomic_compare_exchange_weak(A(&m->st), &n, n >> 1)) {}
     }
     return 0;
 }
@@ -568,8 +568,8 @@ void cone_unlock(struct cone_mutex *m) {
     // This somewhat compensates for the unfairness by scheduling a bunch of waiters
     // at once if the lock is used from one thread and the critical section rarely yields.
     unsigned n = atomic_load_explicit(A(&m->st), memory_order_relaxed);
-    while (n < 2048 && !atomic_compare_exchange_weak(A(&m->st), &n, n * 2)) {}
-    cone_wake(&m->e, n + 1);
+    while (!atomic_compare_exchange_weak(A(&m->st), &n, n << 1 | 1)) {}
+    cone_wake(&m->e, n | 1);
 }
 
 int cone_iowait(int fd, int write) {
