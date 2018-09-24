@@ -124,16 +124,13 @@ struct cone {
         event& operator=(const event&) = delete;
 
         bool wait() noexcept {
-            return !cone_wait_if(this, 1);
+            return !cone_wait(this, 1);
         }
 
-        template <bool b = true, typename F /* = bool() noexcept */>
-        bool wait_if(F&& f) noexcept {
-            return b ? !cone_wait_if(this, f()) : !cone_wait_if_not(this, f());
-        }
+        // TODO `wait_if` and valued `wake`.
 
         size_t wake(size_t n = std::numeric_limits<size_t>::max()) noexcept {
-            return cone_wake(this, n);
+            return cone_wake(this, n, 0);
         }
     };
 

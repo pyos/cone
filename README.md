@@ -62,9 +62,9 @@ Some options (`CFLAGS="... -DOPTION=VALUE"`):
     synchronize coroutines even on different threads. `cone_wait` and `cone_wake` have
     semantics similar to Linux's `FUTEX_WAIT` and `FUTEX_WAKE`, except the storage for
     "implementation artifacts", as the kernel calls them, is provided by the user of
-    the library (for performance and simplicity of the implementation).
-    More generic `cone_wait_if` and `cone_wait_if_not` allow using an arbitrary
-    expression to determine if the precondition for sleeping still holds.
+    the library (for performance and simplicity of the implementation), and also `cone_wait`
+    accepts an arbitrary expression that is evaluated atomically instead of only checking
+    for equality.
 
     (Note that the locks are kind of bad, though. My advice is to only use events
     in non performance critical or low contention places. Or even better, don't

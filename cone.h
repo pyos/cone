@@ -79,30 +79,28 @@ struct cone_event { void *head, *tail, *lk; };
 // or calling `cone_evprepare` on another event!
 void cone_evprepare(struct cone_event *ev);
 
-// If `success` is the same as `sleep_if`, wait for `cone_wake`. Otherwise, undo `cone_evprepare`.
-// If `success` is 0, instead of returning normally, fail with EAGAIN. Everything between `cone_evprepare`
-// and `cone_evfinish` is atomic and totally ordered w.r.t. other pairs of calls and `cone_wake`.
-int cone_evfinish(struct cone_event *ev, int success, int sleep_if) mun_throws(cancelled, timeout, retry);
+// If `sleep` is 0, undo `cone_evprepare` and return 0, else wait for `cone_wake` and return
+// the value passed to it as an argument. Everything between `cone_evprepare` and `cone_evfinish`
+// is atomic and totally ordered w.r.t. other transactions and `cone_wake`. If cancelled,
+// `~value` is returned where value = 0 if no `cone_wake`s have occurred before cancellation.
+int cone_evfinish(struct cone_event *ev, int sleep) mun_throws(cancelled, timeout, retry);
 
-// If the second argument evaluates to true, wait for `cone_wake`. Otherwise, fail with EAGAIN.
-#define cone_wait_if(ev, x) (cone_evprepare(ev), cone_evfinish(ev, !!(x), 1))
-
-// If the second argument evaluates to false, wait for `cone_wake` and then fail with EAGAIN.
-#define cone_wait_if_not(ev, x) (cone_evprepare(ev), cone_evfinish(ev, x, 0))
-
-// Compatibility alias: sleep on `*x == y`, else fail with EAGAIN.
-#define cone_wait(ev, x, y) cone_wait_if(ev, *(x) == y)
+// A shorthand for the common case where the second argument for `cone_evfinish` is one expression.
+#define cone_wait(ev, x) (cone_evprepare(ev), cone_evfinish(ev, x))
 
 // Wake up at most N coroutines paused with `cone_wait`, return the actual number.
-size_t cone_wake(struct cone_event *, size_t);
+size_t cone_wake(struct cone_event *, size_t, int ret);
 
 // A coroutine-owned mutex. Zero-initialized.
 struct cone_mutex { struct cone_event e; unsigned st; char lk; };
 
+// Either lock and succeed, or fail with EAGAIN; do not check for cancellation.
 int cone_try_lock(struct cone_mutex *) mun_throws(retry);
 
+// Lock, waiting until it's possible. Fail on cancellation or timeout.
 int cone_lock(struct cone_mutex *) mun_throws(cancelled, timeout);
 
+// Allow a `cone_lock` to continue. The ordering is not guaranteed.
 void cone_unlock(struct cone_mutex *);
 
 // Enable or disable cancellation and deadlines for this coroutine. If disabled, their effect

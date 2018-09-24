@@ -370,7 +370,7 @@ static void __attribute__((noreturn)) cone_body(struct cone *c) {
     #endif
     c->flags |= (c->body.code(c->body.data) ? CONE_FLAG_FAILED : 0) | CONE_FLAG_FINISHED;
     atomic_fetch_sub_explicit(&c->loop->active, 1, memory_order_acq_rel);
-    cone_wake(&c->done, (size_t)-1);
+    cone_wake(&c->done, (size_t)-1, 0);
     #if CONE_ASAN
         __sanitizer_start_switch_fiber(NULL, c->target_stack, c->target_stack_size);
     #endif
@@ -456,6 +456,7 @@ static int cone_deschedule(struct cone *c) {
 struct cone_event_it {
     struct cone_event_it *next, *prev;
     struct cone *c;
+    int v;
 };
 
 static _Thread_local struct cone_mcs_lock {
@@ -494,26 +495,24 @@ void cone_evprepare(struct cone_event *ev) {
     cone_spin_lock(&ev->lk);
 }
 
-int cone_evfinish(struct cone_event *ev, int success, int sleep_if) {
-    if (sleep_if == success) {
-        struct cone_event_it it = { NULL, ev->tail, cone };
-        ev->tail ? (it.prev->next = &it) : (ev->head = &it);
-        ev->tail = &it;
+int cone_evfinish(struct cone_event *ev, int sleep) {
+    if (!sleep)
+        return cone_spin_unlock(&ev->lk), 0;
+    struct cone_event_it it = { NULL, ev->tail, cone, 0 };
+    ev->tail ? (it.prev->next = &it) : (ev->head = &it);
+    ev->tail = &it;
+    cone_spin_unlock(&ev->lk);
+    if (cone_deschedule(cone) MUN_RETHROW) {
+        cone_spin_lock(&ev->lk);
+        it.prev ? (it.prev->next = it.next) : (ev->head = it.next);
+        it.next ? (it.next->prev = it.prev) : (ev->tail = it.prev);
         cone_spin_unlock(&ev->lk);
-        if (cone_deschedule(cone) MUN_RETHROW) {
-            cone_spin_lock(&ev->lk);
-            it.prev ? (it.prev->next = it.next) : (ev->head = it.next);
-            it.next ? (it.next->prev = it.prev) : (ev->tail = it.prev);
-            cone_spin_unlock(&ev->lk);
-            return -1;
-        }
-    } else {
-        cone_spin_unlock(&ev->lk);
+        return ~it.v; // ~0 == -1 if not woken
     }
-    return success ? 0 : mun_error(retry, "precondition failed");
+    return it.v;
 }
 
-size_t cone_wake(struct cone_event *ev, size_t n) {
+size_t cone_wake(struct cone_event *ev, size_t n, int ret) {
     size_t r = 0;
     // XXX check if nobody is waiting and don't even lock? (that's what FUTEX_WAKE does, dunno if it helps)
     cone_spin_lock(&ev->lk);
@@ -525,6 +524,7 @@ size_t cone_wake(struct cone_event *ev, size_t n) {
         it->next = it->prev = it;
         // 2. dereferencing the item and the coroutine must be done before releasing the lock,
         // else one or both may get deallocated between `cone_spin_unlock` and `cone_schedule`:
+        it->v = ret;
         struct cone_loop *loop = cone_schedule(it->c, CONE_FLAG_WOKEN);
         if (loop) {
             int should_continue = n && ev->head;
@@ -550,12 +550,11 @@ int cone_try_lock(struct cone_mutex *m) {
 }
 
 int cone_lock(struct cone_mutex *m) {
-    // FIXME this is unfair; if one coroutine waits and is then woken, another
-    //       can take the lock while the first one is still in the run queue.
-    if (atomic_exchange(A(&m->lk), 1)) while (cone_wait_if_not(&m->e, !atomic_exchange(A(&m->lk), 1))) {
-        if (mun_errno != EAGAIN MUN_RETHROW) { // could still be us who got woken by unlock() though
-            if (!atomic_exchange(A(&m->lk), 1))
-                cone_unlock(m);
+    // TODO fair handoff: on unlock, don't set `lk` to 0, make this call return a special marker instead
+    for (int r; atomic_exchange(A(&m->lk), 1) && (r = cone_wait(&m->e, atomic_exchange(A(&m->lk), 1))) != 0;) {
+        if (r < 0 MUN_RETHROW) {
+            if (r == -2) // may be the last one woken by `cone_unlock`, need to wake more
+                cone_wake(&m->e, 1, 1);
             return -1;
         }
         unsigned n = atomic_load_explicit(A(&m->st), memory_order_relaxed);
@@ -570,7 +569,7 @@ void cone_unlock(struct cone_mutex *m) {
     // at once if the lock is used from one thread and the critical section rarely yields.
     unsigned n = atomic_load_explicit(A(&m->st), memory_order_relaxed);
     while (!atomic_compare_exchange_weak(A(&m->st), &n, n << 1 | 1)) {}
-    cone_wake(&m->e, n | 1);
+    cone_wake(&m->e, n | 1, 1);
 }
 
 int cone_iowait(int fd, int write) {
@@ -593,10 +592,8 @@ int cone_sleep_until(mun_usec t) {
 int cone_cowait(struct cone *c, int norethrow) {
     if (c == cone) // maybe detect more complicated deadlocks too?..
         return mun_error(deadlock, "coroutine waiting on itself");
-    // XXX `while (!c) if (wait_if !c)` or `if (!c) while (wait_if_not c)`?
-    while (!(c->flags & CONE_FLAG_FINISHED))
-        if (cone_wait_if(&c->done, !(c->flags & CONE_FLAG_FINISHED)) && mun_errno != EAGAIN MUN_RETHROW)
-            return -1;
+    if (!(c->flags & CONE_FLAG_FINISHED) && cone_wait(&c->done, !(c->flags & CONE_FLAG_FINISHED)) MUN_RETHROW)
+        return -1;
     // XXX the ordering here doesn't actually matter.
     if (!norethrow && atomic_fetch_or(&c->flags, CONE_FLAG_JOINED) & CONE_FLAG_FAILED)
         return *mun_last_error() = c->error, mun_error_up(MUN_CURRENT_FRAME);
