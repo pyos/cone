@@ -293,7 +293,7 @@ export { "cone:yield", &test_yield }
      , { "cone:wait on cancelled before sleeping", &test_cancel_sleeping }
      , { "cone:wait on cancelled by scope guard", &test_cancel_by_guard }
      , { "cone:wait(rethrow=false)", &test_wait_no_rethrow }
-     , { "cone:sleep 50ms concurrent with 100ms)", &test_sleep<false> }
+     , { "cone:sleep 50ms concurrent with 100ms", &test_sleep<false> }
      , { "cone:sleep 50ms concurrent with cancelled 100ms", &test_sleep<true> }
      , { "cone:sleep while handling cancellation", &test_sleep_after_cancel }
      , { "cone:deadline", &test_deadline }
