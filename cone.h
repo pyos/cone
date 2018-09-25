@@ -75,20 +75,23 @@ static inline int cone_yield(void) mun_throws(cancelled, timeout, memory) {
 // A manually triggered event. Zero-initialized.
 struct cone_event { void *head, *tail, *lk; };
 
-// Prepare to wait for an event. MUST be followed by `cone_evfinish` without yielding
-// or calling `cone_evprepare` on another event!
-void cone_evprepare(struct cone_event *ev);
+// Begin an atomic transaction bound to an event. MUST be followed by one of the functions
+// below without yielding or beginning a transaction on another event.
+void cone_tx_begin(struct cone_event *);
 
-// If `sleep` is 0, undo `cone_evprepare` and return 0, else wait for `cone_wake` and return
-// the value passed to it as an argument. Everything between `cone_evprepare` and `cone_evfinish`
-// is atomic and totally ordered w.r.t. other transactions and `cone_wake`. If cancelled,
-// `~value` is returned where value = 0 if no `cone_wake`s have occurred before cancellation.
-int cone_evfinish(struct cone_event *ev, int sleep) mun_throws(cancelled, timeout, retry);
+// Finish an atomic transaction.
+void cone_tx_end(struct cone_event *);
 
-// A shorthand for the common case where the second argument for `cone_evfinish` is one expression.
-#define cone_wait(ev, x) (cone_evprepare(ev), cone_evfinish(ev, x))
+// Finish an atomic transaction, wait for `cone_wake` and return the value passed to it
+// as an argument. If cancelled, `~value` is returned, or ~0 == -1 if no `cone_wake`s
+// have occurred before cancellation.
+int cone_tx_wait(struct cone_event *) mun_throws(cancelled, timeout);
 
-// Wake up at most N coroutines paused with `cone_wait`, return the actual number.
+// Atomically execute an expression and wait for `cone_wake` if the result is not 0,
+// else return 0.
+#define cone_wait(ev, x) (cone_tx_begin(ev), !(x) ? cone_tx_end(ev), 0 : cone_tx_wait(ev))
+
+// Wake up at most N coroutines paused with `cone_tx_wait`, return the actual number.
 size_t cone_wake(struct cone_event *, size_t, int ret);
 
 // A coroutine-owned mutex. Zero-initialized.
@@ -107,7 +110,7 @@ void cone_unlock(struct cone_mutex *, int fair);
 // is postponed until they are re-enabled. Returns the previous state.
 int cone_intr(int enable);
 
-// Make the next (or current, if any) call to `cone_wait`, `cone_iowait`, `cone_sleep_until`,
+// Make the next (or current, if any) call to `cone_tx_wait`, `cone_iowait`, `cone_sleep_until`,
 // `cone_sleep`, or `cone_yield` from the specified coroutine fail with ECANCELED.
 // No-op if the coroutine has already finished.
 void cone_cancel(struct cone *);
