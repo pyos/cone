@@ -18,7 +18,7 @@ void __sanitizer_finish_switch_fiber(void* fake_stack_save, const void** old_bot
 // Mach-O requires some weird link-time magic to properly support weak symbols,
 // and also other non-ELF formats probably don't support them at all, so provide a switch.
 #if CONE_CXX
-struct /*__cxxabiv1::, dunno what the mangled name is, doesn't matter */__cxa_eh_globals {
+struct /* __cxxabiv1:: */ __cxa_eh_globals {
     void* caughtExceptions;
     unsigned int uncaughtExceptions;
 };
