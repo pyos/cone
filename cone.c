@@ -552,10 +552,7 @@ int cone_try_lock(struct cone_mutex *m) {
 int cone_lock(struct cone_mutex *m) {
     int r = 0;
     // 0 = xchg succeeded, 1 = fair handoff, 2 = retry xchg
-    if (atomic_exchange(A(&m->lk), 1)) while ((r = cone_wait(&m->e, atomic_exchange(A(&m->lk), 1))) == 2) {
-        unsigned n = atomic_load_explicit(A(&m->st), memory_order_relaxed);
-        while (!atomic_compare_exchange_weak(A(&m->st), &n, n >> 1)) {}
-    }
+    if (atomic_exchange(A(&m->lk), 1)) while ((r = cone_wait(&m->e, atomic_exchange(A(&m->lk), 1))) == 2) {}
     if (r < 0 MUN_RETHROW) {
         if (r == ~1) // acquired the lock by direct handoff, but also cancelled
             cone_unlock(m, 1);
@@ -571,11 +568,10 @@ void cone_unlock(struct cone_mutex *m, int fair) {
         return;
     // (Some waiters may queue here, so wake(n, 2) after a store is needed even on a fair unlock.)
     atomic_store_explicit(A(&m->lk), 0, memory_order_release);
-    // This somewhat compensates for the unfairness by scheduling a bunch of waiters
-    // at once if the lock is used from one thread and the critical section rarely yields.
-    unsigned n = atomic_load_explicit(A(&m->st), memory_order_relaxed);
-    while (!atomic_compare_exchange_weak(A(&m->st), &n, n << 1 | 1)) {}
-    cone_wake(&m->e, n | 1, 2);
+    // FIXME if the critical section rarely yields, waking one by one leaves huge gaps
+    //       in the run queue where another coroutine may barge in. This isn't just unfair,
+    //       this is super unfair.
+    cone_wake(&m->e, 1, 2);
 }
 
 int cone_iowait(int fd, int write) {

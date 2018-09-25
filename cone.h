@@ -92,7 +92,7 @@ int cone_evfinish(struct cone_event *ev, int sleep) mun_throws(cancelled, timeou
 size_t cone_wake(struct cone_event *, size_t, int ret);
 
 // A coroutine-owned mutex. Zero-initialized.
-struct cone_mutex { struct cone_event e; unsigned st; char lk; };
+struct cone_mutex { struct cone_event e; char lk; };
 
 // Either lock and succeed, or fail with EAGAIN; do not check for cancellation.
 int cone_try_lock(struct cone_mutex *) mun_throws(retry);
