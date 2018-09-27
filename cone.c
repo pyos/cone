@@ -491,42 +491,46 @@ static void cone_tx_unlock(struct cone_event *ev) {
 }
 
 void cone_tx_begin(struct cone_event *ev) {
-    cone_tx_lock(ev);
+    // The increment must be a seq-cst operation so that it is not reordered with
+    // the contents of the transaction.
+    cone_tx_lock(ev), (void)++*A(&ev->w);
 }
 
 void cone_tx_end(struct cone_event *ev) {
-    cone_tx_unlock(ev);
+    cone_tx_unlock(ev), (void)--*A(&ev->w);
 }
 
 int cone_tx_wait(struct cone_event *ev) {
-    struct cone_event_it it = { NULL, ev->tail, cone, 0 };
+    struct cone_event_it it = { NULL, ev->tail, cone, -1 };
     ev->tail ? (it.prev->next = &it) : (ev->head = &it);
     ev->tail = &it;
     cone_tx_unlock(ev);
     if (cone_deschedule(cone) MUN_RETHROW) {
         cone_tx_lock(ev);
-        it.prev ? (it.prev->next = it.next) : (ev->head = it.next);
-        it.next ? (it.next->prev = it.prev) : (ev->tail = it.prev);
+        if (it.v < 0) {
+            (void)--*A(&ev->w);
+            it.prev ? (it.prev->next = it.next) : (ev->head = it.next);
+            it.next ? (it.next->prev = it.prev) : (ev->tail = it.prev);
+        }
         cone_tx_unlock(ev);
-        return ~it.v; // ~0 == -1 if not woken
+        return it.v < 0 ? -1 : ~it.v;
     }
     return it.v;
 }
 
 size_t cone_wake(struct cone_event *ev, size_t n, int ret) {
     size_t r = 0;
-    // XXX check if nobody is waiting and don't even lock? (that's what FUTEX_WAKE does, dunno if it helps)
+    if (!n || !atomic_load_explicit(A(&ev->w), memory_order_acquire))
+        return 0; // serialized before any `cone_tx_begin`
     cone_tx_lock(ev);
     for (struct cone_event_it *it; n-- && (it = ev->head); r++) {
+        (void)--*A(&ev->w);
         ev->head = it->next;
         it->next ? (it->next->prev = it->prev) : (ev->tail = it->prev);
-        // The coroutine may still be concurrently cancelled. This means that
-        // 1. the item needs to be linked to itself so that removing it twice is a no-op:
-        it->next = it->prev = it;
-        // 2. dereferencing the item and the coroutine must be done before releasing the lock,
-        // else one or both may get deallocated between `cone_tx_unlock` and `cone_schedule`:
-        it->v = ret;
+        it->v = ret < 0 ? 0 : ret;
         struct cone_loop *loop = cone_schedule(it->c, CONE_FLAG_WOKEN);
+        // Note that the coroutine may be concurrently cancelled, so everything above
+        // must happen before the `if (cone_deschedule)` branch's contents in `cone_tx_wait`.
         if (loop) {
             int should_continue = n && ev->head;
             // This unlock introduces an anomaly in `cone_cancel`: if A and B are waiting

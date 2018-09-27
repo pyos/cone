@@ -73,7 +73,7 @@ static inline int cone_yield(void) mun_throws(cancelled, timeout, memory) {
 }
 
 // A manually triggered event. Zero-initialized.
-struct cone_event { void *head, *tail, *lk; };
+struct cone_event { void *head, *tail, *lk; unsigned w; };
 
 // Begin an atomic transaction bound to an event. MUST be followed by one of the functions
 // below without yielding or beginning a transaction on another event.
@@ -92,7 +92,7 @@ int cone_tx_wait(struct cone_event *) mun_throws(cancelled, timeout);
 #define cone_wait(ev, x) (cone_tx_begin(ev), !(x) ? cone_tx_end(ev), 0 : cone_tx_wait(ev))
 
 // Wake up at most N coroutines paused with `cone_tx_wait`, return the actual number.
-size_t cone_wake(struct cone_event *, size_t, int ret);
+size_t cone_wake(struct cone_event *, size_t, int /* non-negative */ ret);
 
 // A coroutine-owned mutex. Zero-initialized.
 struct cone_mutex { struct cone_event e; char lk; };
