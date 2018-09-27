@@ -104,7 +104,8 @@ int cone_try_lock(struct cone_mutex *) mun_throws(retry);
 int cone_lock(struct cone_mutex *) mun_throws(cancelled, timeout);
 
 // Allow a `cone_lock` to continue. If fair and there are waiters, wake the first one.
-void cone_unlock(struct cone_mutex *, int fair);
+// Return whether any coroutine has been woken up as a result.
+int cone_unlock(struct cone_mutex *, int fair);
 
 // Enable or disable cancellation and deadlines for this coroutine. If disabled, their effect
 // is postponed until they are re-enabled. Returns the previous state.

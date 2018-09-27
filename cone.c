@@ -556,15 +556,15 @@ int cone_lock(struct cone_mutex *m) {
     return 0;
 }
 
-void cone_unlock(struct cone_mutex *m, int fair) {
+int cone_unlock(struct cone_mutex *m, int fair) {
     if (fair && cone_wake(&m->e, 1, 1))
-        return;
+        return 1;
     // (Some waiters may queue here, so wake(n, 2) after a store is needed even on a fair unlock.)
     atomic_store_explicit(A(&m->lk), 0, memory_order_release);
-    // FIXME if the critical section rarely yields, waking one by one leaves huge gaps
-    //       in the run queue where another coroutine may barge in. This isn't just unfair,
-    //       this is super unfair.
-    cone_wake(&m->e, 1, 2);
+    // XXX if the critical section rarely yields, waking one by one leaves huge gaps
+    //     in the run queue where another coroutine may barge in. This isn't just unfair,
+    //     this is super unfair.
+    return cone_wake(&m->e, 1, 2);
 }
 
 int cone_iowait(int fd, int write) {
