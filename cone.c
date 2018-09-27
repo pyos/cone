@@ -470,7 +470,7 @@ static _Thread_local struct cone_mcs_lock {
 
 #define A(p) ((volatile _Atomic(__typeof__(*p)) *)(p))
 
-void cone_tx_begin(struct cone_event *ev) {
+static void cone_tx_lock(struct cone_event *ev) {
     struct cone_mcs_lock *p = atomic_exchange(A(&ev->lk), &lki);
     if (!p)
         return;
@@ -480,7 +480,7 @@ void cone_tx_begin(struct cone_event *ev) {
         if (++__n % CONE_SPIN_INTERVAL) __asm__ __volatile__("pause"); else sched_yield();
 }
 
-void cone_tx_end(struct cone_event *ev) {
+static void cone_tx_unlock(struct cone_event *ev) {
     if (atomic_compare_exchange_strong(A(&ev->lk), &(void *){&lki}, NULL))
         return;
     struct cone_mcs_lock *n;
@@ -490,16 +490,24 @@ void cone_tx_end(struct cone_event *ev) {
     atomic_store_explicit(&lki.next, NULL, memory_order_relaxed);
 }
 
+void cone_tx_begin(struct cone_event *ev) {
+    cone_tx_lock(ev);
+}
+
+void cone_tx_end(struct cone_event *ev) {
+    cone_tx_unlock(ev);
+}
+
 int cone_tx_wait(struct cone_event *ev) {
     struct cone_event_it it = { NULL, ev->tail, cone, 0 };
     ev->tail ? (it.prev->next = &it) : (ev->head = &it);
     ev->tail = &it;
-    cone_tx_end(ev);
+    cone_tx_unlock(ev);
     if (cone_deschedule(cone) MUN_RETHROW) {
-        cone_tx_begin(ev);
+        cone_tx_lock(ev);
         it.prev ? (it.prev->next = it.next) : (ev->head = it.next);
         it.next ? (it.next->prev = it.prev) : (ev->tail = it.prev);
-        cone_tx_end(ev);
+        cone_tx_unlock(ev);
         return ~it.v; // ~0 == -1 if not woken
     }
     return it.v;
@@ -508,7 +516,7 @@ int cone_tx_wait(struct cone_event *ev) {
 size_t cone_wake(struct cone_event *ev, size_t n, int ret) {
     size_t r = 0;
     // XXX check if nobody is waiting and don't even lock? (that's what FUTEX_WAKE does, dunno if it helps)
-    cone_tx_begin(ev);
+    cone_tx_lock(ev);
     for (struct cone_event_it *it; n-- && (it = ev->head); r++) {
         ev->head = it->next;
         it->next ? (it->next->prev = it->prev) : (ev->tail = it->prev);
@@ -516,7 +524,7 @@ size_t cone_wake(struct cone_event *ev, size_t n, int ret) {
         // 1. the item needs to be linked to itself so that removing it twice is a no-op:
         it->next = it->prev = it;
         // 2. dereferencing the item and the coroutine must be done before releasing the lock,
-        // else one or both may get deallocated between `cone_tx_end` and `cone_schedule`:
+        // else one or both may get deallocated between `cone_tx_unlock` and `cone_schedule`:
         it->v = ret;
         struct cone_loop *loop = cone_schedule(it->c, CONE_FLAG_WOKEN);
         if (loop) {
@@ -525,16 +533,16 @@ size_t cone_wake(struct cone_event *ev, size_t n, int ret) {
             // on this event and they are cancelled in the same order while we're busy
             // pinging a loop of some coroutine between them, it'll look like B was
             // cancelled before `cone_wake`, while A was cancelled after.
-            cone_tx_end(ev);
+            cone_tx_unlock(ev);
             cone_event_io_ping(&loop->io);
             if (!should_continue)
                 // Another item might have been added already, but we don't care, we
                 // pretend to see the old state.
                 return r + 1;
-            cone_tx_begin(ev);
+            cone_tx_lock(ev);
         }
     }
-    cone_tx_end(ev);
+    cone_tx_unlock(ev);
     return r;
 }
 
