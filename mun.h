@@ -83,6 +83,9 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 // Call `mun_error_at` with the current stack frame, error id "mun_errno_X", and name "X".
 #define mun_error(id, ...) (mun_error_at(mun_errno_##id, #id, MUN_CURRENT_FRAME, __VA_ARGS__), -1)
 
+// A version of `mun_error` that accepts an errno instead of a `mun_errno`'s name.
+#define mun_error_n(en, ...) (mun_error_at(en, #en, MUN_CURRENT_FRAME, __VA_ARGS__), -1)
+
 // No-op macros to make function declarations slightly more descriptive.
 #define mun_throws(...)
 
