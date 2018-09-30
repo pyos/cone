@@ -82,7 +82,8 @@ struct cone {
     struct ref : std::unique_ptr<cone, dropper> {
         ref() = default;
 
-        template <typename F /* = bool() */, typename G = std::remove_reference_t<F>>
+        template <typename F /* = bool() */, typename G = std::remove_reference_t<F>,
+                  typename = std::enable_if_t<!std::is_base_of<ref, G>::value>>
         ref(F&& f, size_t stack = 100UL * 1024) noexcept {
             // XXX if F is trivially copyable and fits into one `void*`, we can pass it by value.
             reset(cone_spawn(stack, cone_bind(&invoke<G>, new G(std::forward<F>(f)))));
