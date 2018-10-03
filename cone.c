@@ -152,6 +152,7 @@ static int cone_event_io_init(struct cone_event_io *set) {
     return 0;
 }
 
+#if CONE_EVNOTIFIER != 2
 static int inthash(int key) {
     key = (key ^ 61) ^ (key >> 16);
     key = key + (key << 3);
@@ -160,6 +161,7 @@ static int inthash(int key) {
     key = key ^ (key >> 15);
     return key;
 }
+#endif
 
 static int cone_event_io_mod(struct cone_event_io *set, struct cone_event_fd *st, int add) {
     #if CONE_EVNOTIFIER == 2
