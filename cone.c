@@ -105,7 +105,7 @@ struct cone_event_io {
     int selfpipe[2];
     volatile _Atomic(char) interruptible;
     #if CONE_EVNOTIFIER != 2
-        struct cone_event_fd *fds[127];
+        struct cone_event_fd *fds[257];
     #endif
 };
 
