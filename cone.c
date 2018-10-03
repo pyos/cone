@@ -105,7 +105,9 @@ struct cone_event_io {
     int selfpipe[2];
     volatile _Atomic(char) interruptible;
     #if CONE_EVNOTIFIER != 2
-        struct cone_event_fd *fds[257];
+        size_t fdcnt;
+        size_t fdcap;
+        struct cone_event_fd **fds;
     #endif
 };
 
@@ -114,7 +116,14 @@ static void cone_event_io_fini(struct cone_event_io *set) {
         close(set->poller);
     if (set->selfpipe[0] >= 0)
         close(set->selfpipe[0]), close(set->selfpipe[1]);
+    #if CONE_EVNOTIFIER != 2
+        if (set->fds)
+            free(set->fds);
+    #endif
 }
+
+// Must be a power of 2.
+#define CONE_MIN_FDS_CAP 64
 
 static int cone_event_io_init(struct cone_event_io *set) {
     set->selfpipe[0] = set->selfpipe[1] = set->poller = -1;
@@ -122,6 +131,11 @@ static int cone_event_io_init(struct cone_event_io *set) {
     if (pipe(set->selfpipe) || fcntl(set->selfpipe[0], F_SETFD, FD_CLOEXEC)
                             || fcntl(set->selfpipe[1], F_SETFD, FD_CLOEXEC) MUN_RETHROW_OS)
         return cone_event_io_fini(set), -1;
+    #if CONE_EVNOTIFIER != 2
+        if ((set->fds = calloc(CONE_MIN_FDS_CAP, sizeof(struct cone_event_fd *))) == NULL)
+            return cone_event_io_fini(set), mun_error(memory, "could not allocate an fd hash map");
+        set->fdcap = CONE_MIN_FDS_CAP;
+    #endif
     #if CONE_EVNOTIFIER == 1
         if ((set->poller = epoll_create1(EPOLL_CLOEXEC)) < 0 MUN_RETHROW_OS)
             return cone_event_io_fini(set), -1;
@@ -138,13 +152,22 @@ static int cone_event_io_init(struct cone_event_io *set) {
     return 0;
 }
 
+static int inthash(int key) {
+    key = (key ^ 61) ^ (key >> 16);
+    key = key + (key << 3);
+    key = key ^ (key >> 4);
+    key = key * 0x27d4eb2d;
+    key = key ^ (key >> 15);
+    return key;
+}
+
 static int cone_event_io_mod(struct cone_event_io *set, struct cone_event_fd *st, int add) {
     #if CONE_EVNOTIFIER == 2
         uint16_t flags = (add ? EV_ADD|EV_ONESHOT : EV_DELETE)|EV_UDATA_SPECIFIC;
         struct kevent ev = {st->fd, st->write ? EVFILT_WRITE : EVFILT_READ, flags, 0, 0, st};
         return kevent(set->poller, &ev, 1, NULL, 0, NULL) && (add || errno != ENOENT) MUN_RETHROW_OS;
     #else
-        struct cone_event_fd **b = &set->fds[st->fd % (sizeof(set->fds) / sizeof(set->fds[0]))];
+        struct cone_event_fd **b = &set->fds[inthash(st->fd) & (set->fdcap - 1)];
         while (*b && (*b)->fd != st->fd)
             b = &(*b)->link;
         struct cone_event_fd **c = b;
@@ -166,6 +189,33 @@ static int cone_event_io_mod(struct cone_event_io *set, struct cone_event_fd *st
             if (epoll_ctl(set->poller, op, st->fd, &ev) MUN_RETHROW_OS)
                 return *c = (add ? st->link : st), -1;
         #endif
+
+        size_t rehash = 0;
+        if (add) {
+            if (!st->link && set->fdcnt++ * 5 >= set->fdcap * 6)
+                rehash = set->fdcap * 2;
+        } else {
+            if (c == b && (!st->link || st->link->fd != st->fd) && set->fdcnt-- * 2 < set->fdcap)
+                rehash = set->fdcap / 2;
+        }
+        if (rehash >= CONE_MIN_FDS_CAP) {
+            struct cone_event_fd **m = calloc(rehash, sizeof(struct cone_event_fd *));
+            if (!m)
+                return 0; // ignore memory error and accept decreased performance
+            for (size_t i = 0; i < set->fdcap; i++) {
+                for (struct cone_event_fd *p = set->fds[i], *r; p;) {
+                    struct cone_event_fd *q = p;
+                    while (q->link && q->link->fd == q->fd)
+                        q = q->link;
+                    // and move the whole subchain to the beginning of the new bucket.
+                    struct cone_event_fd **h = &m[inthash(p->fd) & (rehash - 1)];
+                    r = q->link, q->link = *h, *h = p, p = r; // :thinking:
+                }
+            }
+            free(set->fds);
+            set->fds = m;
+            set->fdcap = rehash;
+        }
         return 0;
     #endif
 }
@@ -210,7 +260,7 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
         fd_set fds[2] = {};
         FD_SET(set->selfpipe[0], &fds[0]);
         int max_fd = set->selfpipe[0] + 1;
-        for (size_t i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++) {
+        for (size_t i = 0; i < set->fdcap; i++) {
             for (struct cone_event_fd *e = set->fds[i]; e; e = e->link) {
                 if (max_fd <= e->fd)
                     max_fd = e->fd + 1;
@@ -233,7 +283,7 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
             if (evs[i].udata) // oneshot event, removed automatically
                 cone_schedule(((struct cone_event_fd *)evs[i].udata)->c, CONE_FLAG_WOKEN);
     #else
-        for (size_t i = 0; i < sizeof(set->fds) / sizeof(*set->fds); i++)
+        for (size_t i = 0; i < set->fdcap; i++)
             for (struct cone_event_fd *e = set->fds[i]; e; e = e->link)
                 if (FD_ISSET(e->fd, &fds[!!e->write]))
                     cone_event_io_del(set, e), cone_schedule(e->c, CONE_FLAG_WOKEN);
