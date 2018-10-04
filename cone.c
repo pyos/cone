@@ -581,8 +581,8 @@ size_t cone_wake(struct cone_event *ev, size_t n, int ret) {
         it->next ? (it->next->prev = it->prev) : (ev->tail = it->prev);
         it->v = ret < 0 ? 0 : ret;
         struct cone_loop *loop = cone_schedule(it->c, CONE_FLAG_WOKEN);
-        // Note that the coroutine may be concurrently cancelled, so everything above
-        // must happen before the `if (cone_deschedule)` branch's contents in `cone_tx_wait`.
+        // The coroutine may be concurrently cancelled, so everything above must happen
+        // before the `if (cone_deschedule)` branch's contents in `cone_tx_wait`.
         if (loop) {
             int should_continue = n && ev->head;
             // This unlock introduces an anomaly in `cone_cancel`: if A and B are waiting

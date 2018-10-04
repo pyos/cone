@@ -52,7 +52,7 @@ struct mun_error {
     const struct mun_stackframe *stack[16];
 };
 
-// Return the last thrown error. Note that there's no way to mark an error as "swallowed",
+// Return the last thrown error. There's no way to mark an error as "swallowed",
 // so this information may be outdated. Only valid until the next call to `mun_error_at`.
 struct mun_error *mun_last_error(void);
 
@@ -162,7 +162,7 @@ struct mun_vec mun_vec(void);
 
 // Initializer for a vector that shares storage with a null-terminated string.
 //
-//     /* Note that this vector should not be modified: the string is constant. */
+//     /* This vector should not be modified: the string is constant. */
 //     struct mun_vec(char) rs = mun_vec_init_str("Hello, World!");
 //
 #define mun_vec_init_str(str) mun_vec_init_borrow(str, strlen(str))
