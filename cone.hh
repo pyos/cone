@@ -128,7 +128,12 @@ struct cone {
             return !cone_wait(this, 1);
         }
 
-        // TODO `wait_if` and valued `wake`.
+        template <typename F /* = bool() noexcept */>
+        bool wait_if(F&& f) noexcept {
+            return !cone_wait(this, f());
+        }
+
+        // TODO valued `wake`.
 
         size_t wake(size_t n = std::numeric_limits<size_t>::max()) noexcept {
             return cone_wake(this, n, 0);
