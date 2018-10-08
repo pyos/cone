@@ -122,17 +122,3 @@ ssize_t cold_fcn(sendto)(int fd, const void *buf, size_t len, int flags, const s
 
 ssize_t cold_fcn(sendmsg)(int fd, const struct msghdr *msg, int flags)
     cold_iocall(fd, 1, sendmsg, fd, msg, flags)
-
-#if !COLD_NO_OVERRIDE
-unsigned sleep(unsigned sec) {
-    cold_def(sleep);
-    // FIXME should return the difference if woken due to error
-    return cone ? cone_sleep((mun_usec)sec * 1000000ul) ? sec : 0 : libc_sleep(sec);
-}
-
-int nanosleep(const struct timespec *req, struct timespec *rem) {
-    cold_def(nanosleep);
-    // FIXME should fill `rem` if woken due to error
-    return cone ? cone_sleep((mun_usec)req->tv_sec*1000000ull + req->tv_nsec/1000) : libc_nanosleep(req, rem);
-}
-#endif
