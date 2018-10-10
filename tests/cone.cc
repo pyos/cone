@@ -88,12 +88,12 @@ static bool test_sleep_after_cancel(char *) {
 }
 
 static bool test_deadline(char *) {
-    auto d = ::cone->deadline(0us);
+    auto d = ::cone->timeout(0us);
     return ASSERT(!cone::sleep_for(1ms) && mun_errno == ETIMEDOUT, "deadline did not trigger");
 }
 
 static bool test_deadline_lifting(char *) {
-    ::cone->deadline(0us);
+    ::cone->timeout(0us);
     return cone::sleep_for(1ms);
 }
 

@@ -39,8 +39,21 @@ struct cone {
     }
 
     // Same as above, but relative to now.
-    auto deadline(timedelta t) noexcept {
+    auto timeout(timedelta t) noexcept {
         return deadline(time::clock::now() + t);
+    }
+
+    // Same as above, but limited to a single function call.
+    template <typename F>
+    auto deadline(time t, F&& f) noexcept {
+        auto d = deadline(t);
+        return f();
+    }
+
+    template <typename F>
+    auto timeout(timedelta t, F&& f) noexcept {
+        auto d = timeout(t);
+        return f();
     }
 
     // Delay cancellation and deadlines until the end of the function.
