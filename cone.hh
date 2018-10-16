@@ -126,8 +126,9 @@ struct cone {
     };
 
     struct guard : std::unique_ptr<cone, aborter> {
-        guard(ref r = {})
-            : std::unique_ptr<cone, aborter>::unique_ptr(r.release())
+        template <typename... Args>
+        guard(Args&&... args)
+            : std::unique_ptr<cone, aborter>::unique_ptr(cone::ref{std::forward<Args>(args)...}.release())
         {
         }
     };
