@@ -25,22 +25,25 @@ struct cone {
         cone_cancel(this);
     }
 
-    // `cone_deadline` and `cone_complete`, but in RAII form.
+    // `cone_deadline` and `cone_complete`, but in RAII form. `time::max()` is a no-op.
     auto deadline(time t) noexcept {
         struct deleter {
             mun_usec t_;
 
             void operator()(cone *c) noexcept {
-                cone_complete(c, t_);
+                if (t_ != std::numeric_limits<mun_usec>::max())
+                    cone_complete(c, t_);
             }
-        } d{mun_usec_chrono(t)};
-        mun_cant_fail(cone_deadline(this, d.t_) MUN_RETHROW);
-        return std::unique_ptr<cone, deleter>{this, d};
+        };
+        if (t == time::max())
+            return std::unique_ptr<cone, deleter>{this, deleter{std::numeric_limits<mun_usec>::max()}};
+        mun_cant_fail(cone_deadline(this, mun_usec_chrono(t)) MUN_RETHROW);
+        return std::unique_ptr<cone, deleter>{this, deleter{mun_usec_chrono(t)}};
     }
 
-    // Same as above, but relative to now.
+    // Same as above, but relative to now. `timedelta::max()` is a no-op.
     auto timeout(timedelta t) noexcept {
-        return deadline(time::clock::now() + t);
+        return deadline(t == timedelta::max() ? time::max() : time::clock::now() + t);
     }
 
     // Same as above, but limited to a single function call.
