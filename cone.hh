@@ -174,14 +174,16 @@ struct cone {
             return !cone_lock(this);
         }
 
-        bool unlock(bool fair = false) noexcept {
+        template <bool fair = false>
+        bool unlock() noexcept {
             return cone_unlock(this, fair);
         }
 
+        template <bool fair = false>
         auto guard(bool cancellable = true) noexcept {
             struct deleter {
                 void operator()(mutex *m) const {
-                    m->unlock();
+                    m->unlock<fair>();
                 }
             };
             return std::unique_ptr<mutex, deleter>{!cancellable ? (lock(), this) : lock_cancellable() ? this : nullptr};
