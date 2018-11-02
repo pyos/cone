@@ -190,6 +190,19 @@ struct cone {
         }
     };
 
+    template <typename F /* = bool() */>
+    static bool try_mun(F&& f) noexcept try {
+        return f();
+    } catch (const std::exception& e) {
+        std::unique_ptr<const char, void(*)(const void*)> name{typeid(e).name(), [](const void*) noexcept {}};
+        if (char *c = __cxa_demangle(name.get(), nullptr, nullptr, nullptr))
+            name = {c, [](const void *c) noexcept { free((void*)c); }};
+        // XXX perhaps mun_error should contain the whole name instead of a pointer?..
+        return !mun_error_at(mun_errno_custom + 18293, "exception", MUN_CURRENT_FRAME, "[%s] %s", name.get(), e.what());
+    } catch (...) {
+        return !mun_error_at(mun_errno_custom + 18293, "exception", MUN_CURRENT_FRAME, "unknown");
+    }
+
 private:
     static inline mun_usec mun_usec_chrono(time t) noexcept {
         static const auto d = std::chrono::microseconds(mun_usec_monotonic()) - time::clock::now().time_since_epoch()
@@ -198,15 +211,7 @@ private:
     }
 
     template <typename F>
-    static int invoke(void *ptr) noexcept try {
-        return (*std::unique_ptr<F>(reinterpret_cast<F*>(ptr)))() ? 0 : -1;
-    } catch (const std::exception& e) {
-        std::unique_ptr<const char, void(*)(const void*)> name{typeid(e).name(), [](const void*) noexcept {}};
-        if (char *c = __cxa_demangle(name.get(), nullptr, nullptr, nullptr))
-            name = {c, [](const void *c) noexcept { free((void*)c); }};
-        // XXX perhaps mun_error should contain the whole name instead of a pointer?..
-        return mun_error_at(mun_errno_custom + 18293, "exception", MUN_CURRENT_FRAME, "[%s] %s", name.get(), e.what());
-    } catch (...) {
-        return mun_error_at(mun_errno_custom + 18293, "exception", MUN_CURRENT_FRAME, "unknown");
+    static int invoke(void *ptr) noexcept {
+        return try_mun([&] { return (*std::unique_ptr<F>(reinterpret_cast<F*>(ptr)))(); }) ? 0 : -1;
     }
 };
