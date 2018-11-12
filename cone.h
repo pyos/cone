@@ -125,11 +125,18 @@ int cone_deadline(struct cone *, mun_usec) mun_throws(memory);
 // Undo *one* previous call to `cone_deadline` with the same arguments.
 void cone_complete(struct cone *, mun_usec);
 
-// Return the live counter of coroutines active in the running coroutine's event loop.
+// The live counter of coroutines active in the running coroutine's event loop.
 #if __cplusplus
 const std::atomic<unsigned> *cone_count(void);
 #else
 const volatile _Atomic(unsigned) *cone_count(void);
+#endif
+
+// The current scheduling delay, i.e. the time it takes to clear the run queue.
+#if __cplusplus
+const std::atomic<mun_usec> *cone_delay(void);
+#else
+const volatile _Atomic(mun_usec) *cone_delay(void);
 #endif
 
 #if __cplusplus

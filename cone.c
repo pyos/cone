@@ -299,8 +299,10 @@ struct cone_runq_it {
 
 struct cone_runq {
     volatile _Atomic(struct cone_runq_it *) head;
+    volatile _Atomic(mun_usec) delay;
     struct cone_runq_it *tail;
     struct cone_runq_it stub;
+    mun_usec prev;
 };
 
 static void cone_runq_add(struct cone_runq *rq, struct cone_runq_it *it, int init) {
@@ -319,19 +321,21 @@ static struct cone *cone_runq_next(struct cone_runq *rq) {
     struct cone_runq_it *tail = rq->tail;
     struct cone_runq_it *next = atomic_load_explicit(&tail->next, memory_order_acquire);
     if (tail == &rq->stub) {
+        mun_usec now = mun_usec_monotonic();
+        if (rq->prev) {
+            mun_usec ewma = atomic_load_explicit(&rq->delay, memory_order_relaxed) / 2 + (now - rq->prev) / 2;
+            atomic_store_explicit(&rq->delay, ewma, memory_order_relaxed);
+            rq->prev = 0;
+        }
         if (next == NULL)
             return NULL; // empty or blocked while pushing first element
+        rq->prev = now;
         tail = rq->tail = next;
-        next = atomic_load_explicit(&tail->next, memory_order_acquire);
-    }
-    if (!next) { // last element or blocked while pushing next element
-        if (tail != atomic_load_explicit(&rq->head, memory_order_acquire))
-            return NULL; // definitely blocked
         cone_runq_add(rq, &rq->stub, 0);
         next = atomic_load_explicit(&tail->next, memory_order_acquire);
-        if (!next)
-            return NULL; // another push happened before the one above (and is now blocked)
     }
+    if (!next)
+        return NULL; // blocked while pushing next element
     rq->tail = next;
     return (struct cone *)tail;
 }
@@ -682,6 +686,10 @@ void cone_complete(struct cone *c, mun_usec t) {
 
 const volatile _Atomic(unsigned) * cone_count(void) {
     return cone ? &cone->loop->active : NULL;
+}
+
+const volatile _Atomic(mun_usec) *cone_delay(void) {
+    return cone ? &cone->loop->now.delay : NULL;
 }
 
 static int cone_fork(struct cone_loop *loop) {

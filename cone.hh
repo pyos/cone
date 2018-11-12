@@ -89,6 +89,11 @@ struct cone {
         return cone_count();
     }
 
+    // Get the current scheduling delay.
+    static const std::atomic<mun_usec>* delay() noexcept {
+        return cone_delay();
+    }
+
     struct dropper {
         void operator()(cone *c) const noexcept {
             cone_drop(c);
