@@ -9,11 +9,11 @@ tests/%: obj/tests/%
 	$<
 
 obj/tests/%: obj/tests/%.o obj/libcxxcone.a
-	$(CXX) -std=c++14 $(flags) $< -o $@ -Lobj -lcxxcone -ldl -pthread
+	$(CXX) -std=c++17 $(flags) $< -o $@ -Lobj -lcxxcone -ldl -pthread
 
 obj/tests/%.o: tests/%.cc tests/base.cc cone.h mun.h cone.hh
 	@mkdir -p $(dir $@)
-	$(CXX) -std=c++14 $(flags) -DSRC=$< -c tests/base.cc -o $@
+	$(CXX) -std=c++17 $(flags) -DSRC=$< -c tests/base.cc -o $@
 
 # This version is pure C:
 obj/libcone.a: obj/cone.o obj/cold.o obj/mun.o
