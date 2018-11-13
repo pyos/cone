@@ -97,6 +97,24 @@ static bool test_deadline_lifting(char *) {
     return cone::sleep_for(1ms);
 }
 
+static bool test_deadline_while_woken(char *) {
+    cone::time t = cone::time::clock::now();
+    cone::event ev;
+    cone::ref main = [&] {
+        auto d = ::cone->deadline(t);
+        // 1. this coroutine is descheduled
+        // 2. the other coroutine is woken
+        // 3. the deadline is triggered, scheduling this coroutine with ETIMEDOUT,
+        // 5. but a concurrent wake() has marked the event as complete, so timeout is delayed
+        return ev.wait() && ASSERT(!cone::sleep_for(10ms) && mun_errno == ETIMEDOUT, "...");
+    };
+    if (!cone::sleep(t))
+        return false;
+    // 4. this runs while the other coroutine is scheduled, marking its wait as OK
+    ev.wake();
+    return main->wait();
+}
+
 static bool test_count(char *) {
     auto& c = *cone::count();
     if (!ASSERT(c == 1u, "%u != 1", c.load())) return false; // i.e. this coroutine
@@ -298,6 +316,7 @@ export { "cone:yield", &test_yield }
      , { "cone:sleep while handling cancellation", &test_sleep_after_cancel }
      , { "cone:deadline", &test_deadline }
      , { "cone:deadline lifting", &test_deadline_lifting }
+     , { "cone:deadline and concurrent wake", &test_deadline_while_woken }
      , { "cone:count", &test_count }
      , { "cone:event", &test_event }
      , { "cone:event.wake(1)", &test_event_wake }

@@ -76,10 +76,11 @@ static int cone_event_schedule_add(struct cone_event_schedule *ev, mun_usec at, 
     return mun_vec_insert(ev, mun_vec_bisect(ev, at < _->at), &((struct cone_event_at){at, (uintptr_t)c|deadline}));
 }
 
-static void cone_event_schedule_del(struct cone_event_schedule *ev, mun_usec at, struct cone *c, int deadline) {
+static int cone_event_schedule_del(struct cone_event_schedule *ev, mun_usec at, struct cone *c, int deadline) {
     for (size_t i = mun_vec_bisect(ev, at < _->at); i-- && ev->data[i].at == at; )
         if (ev->data[i].c == ((uintptr_t)c|deadline))
-            return mun_vec_erase(ev, i, 1);
+            return mun_vec_erase(ev, i, 1), 1;
+    return 0;
 }
 
 static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev) {
@@ -383,6 +384,7 @@ struct cone {
         size_t target_stack_size;
     #endif
     struct mun_error error;
+    int timeouts;
     _Alignas(max_align_t) char stack[];
 };
 
@@ -486,6 +488,8 @@ void cone_drop(struct cone *c) {
 }
 
 static struct cone_loop *cone_schedule(struct cone *c, int flags) {
+    if (flags & CONE_FLAG_TIMED_OUT)
+        c->timeouts++;
     if (atomic_fetch_or(&c->flags, CONE_FLAG_SCHEDULED | flags) & (CONE_FLAG_SCHEDULED | CONE_FLAG_FINISHED))
         return NULL; // loop is already aware of this, don't ping
     struct cone_loop *loop = cone && cone->loop == c->loop ? NULL : c->loop;
@@ -496,6 +500,8 @@ static struct cone_loop *cone_schedule(struct cone *c, int flags) {
 }
 
 static int cone_deschedule(struct cone *c) {
+    if (c->timeouts)
+        c->flags |= CONE_FLAG_TIMED_OUT;
     unsigned flags = c->flags;
     // Don't even yield if cancelled by another thread while registering the wakeup callback.
     while (!(flags & CONE_FLAG_WOKEN) && (flags & CONE_FLAG_NO_INTR || !(flags & (CONE_FLAG_CANCELLED | CONE_FLAG_TIMED_OUT))))
@@ -507,7 +513,7 @@ static int cone_deschedule(struct cone *c) {
     }
     int state = atomic_fetch_and(&c->flags, ~CONE_FLAG_WOKEN & ~CONE_FLAG_CANCELLED & ~CONE_FLAG_TIMED_OUT);
     return state & CONE_FLAG_CANCELLED ? mun_error(cancelled, "blocking call aborted")
-         : state & CONE_FLAG_TIMED_OUT ? mun_error(timeout, "blocking call timed out") : 0;
+         : !(state & CONE_FLAG_WOKEN) ? mun_error(timeout, "blocking call timed out") : 0;
 }
 
 struct cone_event_it {
@@ -682,7 +688,8 @@ int cone_deadline(struct cone *c, mun_usec t) {
 }
 
 void cone_complete(struct cone *c, mun_usec t) {
-    cone_event_schedule_del(&c->loop->at, t, c, 1);
+    if (!cone_event_schedule_del(&c->loop->at, t, c, 1))
+        c->timeouts--;
 }
 
 const volatile _Atomic(unsigned) * cone_count(void) {
