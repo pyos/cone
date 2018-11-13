@@ -322,16 +322,17 @@ static struct cone *cone_runq_next(struct cone_runq *rq) {
     struct cone_runq_it *next = atomic_load_explicit(&tail->next, memory_order_acquire);
     if (tail == &rq->stub) {
         mun_usec now = mun_usec_monotonic();
-        if (rq->prev) {
-            mun_usec ewma = atomic_load_explicit(&rq->delay, memory_order_relaxed) / 2 + (now - rq->prev) / 2;
-            atomic_store_explicit(&rq->delay, ewma, memory_order_relaxed);
+        mun_usec old = atomic_load_explicit(&rq->delay, memory_order_relaxed);
+        if (next == NULL) {
             rq->prev = 0;
-        }
-        if (next == NULL)
+            atomic_store_explicit(&rq->delay, old * 3 / 4, memory_order_relaxed);
             return NULL; // empty or blocked while pushing first element
+        }
+        if (rq->prev)
+            atomic_store_explicit(&rq->delay, old * 3 / 4 + (now - rq->prev) / 4, memory_order_relaxed);
         rq->prev = now;
-        tail = rq->tail = next;
         cone_runq_add(rq, &rq->stub, 0);
+        tail = rq->tail = next;
         next = atomic_load_explicit(&tail->next, memory_order_acquire);
     }
     if (!next)
