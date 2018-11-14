@@ -457,6 +457,7 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
     if (c == NULL)
         return (void)mun_error(memory, "no space for a stack"), NULL;
     c->flags = CONE_FLAG_SCHEDULED;
+    c->timeouts = 0;
     c->loop = loop;
     c->body = body;
     c->done = (struct cone_event){};
