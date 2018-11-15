@@ -84,14 +84,14 @@ static int cone_event_schedule_del(struct cone_event_schedule *ev, mun_usec at, 
 }
 
 static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev) {
-    while (ev->size) {
+    for (size_t limit = 256; ev->size && limit--; ) {
         mun_usec t = mun_usec_monotonic();
         if (ev->data->at > t)
             return ev->data->at - t;
         for (; ev->size && ev->data->at <= t; mun_vec_erase(ev, 0, 1))
             cone_schedule((struct cone *)(ev->data->c & ~1ul), ev->data->c & 1 ? CONE_FLAG_TIMED_OUT : CONE_FLAG_WOKEN);
     }
-    return MUN_USEC_MAX;
+    return ev->size ? 0 : MUN_USEC_MAX;
 }
 
 struct cone_event_fd {
