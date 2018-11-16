@@ -305,9 +305,7 @@ struct cone_runq {
     mun_usec prev;
 };
 
-static void cone_runq_add(struct cone_runq *rq, struct cone_runq_it *it, int init) {
-    if (init && rq->tail == NULL)
-        atomic_store_explicit(&rq->head, rq->tail = &rq->stub, memory_order_relaxed);
+static void cone_runq_add(struct cone_runq *rq, struct cone_runq_it *it) {
     atomic_store_explicit(&it->next, NULL, memory_order_relaxed);
     // *Almost* wait-free - blocking between xchg and store blocks the consumer too.
     atomic_store_explicit(&atomic_exchange(&rq->head, it)->next, it, memory_order_release);
@@ -331,7 +329,7 @@ static struct cone *cone_runq_next(struct cone_runq *rq) {
         if (rq->prev)
             atomic_store_explicit(&rq->delay, old * 3 / 4 + (now - rq->prev) / 4, memory_order_relaxed);
         rq->prev = now;
-        cone_runq_add(rq, &rq->stub, 0);
+        cone_runq_add(rq, &rq->stub);
         tail = rq->tail = next;
         next = atomic_load_explicit(&tail->next, memory_order_acquire);
     }
@@ -348,9 +346,12 @@ struct cone_loop {
     struct cone_event_schedule at;
 };
 
-static int cone_loop_run(struct cone_loop *loop) {
-    if (cone_event_io_init(&loop->io) MUN_RETHROW)
-        return -1;
+static int cone_loop_init(struct cone_loop *loop) {
+    atomic_store_explicit(&loop->now.head, loop->now.tail = &loop->now.stub, memory_order_relaxed);
+    return cone_event_io_init(&loop->io) MUN_RETHROW;
+}
+
+static void cone_loop_run(struct cone_loop *loop) {
     for (struct cone *c;;) {
         for (size_t limit = 256; limit-- && (c = cone_runq_next(&loop->now));)
             cone_run(c);
@@ -368,7 +369,6 @@ static int cone_loop_run(struct cone_loop *loop) {
     }
     cone_event_io_fini(&loop->io);
     cone_event_schedule_fini(&loop->at);
-    return 0;
 }
 
 struct cone {
@@ -467,7 +467,7 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
     c->rsp[1] = NULL;               // %rbp: nothing; there's no previous frame yet
     c->rsp[2] = (void*)&cone_body;  // %rip: code to execute;
     c->rsp[3] = NULL;               // return address: nothing; same as for %rbp
-    cone_runq_add(&loop->now, &c->runq, 1);
+    cone_runq_add(&loop->now, &c->runq);
     atomic_fetch_add_explicit(&loop->active, 1, memory_order_relaxed);
     return c;
 }
@@ -491,7 +491,7 @@ static struct cone_loop *cone_schedule(struct cone *c, int flags) {
     struct cone_loop *loop = cone && cone->loop == c->loop ? NULL : c->loop;
     // This may cause the coroutine to be destroyed concurrently by its loop.
     // Meaning, accessing `c->loop` after the call returns is unsafe.
-    cone_runq_add(&c->loop->now, &c->runq, 0);
+    cone_runq_add(&c->loop->now, &c->runq);
     return loop;
 }
 
@@ -694,13 +694,12 @@ const volatile _Atomic(mun_usec) *cone_delay(void) {
 }
 
 static int cone_fork(struct cone_loop *loop) {
-    mun_cant_fail(cone_loop_run(loop) MUN_RETHROW);
-    return free(loop), 0;
+    return cone_loop_run(loop), free(loop), 0;
 }
 
 struct cone *cone_loop(size_t size, struct cone_closure body, int (*run)(struct cone_closure)) {
     struct cone_loop *loop = calloc(sizeof(struct cone_loop), 1);
-    if (loop == NULL MUN_RETHROW_OS)
+    if (loop == NULL || cone_loop_init(loop) MUN_RETHROW_OS)
         return NULL;
     struct cone *c = cone_spawn_on(loop, size, body);
     if (c == NULL MUN_RETHROW)
@@ -711,12 +710,13 @@ struct cone *cone_loop(size_t size, struct cone_closure body, int (*run)(struct 
 }
 
 static int cone_main_run(struct cone_loop *loop) {
-    return mun_cant_fail(cone_loop_run(loop) MUN_RETHROW);
+    return cone_loop_run(loop), 0;
 }
 
 static struct cone_loop cone_main_loop = {};
 
 static void __attribute__((constructor)) cone_main_init(void) {
+    mun_cant_fail(cone_loop_init(&cone_main_loop) MUN_RETHROW);
     struct cone *c = cone_spawn_on(&cone_main_loop, CONE_DEFAULT_STACK, cone_bind(&cone_main_run, &cone_main_loop));
     mun_cant_fail(c == NULL MUN_RETHROW);
     cone_switch(c); // the loop will then switch back because the coroutine is scheduled to run
