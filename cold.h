@@ -11,7 +11,7 @@ extern "C" {
 struct iovec;
 struct msghdr;
 
-#if COLD_NO_OVERRIDE
+#if !COLD_OVERRIDE
 #define cold_fwd(ret, f, args) ret cold_##f args
 #else
 #define cold_fwd(ret, f, args) ret f args; static ret (*const cold_##f) args = &f

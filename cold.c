@@ -4,7 +4,7 @@
 #include <time.h>
 #include <fcntl.h>
 
-#if COLD_NO_OVERRIDE
+#if !COLD_OVERRIDE
 #define cold_fcn(f) cold_##f
 #define cold_def(f) static __typeof__(f) *const libc_##f = &f
 #else
@@ -85,7 +85,7 @@ ssize_t cold_fcn(read)(int fd, void *buf, size_t count)
 ssize_t cold_fcn(pread)(int fd, void *buf, size_t count, off_t offset)
     cold_iocall(fd, 0, pread, fd, buf, count, offset)
 
-#if __linux__ && !COLD_NO_OVERRIDE
+#if __linux__ && COLD_OVERRIDE
 ssize_t __read_chk(int fd, void *buf, size_t count, size_t buflen)
     cold_iocall(fd, 0, __read_chk, fd, buf, count, buflen)
 
