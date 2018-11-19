@@ -26,7 +26,7 @@ cold_fwd(int, listen, (int, int));
 cold_fwd(int, connect, (int, const struct sockaddr *, socklen_t));
 // Returned socket is non-blocking:
 cold_fwd(int, accept, (int, struct sockaddr *, socklen_t *));
-#ifdef __linux__
+#if __linux__
 cold_fwd(int, accept4, (int, struct sockaddr *, socklen_t *, int));
 #endif
 // Coroutine-blocking versions:
@@ -42,6 +42,11 @@ cold_fwd(ssize_t, writev,   (int, const struct iovec *, int));
 cold_fwd(ssize_t, send,     (int, const void *, size_t, int));
 cold_fwd(ssize_t, sendto,   (int, const void *, size_t, int, const struct sockaddr *, socklen_t));
 cold_fwd(ssize_t, sendmsg,  (int, const struct msghdr *, int));
+
+#if __linux__
+cold_fwd(int, recvmmsg, (int, struct mmsghdr *, unsigned, int, struct timespec *));
+cold_fwd(int, sendmmsg, (int, struct mmsghdr *, unsigned, int));
+#endif
 
 #undef cold_fwd
 

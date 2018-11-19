@@ -122,3 +122,11 @@ ssize_t cold_fcn(sendto)(int fd, const void *buf, size_t len, int flags, const s
 
 ssize_t cold_fcn(sendmsg)(int fd, const struct msghdr *msg, int flags)
     cold_iocall(fd, 1, sendmsg, fd, msg, flags)
+
+#if __linux__
+int cold_fcn(recvmmsg)(int fd, struct mmsghdr *msgvec, unsigned vlen, int flags, struct timespec *timeout)
+    cold_iocall(fd, 0, recvmmsg, fd, msgvec, vlen, flags, timeout)
+
+int cold_fcn(sendmmsg)(int fd, struct mmsghdr *msgvec, unsigned vlen, int flags)
+    cold_iocall(fd, 1, sendmmsg, fd, msgvec, vlen, flags)
+#endif
