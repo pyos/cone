@@ -195,6 +195,23 @@ struct cone {
         }
     };
 
+    struct barrier {
+        barrier(size_t n) noexcept : v_(n) {}
+
+        bool join() noexcept {
+            if (!--v_)
+                e_.wake();
+            else while (v_.load(std::memory_order_acquire))
+                if (!e_.wait_if([&]{ return v_.load(std::memory_order_acquire) != 0; }))
+                    return false;
+            return true;
+        }
+
+    private:
+        event e_;
+        std::atomic<size_t> v_;
+    };
+
     template <typename F /* = bool() */>
     static bool try_mun(F&& f) noexcept try {
         return f();
