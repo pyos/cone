@@ -133,7 +133,7 @@ static int cone_event_io_init(struct cone_event_io *set) {
         return cone_event_io_fini(set), -1;
     #if CONE_EVNOTIFIER != 2
         if ((set->fds = calloc(CONE_MIN_FDS_CAP, sizeof(struct cone_event_fd *))) == NULL)
-            return cone_event_io_fini(set), mun_error(memory, "could not allocate an fd hash map");
+            return cone_event_io_fini(set), mun_error(ENOMEM, "could not allocate an fd hash map");
         set->fdcap = CONE_MIN_FDS_CAP;
     #endif
     #if CONE_EVNOTIFIER == 1
@@ -453,7 +453,7 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
     size = (size + _Alignof(max_align_t) - 1) & ~(size_t)(_Alignof(max_align_t) - 1);
     struct cone *c = (struct cone *)malloc(sizeof(struct cone) + size);
     if (c == NULL)
-        return (void)mun_error(memory, "no space for a stack"), NULL;
+        return (void)mun_error(ENOMEM, "no space for a stack"), NULL;
     c->flags = CONE_FLAG_SCHEDULED;
     c->loop = loop;
     c->body = body;
@@ -479,7 +479,7 @@ struct cone *cone_spawn(size_t size, struct cone_closure body) {
 void cone_drop(struct cone *c) {
     if (c && (atomic_fetch_xor(&c->flags, CONE_FLAG_LAST_REF) & CONE_FLAG_LAST_REF)) {
         if ((c->flags & (CONE_FLAG_FAILED | CONE_FLAG_JOINED)) == CONE_FLAG_FAILED)
-            if (c->error.code != mun_errno_cancelled)
+            if (c->error.code != ECANCELED)
                 mun_error_show("cone destroyed with", &c->error);
         free(c);
     }
@@ -506,8 +506,8 @@ static int cone_deschedule(struct cone *c) {
         return 0;
     }
     int state = atomic_fetch_and(&c->flags, ~CONE_FLAG_WOKEN & ~CONE_FLAG_CANCELLED & ~CONE_FLAG_TIMED_OUT);
-    return state & CONE_FLAG_CANCELLED ? mun_error(cancelled, "blocking call aborted")
-         : state & CONE_FLAG_TIMED_OUT ? mun_error(timeout, "blocking call timed out") : 0;
+    return state & CONE_FLAG_CANCELLED ? mun_error(ECANCELED, "blocking call aborted")
+         : state & CONE_FLAG_TIMED_OUT ? mun_error(ETIMEDOUT, "blocking call timed out") : 0;
 }
 
 struct cone_event_it {
@@ -608,7 +608,7 @@ size_t cone_wake(struct cone_event *ev, size_t n, int ret) {
 }
 
 int cone_try_lock(struct cone_mutex *m) {
-    return atomic_exchange(A(&m->lk), 1) ? mun_error(retry, "mutex already locked") : 0;
+    return atomic_exchange(A(&m->lk), 1) ? mun_error(EAGAIN, "mutex already locked") : 0;
 }
 
 int cone_lock(struct cone_mutex *m) {
@@ -655,7 +655,7 @@ int cone_sleep_until(mun_usec t) {
 
 int cone_cowait(struct cone *c, int norethrow) {
     if (c == cone) // maybe detect more complicated deadlocks too?..
-        return mun_error(deadlock, "coroutine waiting on itself");
+        return mun_error(EDEADLK, "coroutine waiting on itself");
     if (!(c->flags & CONE_FLAG_FINISHED) && cone_wait(&c->done, !(c->flags & CONE_FLAG_FINISHED)) MUN_RETHROW)
         return -1;
     // XXX the ordering here doesn't actually matter.

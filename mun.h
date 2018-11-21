@@ -10,6 +10,15 @@
 extern "C" {
 #endif
 
+enum {
+    // Read operation timed out. (ETIMEDOUT is specified by POSIX to be the connect() timeout.)
+    ERTIMEDOUT = 20113,
+    // Write operation timed out.
+    EWTIMEDOUT = 20114,
+    // A C++ exception has occurred.
+    EEXCEPTION = 20519,
+};
+
 // A microsecond-resolution clock. That's good enough; `epoll_wait` can't handle
 // less than millisecond resolution anyway.
 typedef int64_t mun_usec;
@@ -23,18 +32,6 @@ mun_usec mun_usec_now(void);
 // at a rate of one second per second.
 mun_usec mun_usec_monotonic(void);
 
-enum {
-    mun_errno_cancelled       = ECANCELED,
-    mun_errno_assert          = EINVAL,
-    mun_errno_memory          = ENOMEM,
-    mun_errno_not_implemented = ENOSYS,
-    mun_errno_deadlock        = EDEADLK,
-    mun_errno_timeout         = ETIMEDOUT,
-    mun_errno_retry           = EAGAIN,
-    // Define your own `mun_errno_X` values as `mun_errno_custom + N` to make `mun_error(X)` valid.
-    mun_errno_custom          = 100000,
-};
-
 struct mun_stackframe {
     const char *file;
     const char *func;
@@ -42,7 +39,7 @@ struct mun_stackframe {
 };
 
 struct mun_error {
-    int code;  // Either `mun_errno_X`, or an actual `errno`.
+    int code;
     unsigned stacklen;
     const char *name;
     char text[256];
@@ -80,14 +77,8 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 // `struct mun_stackframe` desribing the position where this macro was used.
 #define MUN_CURRENT_FRAME ({ static const struct mun_stackframe f = {__FILE__, __func__, __LINE__}; &f; })
 
-// Call `mun_error_at` with the current stack frame, error id "mun_errno_X", and name "X".
-#define mun_error(id, ...) (mun_error_at(mun_errno_##id, #id, MUN_CURRENT_FRAME, __VA_ARGS__), -1)
-
-// A version of `mun_error` that accepts an errno instead of a `mun_errno`'s name.
-#define mun_error_n(en, ...) (mun_error_at(en, #en, MUN_CURRENT_FRAME, __VA_ARGS__), -1)
-
-// No-op macros to make function declarations slightly more descriptive.
-#define mun_throws(...)
+// Call `mun_error_at` with the current stack frame, errno X, and name "X".
+#define mun_error(id, ...) (mun_error_at(id, #id, MUN_CURRENT_FRAME, __VA_ARGS__), -1)
 
 // Should be used as a suffix to an expression that returns something true-ish if it failed,
 // in which case the current stack frame is marked in its error. Otherwise, 0 is returned.
@@ -104,7 +95,7 @@ void mun_error_show(const char *prefix, const struct mun_error *err);
 #define mun_cant_fail(e) (!(e) ? 0 : (mun_error_show("panic", NULL), abort(), -1))
 
 // Abort if the expression is false, else return 0.
-#define mun_assert(e, ...) mun_cant_fail((e) ? 0 : mun_error(assert, __VA_ARGS__))
+#define mun_assert(e, ...) mun_cant_fail((e) ? 0 : mun_error(EINVAL, __VA_ARGS__))
 
 // Type-unsafe, but still pretty generic, dynamic vector. Zero-initialized, or with one
 // of the `mun_vec_init_*` macros; finalized with `mun_vec_fini`.
@@ -186,10 +177,10 @@ static inline void mun_vec_shift_s(size_t s, struct mun_vec *v, size_t start, in
     v->size += offset;
 }
 
-// Resize the vector so that it may contain at least `n` elements.
+// Resize the vector so that it may contain at least `n` elements. May fail with ENOMEM.
 #define mun_vec_reserve(v, n) mun_vec_reserve_s(mun_vec_strided(v), n)
 
-int mun_vec_reserve_s(size_t, struct mun_vec *, size_t n) mun_throws(memory);
+int mun_vec_reserve_s(size_t, struct mun_vec *, size_t n);
 
 // Splice: insert `n` elements at `i`th position.
 // Extend: insert `n` elements at the end.

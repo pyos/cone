@@ -96,7 +96,7 @@ void mun_error_show(const char *prefix, const struct mun_error *err) {
         fprintf(stderr, mun_error_fmt_line[ansi], i + 1, err->stack[i]->file, err->stack[i]->line, err->stack[i]->func);
 }
 
-int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) mun_throws(memory) {
+int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) {
     size_t cap = v->cap & ~MUN_VEC_STATIC_BIT;
     if (n <= cap)
         return 0;
@@ -113,7 +113,7 @@ int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) mun_throws(memory) 
         cap = n + 4;
     void *r = malloc(cap * s);
     if (r == NULL)
-        return mun_error(memory, "%zu * %zu bytes", cap, s);
+        return mun_error(ENOMEM, "%zu * %zu bytes", cap, s);
     if (v->size)
         memmove(r, v->data, v->size * s);
     if (!(v->cap & MUN_VEC_STATIC_BIT))

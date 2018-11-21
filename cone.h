@@ -27,14 +27,15 @@ extern _Thread_local struct cone *cone;
 // Create a new coroutine that runs a given function with a single pointer argument.
 // The memory will be freed when the coroutine finishes and the returned reference is
 // dropped, no matter the order. For what happens when the closure fails, see `cone_cowait`.
-struct cone *cone_spawn(size_t stack, struct cone_closure) mun_throws(memory);
+// May fail with ENOMEM.
+struct cone *cone_spawn(size_t stack, struct cone_closure);
 
 #define cone(f, arg) cone_spawn(CONE_DEFAULT_STACK, cone_bind(f, arg))
 
 // Like `cone_spawn`, but also creates a new event loop and passes to the provided function
 // a callback that runs it to completion. The loop terminates when all coroutines on it
 // finish. (The function can, for example, create a new detached thread.)
-struct cone *cone_loop(size_t stack, struct cone_closure, int (*run)(struct cone_closure)) mun_throws(memory);
+struct cone *cone_loop(size_t stack, struct cone_closure, int (*run)(struct cone_closure));
 
 // Drop the reference to a coroutine returned by `cone_spawn`. No-op if the pointer is NULL.
 void cone_drop(struct cone *);
@@ -42,10 +43,11 @@ void cone_drop(struct cone *);
 // Sleep until a coroutine finishes. If `norethrow` is 0 and the coroutine fails, this
 // function returns the error. If this is never done, the error is printed to stderr (see
 // `mun_error_show`) when the coroutine is deallocated, and is otherwise ignored.
-int cone_cowait(struct cone *, int norethrow) mun_throws(cancelled, timeout, deadlock);
+// Attempting to wait for the currently running coroutine results in EDEADLK.
+int cone_cowait(struct cone *, int norethrow);
 
 // Same as `cone_cowait`, but also drop the reference.
-static inline int cone_join(struct cone *c, int norethrow) mun_throws(cancelled, timeout, deadlock) {
+static inline int cone_join(struct cone *c, int norethrow) {
     int r = cone_cowait(c, norethrow);
     return cone_drop(c), r;
 }
@@ -55,20 +57,20 @@ static inline int cone_join(struct cone *c, int norethrow) mun_throws(cancelled,
 // still fail with EAGAIN, e.g. if another coroutine already used the file descriptor
 // while this one was in the scheduler's run queue. If a call to this function is not
 // inside a `while` loop, you're almost certainly doing it wrong.
-int cone_iowait(int fd, int write) mun_throws(cancelled, timeout);
+int cone_iowait(int fd, int write);
 
 // Sleep until at least the specified time, given by the monotonic clock (see
 // `mun_usec_monotonic`). Unlike normal system calls, does not interact with signals.
 // Clock jitter and scheduling delays apply.
-int cone_sleep_until(mun_usec) mun_throws(cancelled, timeout, memory);
+int cone_sleep_until(mun_usec);
 
 // Sleep for at least the specified time, or 0 if it is negative.
-static inline int cone_sleep(mun_usec t) mun_throws(cancelled, timeout, memory) {
+static inline int cone_sleep(mun_usec t) {
     return cone_sleep_until(mun_usec_monotonic() + t);
 }
 
 // Wait until the next iteration of the event loop.
-static inline int cone_yield(void) mun_throws(cancelled, timeout, memory) {
+static inline int cone_yield(void) {
     return cone_sleep_until(mun_usec_monotonic());
 }
 
@@ -85,7 +87,7 @@ void cone_tx_end(struct cone_event *);
 // Finish an atomic transaction, wait for `cone_wake` and return the value passed to it
 // as an argument. If cancelled, `~value` is returned, or ~0 == -1 if no `cone_wake`s
 // have occurred before cancellation.
-int cone_tx_wait(struct cone_event *) mun_throws(cancelled, timeout);
+int cone_tx_wait(struct cone_event *);
 
 // Atomically execute an expression and wait for `cone_wake` if the result is not 0,
 // else return 0.
@@ -98,10 +100,10 @@ size_t cone_wake(struct cone_event *, size_t, int /* non-negative */ ret);
 struct cone_mutex { struct cone_event e; char lk; };
 
 // Either lock and succeed, or fail with EAGAIN; do not check for cancellation.
-int cone_try_lock(struct cone_mutex *) mun_throws(retry);
+int cone_try_lock(struct cone_mutex *);
 
 // Lock, waiting until it's possible. Fail on cancellation or timeout.
-int cone_lock(struct cone_mutex *) mun_throws(cancelled, timeout);
+int cone_lock(struct cone_mutex *);
 
 // Allow a `cone_lock` to continue. If fair and there are waiters, wake the first one.
 // Return whether any coroutine has been woken up as a result.
@@ -120,7 +122,7 @@ void cone_cancel(struct cone *);
 // with "next after the specified point in time (according to the monotonic clock)".
 // If one call would fail with both ECANCELED and ETIMEDOUT, the former takes priority.
 // XXX exactly how useful it is to set deadlines on other coroutines?
-int cone_deadline(struct cone *, mun_usec) mun_throws(memory);
+int cone_deadline(struct cone *, mun_usec);
 
 // Undo *one* previous call to `cone_deadline` with the same arguments.
 void cone_complete(struct cone *, mun_usec);

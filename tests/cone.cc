@@ -212,8 +212,8 @@ static bool test_rdwr(char *) {
         for (ssize_t rd, mod = 0, N = 100000; N--; mod = (mod + rd) % sizeof(data)) {
             if ((rd = cold_read(fd, buf, sizeof(data) - mod)) < 0 MUN_RETHROW_OS)
                 return false;
-            if (memcmp(data + mod, buf, rd))
-                return !mun_error(assert, "recvd bad data");
+            if (!ASSERT(memcmp(data + mod, buf, rd) == 0, "recvd bad data"))
+                return false;
         }
         return true;
     };

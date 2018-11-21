@@ -8,7 +8,7 @@
 
 using namespace std::literals::chrono_literals;
 
-#define ASSERT(x, ...) ((x) || !mun_error(assert, __VA_ARGS__))
+#define ASSERT(x, ...) ((x) || !mun_error(EINVAL, __VA_ARGS__))
 
 template <size_t N, typename T = cone::ref, typename F>
 static inline bool spawn_and_wait(F&& f) {

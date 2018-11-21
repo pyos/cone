@@ -220,9 +220,9 @@ struct cone {
         if (char *c = __cxa_demangle(name.get(), nullptr, nullptr, nullptr))
             name = {c, [](const void *c) noexcept { free((void*)c); }};
         // XXX perhaps mun_error should contain the whole name instead of a pointer?..
-        return !mun_error_at(mun_errno_custom + 18293, "exception", MUN_CURRENT_FRAME, "[%s] %s", name.get(), e.what());
+        return !mun_error(EEXCEPTION, "[%s] %s", name.get(), e.what());
     } catch (...) {
-        return !mun_error_at(mun_errno_custom + 18293, "exception", MUN_CURRENT_FRAME, "unknown");
+        return !mun_error(EEXCEPTION, "unknown");
     }
 
 private:
