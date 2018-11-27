@@ -177,8 +177,7 @@ struct cone {
 
         ~mguard() {
             intr<false>([this] {
-                for (ref& c : r_)
-                    c->cancel();
+                cancel();
                 while (!r_.empty())
                     ref{std::move(r_.front())}->wait(/*rethrow=*/false);
             });
@@ -198,8 +197,14 @@ struct cone {
         }
 
         // The number of spawned coroutines that have not yet terminated.
-        size_t active() const {
+        size_t active() const noexcept {
             return r_.size();
+        }
+
+        // Cancel all still running tasks.
+        void cancel() noexcept {
+            for (ref& c : r_)
+                c->cancel();
         }
 
     private:
