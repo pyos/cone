@@ -97,6 +97,10 @@ static bool test_deadline_lifting(char *) {
     return cone::sleep_for(1ms);
 }
 
+static bool test_deadline_nop(char *) {
+    return ::cone->timeout(cone::timedelta::max(), [] { return cone::sleep_for(1ms); });
+}
+
 static bool test_count(char *) {
     auto& c = *cone::count();
     if (!ASSERT(c == 1u, "%u != 1", c.load())) return false; // i.e. this coroutine
@@ -313,6 +317,7 @@ export { "cone:yield", &test_yield }
      , { "cone:sleep while handling cancellation", &test_sleep_after_cancel }
      , { "cone:deadline", &test_deadline }
      , { "cone:deadline lifting", &test_deadline_lifting }
+     , { "cone:deadline at never", &test_deadline_nop }
      , { "cone:count", &test_count }
      , { "cone:event", &test_event }
      , { "cone:event.wake(1)", &test_event_wake }
