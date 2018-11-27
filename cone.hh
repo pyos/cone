@@ -1,5 +1,17 @@
 #pragma once
-
+// C++ bindings for cone. Some notes:
+//
+//   * Make sure to link with libcxxcone, not libcone (or use -DCONE_CXX=1 when building)
+//     for coroutine-local exception state. Otherwise, yielding while in a destructor
+//     or a catch block will lead to Really Bad Stuff. (I'd say "undefined behavior",
+//     but this whole thing is extremely undefined as it is.)
+//
+//   * Where cone and mun use the libc convention of returning an int {-1, 0} for signalling
+//     {error, success}, C++ bindings instead return a C++ style boolean {false, true}.
+//
+//   * Some functionality from the C API, most notably `mun_error` and valued `cone_wake`,
+//     is not wrapped. On the other hand, there is some stuff that is C++-only, e.g guards.
+//
 #include "cone.h"
 
 #include <atomic>
@@ -12,32 +24,37 @@ extern "C" char *__cxa_demangle(const char *, char *, size_t *, int *);
 
 // `cone` is actually an opaque type defined in cone.c, but who cares? That's a different unit!
 struct cone {
+    // mun uses the monotonic clock, so here it is:
     using time = std::chrono::steady_clock::time_point;
     using timedelta = std::chrono::steady_clock::duration;
 
-    // Sleep until this coroutine finishes, optionally returning any error it finishes with.
+    // Sleep until this coroutine finishes, optionally returning its error. See `cone_cowait`.
+    // Requires that an owning reference (see `ref` below) to this coroutine exists for the
+    // duration of the sleep, else the behavior on return will be extra undefined.
     bool wait(bool rethrow = true) noexcept {
         return !cone_cowait(this, !rethrow);
     }
 
     // Make the next (or current, if any) call to `wait`, `iowait`, `sleep_until`, `sleep`,
-    // or `yield` from this coroutine fail with ECANCELED. No-op if the coroutine has finished.
+    // or `yield` from this coroutine fail with ECANCELED. See `cone_cancel`. Only requires
+    // an owning reference if called on a coroutine in a different thread; always memory-
+    // safe otherwise.
     void cancel() noexcept {
         cone_cancel(this);
     }
 
-    // `cone_deadline` and `cone_complete`, but in RAII form. `time::max()` is a no-op.
+    // `cone_deadline` and `cone_complete`, but in RAII form. Passing `time::max()`
+    // as an argument makes this method a no-op, i.e. it returns some empty object.
     auto deadline(time t) noexcept {
         struct deleter {
             mun_usec t_;
 
             void operator()(cone *c) noexcept {
-                if (t_ != std::numeric_limits<mun_usec>::max())
-                    cone_complete(c, t_);
+                cone_complete(c, t_);
             }
         };
         if (t == time::max())
-            return std::unique_ptr<cone, deleter>{this, deleter{std::numeric_limits<mun_usec>::max()}};
+            return std::unique_ptr<cone, deleter>{nullptr, deleter{0}};
         mun_cant_fail(cone_deadline(this, mun_usec_chrono(t)) MUN_RETHROW);
         return std::unique_ptr<cone, deleter>{this, deleter{mun_usec_chrono(t)}};
     }
@@ -60,7 +77,8 @@ struct cone {
         return f();
     }
 
-    // Delay cancellation and deadlines until the end of the function.
+    // Enable or disable interruptions while calling the provided function. While
+    // interruptions are disabled, blocking operations cannot time out or be cancelled.
     template <bool state, typename F>
     static auto intr(F&& f) {
         if (cone_intr(state) == state)
@@ -90,7 +108,7 @@ struct cone {
         return cone_count();
     }
 
-    // Get the current scheduling delay.
+    // Get the current scheduling delay, nullptr if not in an event loop.
     static const std::atomic<mun_usec>* delay() noexcept {
         return cone_delay();
     }
@@ -101,11 +119,13 @@ struct cone {
         }
     };
 
+    // An owning reference to a coroutine.
     struct ref : std::unique_ptr<cone, dropper> {
         ref() = default;
 
-        template <typename F /* = bool() */, typename G = std::remove_reference_t<F>,
-                  typename = std::enable_if_t<std::is_invocable_r<bool, G>::value>>
+        // Spawn a new coroutine that will call the given function without arguments.
+        template <typename F /* = bool() */,
+                  typename G = std::enable_if_t<std::is_invocable_r<bool, F>::value, std::remove_reference_t<F>>>
         ref(F&& f, size_t stack = 100UL * 1024) noexcept {
             // XXX if F is trivially copyable and fits into one `void*`, we can pass it by value.
             reset(cone_spawn(stack, cone_bind(&invoke<G>, new G(std::forward<F>(f)))));
@@ -113,9 +133,12 @@ struct cone {
         }
     };
 
+    // An owning reference to a coroutine in a separate thread. (Upcasting is OK.)
     struct thread : ref {
         thread() = default;
 
+        // Same as `ref`'s constructor, but also create a new thread for the coroutine.
+        // Any coroutine it spawns itself through `ref` will also be on that thread.
         template <typename F /* = bool() */, typename G = std::remove_reference_t<F>>
         thread(F&& f, size_t stack = 100UL * 1024) noexcept {
             reset(cone_loop(stack, cone_bind(&invoke<G>, new G(std::forward<F>(f))), [](cone_closure c) {
@@ -134,6 +157,9 @@ struct cone {
         }
     };
 
+    // An owning reference that cancels and uninterruptibly waits for a coroutine when
+    // going out of scope. This ensures that when other locally owned resources are
+    // destroyed, the coroutine has already finished executing.
     struct guard : std::unique_ptr<cone, aborter> {
         template <typename... Args>
         guard(Args&&... args)
@@ -142,8 +168,8 @@ struct cone {
         }
     };
 
-    // A list of coroutines from which they remove themselves after terminating.
-    // Destroying the list also cancels and waits for all still-active coroutines.
+    // A list of coroutines from which they remove themselves after terminating. Destroying
+    // the list also cancels and uninterruptibly waits for all still-active coroutines.
     struct mguard {
         mguard() = default;
         mguard(mguard&&) = default;
@@ -158,10 +184,8 @@ struct cone {
             });
         }
 
-        // Spawn a new coroutine and add it to the list. The reference is owner by
-        // the list itself, so the returned pointer can only be used safely for
-        // cancellation, not for waiting! (It will become invalid *before* a return
-        // from `wait`.)
+        // Spawn a new coroutine and add it to the list. The returned reference is
+        // non-owning; see `wait` above for the implications.
         template <typename F>
         cone* add(F&& f) {
             r_.emplace_front();
@@ -182,49 +206,60 @@ struct cone {
         std::list<ref> r_;
     };
 
+    // Something that can be waited for.
     struct event : cone_event {
         event() noexcept : cone_event{} {}
         event(const event&) = delete;
         event& operator=(const event&) = delete;
 
+        // Sleep until the event happens.
         bool wait() noexcept {
             return !cone_wait(this, 1);
         }
 
+        // If the provided function returns `true`, sleep until the event happens,
+        // else successfully return immediately. This operation is atomic.
         template <typename F /* = bool() noexcept */>
         bool wait_if(F&& f) noexcept {
             return !cone_wait(this, f());
         }
 
-        // TODO valued `wake`.
-
+        // Wake at most `n` coroutines currently waiting for this event.
         size_t wake(size_t n = std::numeric_limits<size_t>::max()) noexcept {
+            // TODO valued `wake`.
             return cone_wake(this, n, 0);
         }
     };
 
+    // A coroutine-blocking mutex.
     struct mutex : cone_mutex {
         mutex() noexcept : cone_mutex{} {}
         mutex(const mutex&) = delete;
         mutex& operator=(const mutex&) = delete;
 
+        // Try to acquire the lock, else fail with EAGAIN.
         bool try_lock() noexcept {
             return !cone_try_lock(this);
         }
 
+        // Uninterruptibly acquire the lock. Mimics `std::mutex::lock`.
         void lock() noexcept {
             intr<false>([this]() { lock_cancellable(); });
         }
 
+        // Interruptibly acquire the lock (i.e. this method can be cancelled or time out).
         bool lock_cancellable() noexcept {
             return !cone_lock(this);
         }
 
+        // Release the lock. If `fair` is true and there are coroutines waiting to acquire
+        // it, make sure the one that called `lock`/`lock_cancellable` first gets it.
         template <bool fair = false>
         bool unlock() noexcept {
             return cone_unlock(this, fair);
         }
 
+        // Acquire the lock and return an object that releases it when destroyed.
         template <bool fair = false>
         auto guard(bool cancellable = true) noexcept {
             struct deleter {
@@ -236,9 +271,12 @@ struct cone {
         }
     };
 
+    // An object that allows coroutines to pass when the required number of them are ready.
     struct barrier {
         barrier(size_t n) noexcept : v_(n) {}
 
+        // Wait until the rest of the `n` coroutines call this method. If more than `n`
+        // do, behavior is undefined. (TODO make it so that the rest pass unhindered.)
         bool join() noexcept {
             if (!--v_)
                 e_.wake();
@@ -253,6 +291,8 @@ struct cone {
         std::atomic<size_t> v_;
     };
 
+    // Evaluate the provided function, which should return a boolean indicating success,
+    // and convert any exceptions thrown into mun errors (and return `false`).
     template <typename F /* = bool() */>
     static bool try_mun(F&& f) noexcept try {
         return f();
