@@ -284,6 +284,21 @@ static bool test_mt_mutex(char *) {
     }) && ASSERT(r == 4 * 100 * 10000, "%zu != %d", r, 4 * 100 * 10000);
 }
 
+static bool test_mguard(char *) {
+    cone::mguard g;
+    if (!ASSERT(g.active() == 0, "@0"))
+        return false;
+    g.add([]() { return true; });
+    g.add([]() { return true; });
+    g.add([]() { return true; });
+    if (!ASSERT(g.active() == 3, "@1") || !cone::yield() || !ASSERT(g.active() == 0, "@2"))
+        return false;
+    g.add([]() { return cone::sleep_for(1s); });
+    g.add([]() { return cone::sleep_for(1s); });
+    g.add([]() { return cone::sleep_for(1s); });
+    return ASSERT(g.active() == 3, "@3") && cone::yield() && ASSERT(g.active() == 3, "@4");
+}
+
 export { "cone:yield", &test_yield }
      , { "cone:detach", &test_detach }
      , { "cone:wait", &test_wait }
@@ -311,3 +326,4 @@ export { "cone:yield", &test_yield }
      , { "cone:io starvation", &test_io_starvation }
      , { "cone:thread", &test_thread }
      , { "cone:threads and a mutex", &test_mt_mutex }
+     , { "cone:mguard", &test_mguard }

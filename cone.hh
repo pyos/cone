@@ -6,6 +6,7 @@
 #include <chrono>
 #include <memory>
 #include <thread>
+#include <list>
 
 extern "C" char *__cxa_demangle(const char *, char *, size_t *, int *);
 
@@ -139,6 +140,46 @@ struct cone {
             : std::unique_ptr<cone, aborter>::unique_ptr(cone::ref{std::forward<Args>(args)...}.release())
         {
         }
+    };
+
+    // A list of coroutines from which they remove themselves after terminating.
+    // Destroying the list also cancels and waits for all still-active coroutines.
+    struct mguard {
+        mguard() = default;
+        mguard(mguard&&) = default;
+        mguard& operator=(mguard&&) = default;
+
+        ~mguard() {
+            intr<false>([this] {
+                for (ref& c : r_)
+                    c->cancel();
+                while (!r_.empty())
+                    ref{std::move(r_.front())}->wait(/*rethrow=*/false);
+            });
+        }
+
+        // Spawn a new coroutine and add it to the list. The reference is owner by
+        // the list itself, so the returned pointer can only be used safely for
+        // cancellation, not for waiting! (It will become invalid *before* a return
+        // from `wait`.)
+        template <typename F>
+        cone* add(F&& f) {
+            r_.emplace_front();
+            r_.front() = [this, it = r_.begin(), f = std::forward<F>(f)]() mutable {
+                auto done = [&](void*) { r_.erase(it); };
+                std::unique_ptr<void, decltype(done)&> guard{this, done};
+                return f();
+            };
+            return r_.front().get();
+        }
+
+        // The number of spawned coroutines that have not yet terminated.
+        size_t active() const {
+            return r_.size();
+        }
+
+    private:
+        std::list<ref> r_;
     };
 
     struct event : cone_event {
