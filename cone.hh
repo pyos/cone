@@ -18,7 +18,6 @@
 #include <chrono>
 #include <memory>
 #include <thread>
-#include <list>
 
 extern "C" char *__cxa_demangle(const char *, char *, size_t *, int *);
 
@@ -172,14 +171,14 @@ struct cone {
     // the list also cancels and uninterruptibly waits for all still-active coroutines.
     struct mguard {
         mguard() = default;
-        mguard(mguard&&) = default;
-        mguard& operator=(mguard&&) = default;
+        mguard(mguard&& other) : mguard() { std::swap(fake_, other.fake_); }
+        mguard& operator=(mguard&& other) { std::swap(fake_, other.fake_); return *this; }
 
         ~mguard() {
             intr<false>([this] {
                 cancel();
-                while (!r_.empty())
-                    ref{std::move(r_.front())}->wait(/*rethrow=*/false);
+                while (fake_->next_ != fake_.get())
+                    ref{std::move(fake_->next_->r_)}->wait(/*rethrow=*/false);
             });
         }
 
@@ -187,28 +186,47 @@ struct cone {
         // non-owning; see `wait` above for the implications.
         template <typename F>
         cone* add(F&& f) {
-            r_.emplace_front();
-            r_.front() = [this, it = r_.begin(), f = std::forward<F>(f)]() mutable {
-                auto done = [&](void*) { r_.erase(it); };
-                std::unique_ptr<void, decltype(done)&> guard{this, done};
-                return f();
-            };
-            return r_.front().get();
+            std::unique_ptr<node> n{new node};
+            n->next_ = fake_->next_;
+            n->prev_ = fake_.get();
+            fake_->next_ = fake_->next_->prev_ = n.get();
+            fake_->next_->r_ = [n = std::move(n), f = std::forward<F>(f)]() mutable { return f(); };
+            return fake_->next_->r_.get();
         }
 
         // The number of spawned coroutines that have not yet terminated.
         size_t active() const noexcept {
-            return r_.size();
+            size_t i = 0;
+            for (node* n = fake_->next_; n != fake_.get(); n = n->next_)
+                i++;
+            return i;
+        }
+
+        // `active() != 0`, but faster.
+        bool empty() const noexcept {
+            return fake_->next_ == fake_.get();
         }
 
         // Cancel all still running tasks.
         void cancel() noexcept {
-            for (ref& c : r_)
-                c->cancel();
+            for (node* n = fake_->next_; n != fake_.get(); n = n->next_)
+                if (n->r_)
+                    n->r_->cancel();
         }
 
     private:
-        std::list<ref> r_;
+        struct node {
+            node* next_ = this;
+            node* prev_ = this;
+            ref r_;
+
+            ~node() {
+                next_->prev_ = prev_;
+                prev_->next_ = next_;
+            }
+        };
+
+        std::unique_ptr<node> fake_{new node};
     };
 
     // Something that can be waited for.
