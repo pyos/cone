@@ -260,37 +260,34 @@ struct cone {
         mutex(const mutex&) = delete;
         mutex& operator=(const mutex&) = delete;
 
+        enum { unfair = 0, uninterruptible = 0, fair = 1, interruptible = 2 };
+
         // Try to acquire the lock, else fail with EAGAIN.
         bool try_lock() noexcept {
             return !cone_try_lock(this);
         }
 
-        // Uninterruptibly acquire the lock. Mimics `std::mutex::lock`.
-        void lock() noexcept {
-            intr<false>([this]() { lock_cancellable(); });
+        // Acquire the lock. By default, cannot be cancelled to mimic std::mutex::lock.
+        bool lock(int flags = uninterruptible) noexcept {
+            return flags & interruptible ? !cone_lock(this) : intr<false>([this]{ return !cone_lock(this); });
         }
 
-        // Interruptibly acquire the lock (i.e. this method can be cancelled or time out).
-        bool lock_cancellable() noexcept {
-            return !cone_lock(this);
-        }
-
-        // Release the lock. If `fair` is true and there are coroutines waiting to acquire
-        // it, make sure the one that called `lock`/`lock_cancellable` first gets it.
-        template <bool fair = false>
-        bool unlock() noexcept {
-            return cone_unlock(this, fair);
+        // Release the lock and wake at least one waiter, return whether anyone was woken.
+        // If fair, the lock is handed off. Otherwise, another coroutine may barge in.
+        bool unlock(int flags = unfair) noexcept {
+            return cone_unlock(this, !!(flags & fair));
         }
 
         // Acquire the lock and return an object that releases it when destroyed.
-        template <bool fair = false>
-        auto guard(bool cancellable = true) noexcept {
+        auto guard(int flags = uninterruptible | unfair) noexcept {
             struct deleter {
+                int flags;
+
                 void operator()(mutex *m) const {
-                    m->unlock<fair>();
+                    m->unlock(flags);
                 }
             };
-            return std::unique_ptr<mutex, deleter>{!cancellable ? (lock(), this) : lock_cancellable() ? this : nullptr};
+            return std::unique_ptr<mutex, deleter>{lock(flags) ? this : nullptr, deleter{flags}};
         }
     };
 

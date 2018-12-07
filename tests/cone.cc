@@ -132,7 +132,7 @@ static bool test_mutex(char *) {
     int last = 0;
     cone::mutex m;
     cone::ref a = [&]() {
-        auto g = m.guard(/*cancellable=*/false);
+        auto g = m.guard();
         return cone::yield() && cone::yield() && cone::yield() && cone::yield() && (last = 1, true);
     };
     cone::ref b = [&]() {
@@ -279,7 +279,7 @@ static bool test_mt_mutex(char *) {
     cone::mutex m;
     return spawn_and_wait<4, cone::thread>([&]() {
         return spawn_and_wait<100>([&]() {
-            for (size_t j = 0; j < 10000; j++) if (auto g = m.guard())
+            for (size_t j = 0; j < 10000; j++) if (auto g = m.guard(cone::mutex::interruptible))
                 r++;
             else
                 return false;
