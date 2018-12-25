@@ -190,7 +190,7 @@ struct cone {
             n->next_ = fake_->next_;
             n->prev_ = fake_.get();
             fake_->next_ = fake_->next_->prev_ = n.get();
-            fake_->next_->r_ = [n = std::move(n), f = std::forward<F>(f)]() mutable { return f(); };
+            fake_->next_->r_ = [f = std::forward<F>(f), n = std::move(n)]() mutable { return f(); };
             return fake_->next_->r_.get();
         }
 
