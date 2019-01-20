@@ -268,16 +268,10 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
     #if CONE_EVNOTIFIER == 1
         struct epoll_event evs[64];
         struct timespec ns = {timeout / 1000000ull, timeout % 1000000ull * 1000};
-        int use_timer = 20 < timeout && timeout < 1000;
-        if (use_timer && timerfd_settime(set->hrtimer, 0, &(struct itimerspec){.it_value = ns}, NULL) < 0 MUN_RETHROW_OS)
+        if (timeout && timerfd_settime(set->hrtimer, 0, &(struct itimerspec){.it_value = ns}, NULL) < 0 MUN_RETHROW_OS)
             return -1;
-        int got = epoll_wait(set->poller, evs, 64, use_timer ? -1 : (int)(timeout / 1000ul));
+        int got = epoll_wait(set->poller, evs, 64, timeout ? -1 : 0);
         if (got < 0 && errno != EINTR MUN_RETHROW_OS)
-            return -1;
-        if (use_timer
-         && read(set->hrtimer, &(uint64_t){0}, 8) < 0
-         // If `read` has failed, then the timer was not triggered and should be disarmed.
-         && timerfd_settime(set->hrtimer, 0, &(struct itimerspec){}, NULL) < 0 MUN_RETHROW_OS)
             return -1;
     #elif CONE_EVNOTIFIER == 2
         struct kevent evs[64];
