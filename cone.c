@@ -271,7 +271,7 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
         int use_timer = 20 < timeout && timeout < 1000;
         if (use_timer && timerfd_settime(set->hrtimer, 0, &(struct itimerspec){.it_value = ns}, NULL) < 0 MUN_RETHROW_OS)
             return -1;
-        int got = epoll_wait(set->poller, evs, 64, use_timer ? -1 : timeout / 1000ul);
+        int got = epoll_wait(set->poller, evs, 64, use_timer ? -1 : (int)(timeout / 1000ul));
         if (got < 0 && errno != EINTR MUN_RETHROW_OS)
             return -1;
         if (use_timer

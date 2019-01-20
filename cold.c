@@ -1,3 +1,8 @@
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+// accept4, recvmmsg, sendmmsg
+#define _GNU_SOURCE
+#endif
+
 #include "cone.h"
 #include "cold.h"
 
