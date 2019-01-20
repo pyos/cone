@@ -37,6 +37,7 @@ _Static_assert(0, "stack switching is only supported on x86-64 UNIX");
 
 #if CONE_EVNOTIFIER == 1
 #include <sys/epoll.h>
+#include <sys/timerfd.h>
 #elif CONE_EVNOTIFIER == 2
 #include <sys/event.h>
 #else
@@ -103,11 +104,21 @@ struct cone_event_fd {
 struct cone_event_io {
     int poller;
     int selfpipe[2];
+    // This flags is set while waiting for I/O to tell the other threads that a write
+    // to the self-pipe is needed to make this loop react to additions to the run queue.
     volatile _Atomic(char) interruptible;
+    // With select/epoll, we need to map fds to event descriptors, since each fd can only
+    // be registered once, and we want separate read/write callbacks. kqueue allows
+    // treating each (fd, pointer) pair as unique, essentially maintaining this map for us.
     #if CONE_EVNOTIFIER != 2
         size_t fdcnt;
         size_t fdcap;
         struct cone_event_fd **fds;
+    #endif
+    // epoll does not support timeouts with granularity of less than 1ms. Instead,
+    // we have to wait for reads on a hrtimer file descriptor.
+    #if CONE_EVNOTIFIER == 1
+        int hrtimer;
     #endif
 };
 
@@ -119,6 +130,10 @@ static void cone_event_io_fini(struct cone_event_io *set) {
     #if CONE_EVNOTIFIER != 2
         if (set->fds)
             free(set->fds);
+    #endif
+    #if CONE_EVNOTIFIER == 1
+        if (set->hrtimer >= 0)
+            close(set->hrtimer);
     #endif
 }
 
@@ -137,16 +152,19 @@ static int cone_event_io_init(struct cone_event_io *set) {
         set->fdcap = CONE_MIN_FDS_CAP;
     #endif
     #if CONE_EVNOTIFIER == 1
-        if ((set->poller = epoll_create1(EPOLL_CLOEXEC)) < 0 MUN_RETHROW_OS)
-            return cone_event_io_fini(set), -1;
         struct epoll_event ev = {EPOLLIN, {.ptr = NULL}};
-        if (epoll_ctl(set->poller, EPOLL_CTL_ADD, set->selfpipe[0], &ev) MUN_RETHROW_OS)
+        if ((set->poller = epoll_create1(EPOLL_CLOEXEC)) < 0
+         // Switch the timer to nonblocking mode so that we can `read` and check for EAGAIN
+         // instead of setting meaningful event data.
+         || (set->hrtimer = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC)) < 0
+         || epoll_ctl(set->poller, EPOLL_CTL_ADD, set->selfpipe[0], &ev)
+         || epoll_ctl(set->poller, EPOLL_CTL_ADD, set->hrtimer, &ev) MUN_RETHROW_OS)
             return cone_event_io_fini(set), -1;
     #elif CONE_EVNOTIFIER == 2
-        if ((set->poller = kqueue()) < 0 || fcntl(set->poller, F_SETFD, FD_CLOEXEC) MUN_RETHROW_OS)
-            return cone_event_io_fini(set), -1;
         struct kevent ev = {set->selfpipe[0], EVFILT_READ, EV_ADD, 0, 0, NULL};
-        if (kevent(set->poller, &ev, 1, NULL, 0, NULL) MUN_RETHROW_OS)
+        if ((set->poller = kqueue()) < 0
+         || fcntl(set->poller, F_SETFD, FD_CLOEXEC)
+         || kevent(set->poller, &ev, 1, NULL, 0, NULL) MUN_RETHROW_OS)
             return cone_event_io_fini(set), -1;
     #endif
     return 0;
@@ -249,15 +267,24 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
         timeout = 60000000ll;
     #if CONE_EVNOTIFIER == 1
         struct epoll_event evs[64];
-        int got = epoll_wait(set->poller, evs, 64, timeout / 1000ul);
-        if (got < 0)
-            return errno != EINTR MUN_RETHROW_OS;
+        struct timespec ns = {timeout / 1000000ull, timeout % 1000000ull * 1000};
+        int use_timer = 20 < timeout && timeout < 1000;
+        if (use_timer && timerfd_settime(set->hrtimer, 0, &(struct itimerspec){.it_value = ns}, NULL) < 0 MUN_RETHROW_OS)
+            return -1;
+        int got = epoll_wait(set->poller, evs, 64, use_timer ? -1 : timeout / 1000ul);
+        if (got < 0 && errno != EINTR MUN_RETHROW_OS)
+            return -1;
+        if (use_timer
+         && read(set->hrtimer, &(uint64_t){0}, 8) < 0
+         // If `read` has failed, then the timer was not triggered and should be disarmed.
+         && timerfd_settime(set->hrtimer, 0, &(struct itimerspec){}, NULL) < 0 MUN_RETHROW_OS)
+            return -1;
     #elif CONE_EVNOTIFIER == 2
         struct kevent evs[64];
         struct timespec ns = {timeout / 1000000ull, timeout % 1000000ull * 1000};
         int got = kevent(set->poller, NULL, 0, evs, 64, &ns);
-        if (got < 0)
-            return errno != EINTR MUN_RETHROW_OS;
+        if (got < 0 && errno != EINTR MUN_RETHROW_OS)
+            return -1;
     #else
         fd_set fds[2] = {};
         FD_SET(set->selfpipe[0], &fds[0]);
