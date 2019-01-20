@@ -36,8 +36,8 @@ dynamically linked ones from libc by default.
 
 Some options (`CFLAGS="... -DOPTION=VALUE"`):
 
-  * **CONE_EVNOTIFIER**: 1 is `epoll` (default on Linux), 2 is `kqueue` (default on macOS
-    and FreeBSD; got lazy with macros for other BSDs there), everything else is `select`.
+  * **CONE_EV_{SELECT,EPOLL,KQUEUE}**: (0 or 1 each) default is epoll on Linux, kqueue on macOS
+    and FreeBSD (got lazy with macros for other BSDs there), select everywhere else.
 
   * **CONE_CXX**: (0 or 1) whether to save exception state to the stack before switching.
     This requires a C++ ABI library. Enabled for `libcxxcone.a`, disabled for `libcone.a`.

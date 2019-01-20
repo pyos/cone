@@ -26,8 +26,12 @@ struct /* __cxxabiv1:: */ __cxa_eh_globals {
 struct __cxa_eh_globals *__cxa_get_globals();
 #endif
 
-#ifndef CONE_EVNOTIFIER
-#define CONE_EVNOTIFIER (__linux__ ? 1 : __FreeBSD__ || __APPLE__ ? 2 : 0)
+#if !CONE_EV_SELECT && !CONE_EV_EPOLL && !CONE_EV_KQUEUE
+#define CONE_EV_EPOLL  (__linux__)
+#define CONE_EV_KQUEUE (__APPLE__ || __FreeBSD__)
+#define CONE_EV_SELECT (!EV_EPOLL && !EV_KQUEUE)
+#elif (!!CONE_EV_SELECT + !!CONE_EV_EPOLL + !!CONE_EV_KQUEUE) != 1
+#error "selected more than one of CONE_EV_*"
 #endif
 
 #if !__x86_64__
@@ -35,10 +39,10 @@ struct __cxa_eh_globals *__cxa_get_globals();
 _Static_assert(0, "stack switching is only supported on x86-64 UNIX");
 #endif
 
-#if CONE_EVNOTIFIER == 1
+#if CONE_EV_EPOLL
 #include <sys/epoll.h>
 #include <sys/timerfd.h>
-#elif CONE_EVNOTIFIER == 2
+#elif CONE_EV_KQUEUE
 #include <sys/event.h>
 #else
 #include <sys/select.h>
@@ -110,14 +114,14 @@ struct cone_event_io {
     // With select/epoll, we need to map fds to event descriptors, since each fd can only
     // be registered once, and we want separate read/write callbacks. kqueue allows
     // treating each (fd, pointer) pair as unique, essentially maintaining this map for us.
-    #if CONE_EVNOTIFIER != 2
+    #if !CONE_EV_KQUEUE
         size_t fdcnt;
         size_t fdcap;
         struct cone_event_fd **fds;
     #endif
     // epoll does not support timeouts with granularity of less than 1ms. Instead,
     // we have to wait for reads on a hrtimer file descriptor.
-    #if CONE_EVNOTIFIER == 1
+    #if CONE_EV_EPOLL
         int hrtimer;
     #endif
 };
@@ -127,11 +131,11 @@ static void cone_event_io_fini(struct cone_event_io *set) {
         close(set->poller);
     if (set->selfpipe[0] >= 0)
         close(set->selfpipe[0]), close(set->selfpipe[1]);
-    #if CONE_EVNOTIFIER != 2
+    #if !CONE_EV_KQUEUE
         if (set->fds)
             free(set->fds);
     #endif
-    #if CONE_EVNOTIFIER == 1
+    #if CONE_EV_EPOLL
         if (set->hrtimer >= 0)
             close(set->hrtimer);
     #endif
@@ -146,12 +150,18 @@ static int cone_event_io_init(struct cone_event_io *set) {
     if (pipe(set->selfpipe) || fcntl(set->selfpipe[0], F_SETFD, FD_CLOEXEC)
                             || fcntl(set->selfpipe[1], F_SETFD, FD_CLOEXEC) MUN_RETHROW_OS)
         return cone_event_io_fini(set), -1;
-    #if CONE_EVNOTIFIER != 2
+    #if CONE_EV_KQUEUE
+        struct kevent ev = {set->selfpipe[0], EVFILT_READ, EV_ADD, 0, 0, NULL};
+        if ((set->poller = kqueue()) < 0
+         || fcntl(set->poller, F_SETFD, FD_CLOEXEC)
+         || kevent(set->poller, &ev, 1, NULL, 0, NULL) MUN_RETHROW_OS)
+            return cone_event_io_fini(set), -1;
+    #else
         if ((set->fds = calloc(CONE_MIN_FDS_CAP, sizeof(struct cone_event_fd *))) == NULL)
             return cone_event_io_fini(set), mun_error(ENOMEM, "could not allocate an fd hash map");
         set->fdcap = CONE_MIN_FDS_CAP;
     #endif
-    #if CONE_EVNOTIFIER == 1
+    #if CONE_EV_EPOLL
         struct epoll_event ev = {EPOLLIN, {.ptr = NULL}};
         if ((set->poller = epoll_create1(EPOLL_CLOEXEC)) < 0
          // Switch the timer to nonblocking mode so that we can `read` and check for EAGAIN
@@ -160,17 +170,11 @@ static int cone_event_io_init(struct cone_event_io *set) {
          || epoll_ctl(set->poller, EPOLL_CTL_ADD, set->selfpipe[0], &ev)
          || epoll_ctl(set->poller, EPOLL_CTL_ADD, set->hrtimer, &ev) MUN_RETHROW_OS)
             return cone_event_io_fini(set), -1;
-    #elif CONE_EVNOTIFIER == 2
-        struct kevent ev = {set->selfpipe[0], EVFILT_READ, EV_ADD, 0, 0, NULL};
-        if ((set->poller = kqueue()) < 0
-         || fcntl(set->poller, F_SETFD, FD_CLOEXEC)
-         || kevent(set->poller, &ev, 1, NULL, 0, NULL) MUN_RETHROW_OS)
-            return cone_event_io_fini(set), -1;
     #endif
     return 0;
 }
 
-#if CONE_EVNOTIFIER != 2
+#if !CONE_EV_KQUEUE
 static int inthash(int key) {
     key = (key ^ 61) ^ (key >> 16);
     key = key + (key << 3);
@@ -182,7 +186,7 @@ static int inthash(int key) {
 #endif
 
 static int cone_event_io_mod(struct cone_event_io *set, struct cone_event_fd *st, int add) {
-    #if CONE_EVNOTIFIER == 2
+    #if CONE_EV_KQUEUE
         uint16_t flags = (add ? EV_ADD|EV_ONESHOT : EV_DELETE)|EV_UDATA_SPECIFIC;
         struct kevent ev = {st->fd, st->write ? EVFILT_WRITE : EVFILT_READ, flags, 0, 0, st};
         return kevent(set->poller, &ev, 1, NULL, 0, NULL) && (add || errno != ENOENT) MUN_RETHROW_OS;
@@ -201,7 +205,7 @@ static int cone_event_io_mod(struct cone_event_io *set, struct cone_event_fd *st
                 return 0;
             *c = st->link;
         }
-        #if CONE_EVNOTIFIER == 1
+        #if CONE_EV_EPOLL
             struct epoll_event ev = {0, {.ptr = *b}};
             for (struct cone_event_fd *e = *b; e && e->fd == st->fd; e = e->link)
                 ev.events |= e->write ? EPOLLOUT : EPOLLIN|EPOLLRDHUP;
@@ -265,20 +269,20 @@ static void cone_event_io_consume_ping(struct cone_event_io *set) {
 static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
     if (timeout > 60000000ll)
         timeout = 60000000ll;
-    #if CONE_EVNOTIFIER == 1
+    #if CONE_EV_EPOLL
         struct epoll_event evs[64];
         struct timespec ns = {timeout / 1000000ull, timeout % 1000000ull * 1000};
         if (timeout && timerfd_settime(set->hrtimer, 0, &(struct itimerspec){.it_value = ns}, NULL) < 0 MUN_RETHROW_OS)
             return -1;
         int got = epoll_wait(set->poller, evs, 64, timeout ? -1 : 0);
-        if (got < 0 && errno != EINTR MUN_RETHROW_OS)
-            return -1;
-    #elif CONE_EVNOTIFIER == 2
+        if (got < 0)
+            return errno != EINTR MUN_RETHROW_OS;
+    #elif CONE_EV_KQUEUE
         struct kevent evs[64];
         struct timespec ns = {timeout / 1000000ull, timeout % 1000000ull * 1000};
         int got = kevent(set->poller, NULL, 0, evs, 64, &ns);
-        if (got < 0 && errno != EINTR MUN_RETHROW_OS)
-            return -1;
+        if (got < 0)
+            return errno != EINTR MUN_RETHROW_OS;
     #else
         fd_set fds[2] = {};
         FD_SET(set->selfpipe[0], &fds[0]);
@@ -296,12 +300,12 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
     #endif
     if (timeout != 0) // else pings were not allowed in the first place (see `cone_loop_run`).
         cone_event_io_consume_ping(set);
-    #if CONE_EVNOTIFIER == 1
+    #if CONE_EV_EPOLL
         for (int i = 0; i < got; i++)
             for (struct cone_event_fd *st = evs[i].data.ptr, *e = st; e && e->fd == st->fd; e = e->link)
                 if (evs[i].events & ((e->write ? EPOLLOUT : EPOLLIN|EPOLLRDHUP)|EPOLLERR|EPOLLHUP))
                     cone_event_io_del(set, e), cone_schedule(e->c, CONE_FLAG_WOKEN);
-    #elif CONE_EVNOTIFIER == 2
+    #elif CONE_EV_KQUEUE
         for (int i = 0; i < got; i++)
             if (evs[i].udata) // oneshot event, removed automatically
                 cone_schedule(((struct cone_event_fd *)evs[i].udata)->c, CONE_FLAG_WOKEN);
