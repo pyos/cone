@@ -120,7 +120,7 @@ struct cone_event_io {
         struct cone_event_fd **fds;
     #endif
     // epoll does not support timeouts with granularity of less than 1ms. Instead,
-    // we have to wait for reads on a hrtimer file descriptor.
+    // we have to wait for reads on a high-resolution timerfd.
     #if CONE_EV_EPOLL
         int hrtimer;
     #endif
@@ -164,9 +164,7 @@ static int cone_event_io_init(struct cone_event_io *set) {
     #if CONE_EV_EPOLL
         struct epoll_event ev = {EPOLLIN, {.ptr = NULL}};
         if ((set->poller = epoll_create1(EPOLL_CLOEXEC)) < 0
-         // Switch the timer to nonblocking mode so that we can `read` and check for EAGAIN
-         // instead of setting meaningful event data.
-         || (set->hrtimer = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC)) < 0
+         || (set->hrtimer = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC)) < 0
          || epoll_ctl(set->poller, EPOLL_CTL_ADD, set->selfpipe[0], &ev)
          || epoll_ctl(set->poller, EPOLL_CTL_ADD, set->hrtimer, &ev) MUN_RETHROW_OS)
             return cone_event_io_fini(set), -1;
