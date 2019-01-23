@@ -91,7 +91,7 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev, size_t 
     while (ev->size && limit) {
         mun_usec t = mun_usec_monotonic();
         if (ev->data->at > t)
-            return ev->data->at - t;
+            return ev->data->at;
         for (; ev->size && ev->data->at <= t && limit; mun_vec_erase(ev, 0, 1), limit--)
             cone_schedule((struct cone *)(ev->data->c & ~1ul), ev->data->c & 1 ? CONE_FLAG_TIMED_OUT : CONE_FLAG_WOKEN);
     }
@@ -261,9 +261,13 @@ static void cone_event_io_consume_ping(struct cone_event_io *set) {
         read(set->selfpipe[0], (char[4]){}, 4);
 }
 
-static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
-    if (timeout > 60000000ll)
-        timeout = 60000000ll;
+static int cone_event_io_emit(struct cone_event_io *set, mun_usec deadline) {
+    #if !CONE_EV_EPOLL
+        mun_usec now = mun_usec_monotonic();
+        mun_usec timeout = now > deadline ? 0 : deadline - now;
+        if (timeout > 60000000ll)
+            timeout = 60000000ll;
+    #endif
     #if CONE_EV_SELECT
         fd_set fds[2] = {};
         FD_SET(set->selfpipe[0], &fds[0]);
@@ -279,10 +283,10 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
         int got = select(max_fd, &fds[0], &fds[1], NULL, &us);
     #elif CONE_EV_EPOLL
         struct epoll_event evs[64];
-        struct timespec ns = {timeout / 1000000ull, timeout % 1000000ull * 1000};
-        if (timeout && timerfd_settime(set->hrtimer, 0, &(struct itimerspec){.it_value = ns}, NULL) < 0 MUN_RETHROW_OS)
+        struct itimerspec its = {.it_value = {deadline / 1000000ull, deadline % 1000000ull * 1000}};
+        if (deadline && timerfd_settime(set->hrtimer, TFD_TIMER_ABSTIME, &its, NULL) < 0 MUN_RETHROW_OS)
             return -1;
-        int got = epoll_wait(set->poller, evs, 64, timeout ? -1 : 0);
+        int got = epoll_wait(set->poller, evs, 64, deadline ? -1 : 0);
     #elif CONE_EV_KQUEUE
         struct kevent evs[64];
         struct timespec ns = {timeout / 1000000ull, timeout % 1000000ull * 1000};
@@ -290,7 +294,7 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec timeout) {
     #endif
     if (got < 0 && errno != EINTR MUN_RETHROW_OS)
         return -1;
-    if (timeout != 0) // else pings were not allowed in the first place (see `cone_loop_run`).
+    if (deadline != 0) // else pings were not allowed in the first place (see `cone_loop_run`).
         cone_event_io_consume_ping(set);
     #if CONE_EV_SELECT
         for (size_t i = 0; i < set->fdcap; i++)
