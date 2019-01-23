@@ -303,20 +303,6 @@ static bool test_mguard(char *) {
     return ASSERT(g.active() == 3, "@3") && cone::yield() && ASSERT(g.active() == 3, "@4");
 }
 
-static bool test_threadpool(char *) {
-    cone::threadpool p(10);
-    cone::ref spawned[100];
-    cone::time a = cone::time::clock::now();
-    for (auto& r : spawned)
-        // intentionally use a non-concurrent sleep
-        r = p.add([] { std::this_thread::sleep_for(10ms); return true; });
-    for (auto& r : spawned)
-        if (!r->wait() MUN_RETHROW)
-            return false;
-    cone::time b = cone::time::clock::now();
-    return ASSERT(100ms < b - a && b - a < 200ms, "%f", std::chrono::duration_cast<std::chrono::duration<double>>(b - a).count());
-}
-
 export { "cone:yield", &test_yield }
      , { "cone:detach", &test_detach }
      , { "cone:wait", &test_wait }
@@ -346,4 +332,3 @@ export { "cone:yield", &test_yield }
      , { "cone:thread", &test_thread }
      , { "cone:threads and a mutex", &test_mt_mutex }
      , { "cone:mguard", &test_mguard }
-     , { "cone:threadpool", &test_threadpool }
