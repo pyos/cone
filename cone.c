@@ -108,7 +108,7 @@ struct cone_event_fd {
 struct cone_event_io {
     int poller;
     int selfpipe[2];
-    // This flags is set while waiting for I/O to tell the other threads that a write
+    // This flag is set while waiting for I/O to tell the other threads that a write
     // to the self-pipe is needed to make this loop react to additions to the run queue.
     volatile _Atomic(char) interruptible;
     // Necessary structures:
