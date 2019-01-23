@@ -17,6 +17,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <vector>
 #include <thread>
 
 extern "C" char *__cxa_demangle(const char *, char *, size_t *, int *);
@@ -130,6 +131,14 @@ struct cone {
             reset(cone_spawn(stack, cone_bind(&invoke<G>, new G(std::forward<F>(f)))));
             mun_cant_fail(!*this MUN_RETHROW);
         }
+
+        // Same as above, but spawn on the loop to which another (live) coroutine belongs.
+        template <typename F /* = bool() */,
+                  typename G = std::enable_if_t<std::is_invocable_r<bool, F>::value, std::remove_reference_t<F>>>
+        ref(cone* c, F&& f, size_t stack = 100UL * 1024) noexcept {
+            reset(cone_spawn_at(c, stack, cone_bind(&invoke<G>, new G(std::forward<F>(f)))));
+            mun_cant_fail(!*this MUN_RETHROW);
+        }
     };
 
     // An owning reference to a coroutine in a separate thread. (Upcasting is OK.)
@@ -162,7 +171,7 @@ struct cone {
     struct guard : std::unique_ptr<cone, aborter> {
         template <typename... Args>
         guard(Args&&... args)
-            : std::unique_ptr<cone, aborter>::unique_ptr(cone::ref{std::forward<Args>(args)...}.release())
+            : std::unique_ptr<cone, aborter>::unique_ptr(ref{std::forward<Args>(args)...}.release())
         {
         }
     };
@@ -302,6 +311,7 @@ struct cone {
                 e_.wake();
             else while (v_.load(std::memory_order_acquire))
                 if (!e_.wait_if([&]{ return v_.load(std::memory_order_acquire) != 0; }))
+                    // FIXME unsafe when interruptible
                     return false;
             return true;
         }
@@ -309,6 +319,42 @@ struct cone {
     private:
         event e_;
         std::atomic<size_t> v_;
+    };
+
+    // Spawns N `thread`s and distributes each new coroutine to the least loaded thread. When
+    // `N` is 0, behaves as a fake pool that actually starts everything in the current thread.
+    // When destroyed, tasks already spawned keep running in detached threads.
+    struct threadpool {
+        threadpool(size_t n) : ts_(n) {
+            barrier b{n + 1};
+            for (auto& slot : ts_) {
+                slot.first = thread([&slot, &b]() {
+                    slot.second = count();
+                    intr<false>([&]{ b.join(); });
+                    while (sleep_for(std::chrono::seconds(600))) {}
+                    return false;
+                });
+            }
+            intr<false>([&]{ b.join(); });
+        }
+
+        threadpool(const event&) = delete;
+        threadpool& operator=(const threadpool&) = delete;
+
+        template <typename... Args>
+        ref add(Args&&... args) {
+            if (ts_.empty())
+                return ref{std::forward<Args>(args)...};
+            size_t i = 0;
+            size_t n = ts_[0].second->load(std::memory_order_relaxed);
+            for (size_t j = 1; j < ts_.size(); j++)
+                if (size_t m = ts_[j].second->load(std::memory_order_relaxed); m < n)
+                    i = j, n = m;
+            return ref{ts_[i].first.get(), std::forward<Args>(args)...};
+        }
+
+    private:
+        std::vector<std::pair<guard, const std::atomic<unsigned>*>> ts_;
     };
 
     // Evaluate the provided function, which should return a boolean indicating success,

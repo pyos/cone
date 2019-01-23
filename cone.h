@@ -37,6 +37,12 @@ struct cone *cone_spawn(size_t stack, struct cone_closure);
 // finish. (The function can, for example, create a new detached thread.)
 struct cone *cone_loop(size_t stack, struct cone_closure, int (*run)(struct cone_closure));
 
+// Like `cone_spawn`, but starts the coroutine on the same event loop as the other one
+// (may be in a different thread). Be careful with this: you need to be certain that
+// the specified coroutine will not terminate until this call returns, else its event loop
+// might also stop before the new coroutine spawns.
+struct cone *cone_spawn_at(struct cone *, size_t stack, struct cone_closure);
+
 // Drop the reference to a coroutine returned by `cone_spawn`. No-op if the pointer is NULL.
 void cone_drop(struct cone *);
 
