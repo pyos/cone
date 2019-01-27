@@ -729,7 +729,7 @@ static int cone_fork(struct cone_loop *loop) {
 struct cone *cone_loop(size_t size, struct cone_closure body, int (*run)(struct cone_closure)) {
     struct cone_loop *loop = calloc(sizeof(struct cone_loop), 1);
     if (loop == NULL || cone_loop_init(loop) MUN_RETHROW_OS)
-        return NULL;
+        return free(loop), NULL;
     struct cone *c = cone_spawn_on(loop, size, body);
     if (c == NULL MUN_RETHROW)
         return free(loop), NULL;
