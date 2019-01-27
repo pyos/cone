@@ -10,6 +10,12 @@
 extern "C" {
 #endif
 
+#if __cplusplus
+#define CONE_ATOMIC(T) std::atomic<T>
+#else
+#define CONE_ATOMIC(T) __typeof__(volatile _Atomic(T))
+#endif
+
 struct cone_closure {
     int (*code)(void*);
     void *data;
@@ -81,7 +87,7 @@ static inline int cone_yield(void) {
 }
 
 // A manually triggered event. Zero-initialized.
-struct cone_event { void *head, *tail, *lk; unsigned w; };
+struct cone_event { void *head; void *tail; CONE_ATOMIC(void *) lk; CONE_ATOMIC(unsigned) w; };
 
 // Begin an atomic transaction bound to an event. MUST be followed by one of the functions
 // below without yielding or beginning a transaction on another event.
@@ -103,7 +109,7 @@ int cone_tx_wait(struct cone_event *);
 size_t cone_wake(struct cone_event *, size_t, int /* non-negative */ ret);
 
 // A coroutine-owned mutex. Zero-initialized.
-struct cone_mutex { struct cone_event e; char lk; };
+struct cone_mutex { struct cone_event e; CONE_ATOMIC(char) lk; };
 
 // Either lock and succeed, or fail with EAGAIN; do not check for cancellation.
 int cone_try_lock(struct cone_mutex *);
@@ -134,18 +140,10 @@ int cone_deadline(struct cone *, mun_usec);
 void cone_complete(struct cone *, mun_usec);
 
 // The live counter of coroutines active in the running coroutine's event loop.
-#if __cplusplus
-const std::atomic<unsigned> *cone_count(void);
-#else
-const volatile _Atomic(unsigned) *cone_count(void);
-#endif
+const CONE_ATOMIC(unsigned) *cone_count(void);
 
 // The current scheduling delay, i.e. the time it takes to clear the run queue.
-#if __cplusplus
-const std::atomic<mun_usec> *cone_delay(void);
-#else
-const volatile _Atomic(mun_usec) *cone_delay(void);
-#endif
+const CONE_ATOMIC(mun_usec) *cone_delay(void);
 
 #if __cplusplus
 } // extern "C"

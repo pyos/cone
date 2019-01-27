@@ -99,7 +99,7 @@ struct cone_event_io {
     int selfpipe[2];
     // This flag is set while waiting for I/O to tell the other threads that a write
     // to the self-pipe is needed to make this loop react to additions to the run queue.
-    volatile _Atomic(char) interruptible;
+    CONE_ATOMIC(char) interruptible;
     // Necessary structures:
     // * epoll - O(1) iterate over per-fd chain, O(1) find the chain to modify it: hashmap.
     // * select - O(n) iterate over all fds: list, but we're implementing a hashmap anyway...
@@ -304,12 +304,12 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec deadline) {
 }
 
 struct cone_runq_it {
-    volatile _Atomic(struct cone_runq_it *) next;
+    CONE_ATOMIC(struct cone_runq_it *) next;
 };
 
 struct cone_runq {
-    volatile _Atomic(struct cone_runq_it *) head;
-    volatile _Atomic(mun_usec) delay;
+    CONE_ATOMIC(struct cone_runq_it *) head;
+    CONE_ATOMIC(mun_usec) delay;
     struct cone_runq_it *tail;
     struct cone_runq_it stub;
     mun_usec prev;
@@ -350,7 +350,7 @@ static struct cone *cone_runq_next(struct cone_runq *rq) {
 }
 
 struct cone_loop {
-    volatile _Atomic(unsigned) active;
+    CONE_ATOMIC(unsigned) active;
     struct cone_runq now;
     struct cone_event_io io;
     struct cone_event_schedule at;
@@ -383,7 +383,7 @@ static void cone_loop_run(struct cone_loop *loop) {
 
 struct cone {
     struct cone_runq_it runq;
-    volatile _Atomic(unsigned) flags;
+    CONE_ATOMIC(unsigned) flags;
     void **rsp;
     struct cone_loop *loop;
     struct cone_closure body;
@@ -535,18 +535,16 @@ struct cone_event_it {
 };
 
 static _Thread_local struct cone_mcs_lock {
-    volatile _Atomic(struct cone_mcs_lock *) next;
-    volatile _Atomic(char) locked;
+    CONE_ATOMIC(struct cone_mcs_lock *) next;
+    CONE_ATOMIC(char) locked;
 } lki;
 
 #ifndef CONE_SPIN_INTERVAL
 #define CONE_SPIN_INTERVAL 512
 #endif
 
-#define A(p) ((volatile _Atomic(__typeof__(*p)) *)(p))
-
 static void cone_tx_lock(struct cone_event *ev) {
-    struct cone_mcs_lock *p = atomic_exchange(A(&ev->lk), &lki);
+    struct cone_mcs_lock *p = atomic_exchange(&ev->lk, &lki);
     if (!p)
         return;
     atomic_store_explicit(&lki.locked, 1, memory_order_relaxed);
@@ -556,7 +554,7 @@ static void cone_tx_lock(struct cone_event *ev) {
 }
 
 static void cone_tx_unlock(struct cone_event *ev) {
-    if (atomic_compare_exchange_strong(A(&ev->lk), &(void *){&lki}, NULL))
+    if (atomic_compare_exchange_strong(&ev->lk, &(void *){&lki}, NULL))
         return;
     struct cone_mcs_lock *n;
     for (size_t __n = 0; !(n = atomic_load_explicit(&lki.next, memory_order_acquire));)
@@ -568,11 +566,11 @@ static void cone_tx_unlock(struct cone_event *ev) {
 void cone_tx_begin(struct cone_event *ev) {
     // The increment must be a seq-cst operation so that it is not reordered with
     // the contents of the transaction.
-    cone_tx_lock(ev), (void)++*A(&ev->w);
+    cone_tx_lock(ev), ev->w++;
 }
 
 void cone_tx_end(struct cone_event *ev) {
-    cone_tx_unlock(ev), (void)--*A(&ev->w);
+    cone_tx_unlock(ev), ev->w--;
 }
 
 int cone_tx_wait(struct cone_event *ev) {
@@ -583,7 +581,7 @@ int cone_tx_wait(struct cone_event *ev) {
     if (cone_deschedule(cone) MUN_RETHROW) {
         cone_tx_lock(ev);
         if (it.v < 0) {
-            (void)--*A(&ev->w);
+            ev->w--;
             it.prev ? (it.prev->next = it.next) : (ev->head = it.next);
             it.next ? (it.next->prev = it.prev) : (ev->tail = it.prev);
         }
@@ -595,11 +593,11 @@ int cone_tx_wait(struct cone_event *ev) {
 
 size_t cone_wake(struct cone_event *ev, size_t n, int ret) {
     size_t r = 0;
-    if (!n || !atomic_load_explicit(A(&ev->w), memory_order_acquire))
+    if (!n || !atomic_load_explicit(&ev->w, memory_order_acquire))
         return 0; // serialized before any `cone_tx_begin`
     cone_tx_lock(ev);
     for (struct cone_event_it *it; n-- && (it = ev->head); r++) {
-        (void)--*A(&ev->w);
+        ev->w--;
         ev->head = it->next;
         it->next ? (it->next->prev = it->prev) : (ev->tail = it->prev);
         it->v = ret < 0 ? 0 : ret;
@@ -626,13 +624,13 @@ size_t cone_wake(struct cone_event *ev, size_t n, int ret) {
 }
 
 int cone_try_lock(struct cone_mutex *m) {
-    return atomic_exchange(A(&m->lk), 1) ? mun_error(EAGAIN, "mutex already locked") : 0;
+    return atomic_exchange(&m->lk, 1) ? mun_error(EAGAIN, "mutex already locked") : 0;
 }
 
 int cone_lock(struct cone_mutex *m) {
     int r = 0;
     // 0 = xchg succeeded, 1 = fair handoff, 2 = retry xchg
-    if (atomic_exchange(A(&m->lk), 1)) while ((r = cone_wait(&m->e, atomic_exchange(A(&m->lk), 1))) == 2) {}
+    if (atomic_exchange(&m->lk, 1)) while ((r = cone_wait(&m->e, atomic_exchange(&m->lk, 1))) == 2) {}
     if (r < 0 MUN_RETHROW) {
         if (r == ~1) // acquired the lock by direct handoff, but also cancelled
             cone_unlock(m, 1);
@@ -647,7 +645,7 @@ int cone_unlock(struct cone_mutex *m, int fair) {
     if (fair && cone_wake(&m->e, 1, 1))
         return 1;
     // (Some waiters may queue here, so wake(n, 2) after a store is needed even on a fair unlock.)
-    atomic_store_explicit(A(&m->lk), 0, memory_order_release);
+    atomic_store_explicit(&m->lk, 0, memory_order_release);
     // XXX if the critical section rarely yields, waking one by one leaves huge gaps
     //     in the run queue where another coroutine may barge in. This isn't just unfair,
     //     this is super unfair.
@@ -703,11 +701,11 @@ void cone_complete(struct cone *c, mun_usec t) {
     cone_event_schedule_del(&c->loop->at, t, c, 1);
 }
 
-const volatile _Atomic(unsigned) * cone_count(void) {
+const CONE_ATOMIC(unsigned) *cone_count(void) {
     return cone ? &cone->loop->active : NULL;
 }
 
-const volatile _Atomic(mun_usec) *cone_delay(void) {
+const CONE_ATOMIC(mun_usec) *cone_delay(void) {
     return cone ? &cone->loop->now.delay : NULL;
 }
 
