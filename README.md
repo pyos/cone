@@ -31,8 +31,7 @@ make CFLAGS=-O3 tests/perf
 ### An overview of available functions
 
 See `cone.h`. Error handling is in `mun.h`. There are coroutine-blocking versions of
-some standard library functions in `cold.h`. Optionally, these versions override the
-dynamically linked ones from libc by default.
+some standard library functions in `cold.h`.
 
 Some options (`CFLAGS="... -DOPTION=VALUE"`):
 
@@ -44,10 +43,6 @@ Some options (`CFLAGS="... -DOPTION=VALUE"`):
 
   * **CONE_DEFAULT_STACK**: (bytes; default = 64k) the stack size for coroutines created via the
     `cone(f, arg)` macro (as opposed to `cone_spawn(stksz, cone_bind(f, arg))`).
-
-  * **COLD_OVERRIDE**: (0 or 1; default = 0) whether to provide custom implementations of
-    libc functions, e.g. replace `read` with `cold_read`. Disabled by default due to some
-    differences in behavior (e.g. `cold_recvmsg` with `MSG_DONTWAIT` will still block).
 
 ### In which various details are documented
 
