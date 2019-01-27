@@ -66,19 +66,10 @@ static void cone_run(struct cone *);
 // If it is known that the loop is not blocked in a syscall, this can be ignored.
 static struct cone_loop *cone_schedule(struct cone *, int);
 
-struct cone_event_at {
-    mun_usec at;
-    uintptr_t c;
-};
-
-struct cone_event_schedule mun_vec(struct cone_event_at);
-
-static void cone_event_schedule_fini(struct cone_event_schedule *ev) {
-    mun_vec_fini(ev);
-}
+struct cone_event_schedule mun_vec(struct { mun_usec at; uintptr_t c; });
 
 static int cone_event_schedule_add(struct cone_event_schedule *ev, mun_usec at, struct cone *c, int deadline) {
-    return mun_vec_insert(ev, mun_vec_bisect(ev, at < _->at), &((struct cone_event_at){at, (uintptr_t)c|deadline}));
+    return mun_vec_insert(ev, mun_vec_bisect(ev, at < _->at), &((mun_vec_type(ev)){at, (uintptr_t)c|deadline}));
 }
 
 static void cone_event_schedule_del(struct cone_event_schedule *ev, mun_usec at, struct cone *c, int deadline) {
@@ -88,14 +79,12 @@ static void cone_event_schedule_del(struct cone_event_schedule *ev, mun_usec at,
 }
 
 static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev, size_t limit) {
-    while (ev->size && limit) {
-        mun_usec t = mun_usec_monotonic();
-        if (ev->data->at > t)
-            return ev->data->at;
-        for (; ev->size && ev->data->at <= t && limit; mun_vec_erase(ev, 0, 1), limit--)
-            cone_schedule((struct cone *)(ev->data->c & ~1ul), ev->data->c & 1 ? CONE_FLAG_TIMED_OUT : CONE_FLAG_WOKEN);
-    }
-    return ev->size ? 0 : MUN_USEC_MAX;
+    mun_usec t = mun_usec_monotonic();
+    for (; limit-- && ev->size && ev->data->at <= t; mun_vec_erase(ev, 0, 1))
+        cone_schedule((struct cone *)(ev->data->c & ~1ul), ev->data->c & 1 ? CONE_FLAG_TIMED_OUT : CONE_FLAG_WOKEN);
+    // 0 is functionally equivalent to a timestamp in the past, but does not enable
+    // the self-pipe, improving cross-thread synchronization performance a bit.
+    return ev->size ? (ev->data->at <= t ? 0 : ev->data->at) : MUN_USEC_MAX;
 }
 
 struct cone_event_fd {
@@ -389,7 +378,7 @@ static void cone_loop_run(struct cone_loop *loop) {
         mun_cant_fail(cone_event_io_emit(&loop->io, next) MUN_RETHROW);
     }
     cone_event_io_fini(&loop->io);
-    cone_event_schedule_fini(&loop->at);
+    mun_vec_fini(&loop->at);
 }
 
 struct cone {
