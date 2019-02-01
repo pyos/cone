@@ -77,14 +77,13 @@ struct cone {
         return f();
     }
 
-    // Enable or disable interruptions while calling the provided function. While
-    // interruptions are disabled, blocking operations cannot time out or be cancelled.
-    template <bool state, typename F>
-    static auto intr(F&& f) {
-        if (cone_intr(state) == state)
+    // While interruptions are disabled, blocking operations cannot time out or be cancelled.
+    template <typename F>
+    static auto uninterruptible(F&& f) {
+        if (!cone_intr(0))
             return f();
-        auto d = [](const char *) noexcept { cone_intr(!state); };
-        auto g = std::unique_ptr<const char, void(*)(const char*) noexcept>{"-", d};
+        auto d = [](const void *) noexcept { cone_intr(1); };
+        auto g = std::unique_ptr<const void, void(*)(const void*) noexcept>{"-", d};
         return f();
     };
 
@@ -158,7 +157,7 @@ struct cone {
 
     struct aborter {
         void operator()(cone *c) const noexcept {
-            intr<false>([c]() {
+            uninterruptible([&]() {
                 cone_cancel(c);
                 cone_join(c, 1);
             });
@@ -184,7 +183,7 @@ struct cone {
         mguard& operator=(mguard&& other) { std::swap(fake_, other.fake_); return *this; }
 
         ~mguard() {
-            intr<false>([this] {
+            uninterruptible([this] {
                 cancel();
                 while (fake_->next_ != fake_.get())
                     ref{std::move(fake_->next_->r_)}->wait(/*rethrow=*/false);
@@ -278,7 +277,7 @@ struct cone {
 
         // Acquire the lock. By default, cannot be cancelled to mimic std::mutex::lock.
         bool lock(int flags = uninterruptible) noexcept {
-            return flags & interruptible ? !cone_lock(this) : intr<false>([this]{ return !cone_lock(this); });
+            return flags & interruptible ? !cone_lock(this) : cone::uninterruptible([this]{ return !cone_lock(this); });
         }
 
         // Release the lock and wake at least one waiter, return whether anyone was woken.

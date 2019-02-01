@@ -38,7 +38,7 @@ static bool test_cancel_atomic(char *) {
 
 static bool test_cancel_uninterruptible(char *) {
     int v = 0;
-    cone::ref c = [&]() { return cone::intr<false>([&]() { return cone::yield() && (v++, true); })
+    cone::ref c = [&]() { return cone::uninterruptible([&]() { return cone::yield() && (v++, true); })
                               && cone::yield() && (v++, true); };
     c->cancel();
     return ASSERT(!c->wait(), "cancelled coroutine succeeded")
