@@ -29,7 +29,7 @@ template <size_t cones>
 static bool test_spawn(char *msg) {
     return measure<cones>(msg, [] {
         for (size_t i = 0; i < cones; i++)
-            if (!cone::ref{[](){ return true; }}->wait())
+            if (!cone::ref{[](){ return true; }}->wait(cone::rethrow))
                 return false;
         return true;
     });

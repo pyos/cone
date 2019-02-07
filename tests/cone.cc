@@ -17,14 +17,14 @@ static bool test_detach(char *) {
 static bool test_wait(char *) {
     int v = 0;
     cone::ref c = [&]() { return cone::yield() && cone::yield() && cone::yield() && (v++, true); };
-    return c->wait() && ASSERT(v == 1, "%d != 1", v);
+    return c->wait(cone::rethrow) && ASSERT(v == 1, "%d != 1", v);
 }
 
 static bool test_cancel(char *) {
     int v = 0;
     cone::ref c = [&]() { return cone::yield() && (v++, true); };
     c->cancel();
-    return ASSERT(!c->wait(), "cancelled coroutine succeeded")
+    return ASSERT(!c->wait(cone::rethrow), "cancelled coroutine succeeded")
         && ASSERT(mun_errno == ECANCELED, "unexpected error %d", mun_errno)
         && ASSERT(v == 0, "%d != 0", v);
 }
@@ -41,7 +41,7 @@ static bool test_cancel_uninterruptible(char *) {
     cone::ref c = [&]() { return cone::uninterruptible([&]() { return cone::yield() && (v++, true); })
                               && cone::yield() && (v++, true); };
     c->cancel();
-    return ASSERT(!c->wait(), "cancelled coroutine succeeded")
+    return ASSERT(!c->wait(cone::rethrow), "cancelled coroutine succeeded")
         && ASSERT(mun_errno == ECANCELED, "unexpected error %d", mun_errno)
         && ASSERT(v == 1, "%d != 1", v);
 }
@@ -49,7 +49,8 @@ static bool test_cancel_uninterruptible(char *) {
 static bool test_cancel_sleeping(char *) {
     cone::ref c = []() { return ASSERT(!cone::sleep_for(100ms) && mun_errno == ECANCELED, "not cancelled"); };
     auto a = cone::time::clock::now();
-    return (c->cancel(), c->wait()) && ASSERT(cone::time::clock::now() - a < 10ms, "shouldn't have slept");
+    return (c->cancel(), c->wait(cone::rethrow))
+        && ASSERT(cone::time::clock::now() - a < 10ms, "shouldn't have slept");
 }
 
 static bool test_cancel_by_guard(char *) {
@@ -60,7 +61,7 @@ static bool test_cancel_by_guard(char *) {
 static bool test_wait_no_rethrow(char *) {
     cone::ref c = [&]() { return cone::yield(); };
     c->cancel();
-    return c->wait(false);
+    return c->wait(cone::norethrow);
 }
 
 template <bool cancel>
@@ -68,11 +69,12 @@ static bool test_sleep(char *msg) {
     auto start = cone::time::clock::now();
     cone::ref a = [=]() { return cone::sleep(start + 50ms); };
     cone::ref b = [=]() { return cone::sleep(start + 100ms); };
-    if (!a->wait())
+    if (!a->wait(cone::rethrow))
         return false;
     if (cancel)
         b->cancel();
-    if (cancel ? !ASSERT(!b->wait() && mun_errno == ECANCELED, "b->wait() failed") : !b->wait())
+    if (cancel ? !ASSERT(!b->wait(cone::rethrow) && mun_errno == ECANCELED, "b->wait failed")
+               : !b->wait(cone::rethrow))
         return false;
     auto end = cone::time::clock::now();
     sprintf(msg, "%fs", std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count());
@@ -115,7 +117,7 @@ static bool test_count(char *) {
 static bool test_event(char *) {
     cone::event ev;
     cone::ref _1 = [&]() { size_t w = ev.wake(); return ASSERT(w == 1u, "%zu != 1", w); };
-    return ev.wait() && _1->wait();
+    return ev.wait() && _1->wait(cone::rethrow);
 }
 
 static bool test_event_wake(char *) {
@@ -125,7 +127,7 @@ static bool test_event_wake(char *) {
     cone::ref _2 = [&]() { size_t w = ev.wake(1); return ASSERT(w == 1u, "%zu != 1", w); };
     // _1 has not started running yet, so this coroutine will be the first in queue.
     return ev.wait() && ASSERT(v == 0, "%d != 0", v)
-        && (ev.wake(), cone::yield() && ASSERT(v == 1, "%d != 1", v)) && _2->wait();
+        && (ev.wake(), cone::yield() && ASSERT(v == 1, "%d != 1", v)) && _2->wait(cone::rethrow);
 }
 
 static bool test_mutex(char *) {
@@ -138,12 +140,12 @@ static bool test_mutex(char *) {
     cone::ref b = [&]() {
         return m.lock(), last = 2, m.unlock(), true;
     };
-    return a->wait() && b->wait() && ASSERT(last == 2, "%d != 2", last);
+    return a->wait(cone::rethrow) && b->wait(cone::rethrow) && ASSERT(last == 2, "%d != 2", last);
 }
 
 static bool test_exceptions_0(char *msg) {
     cone::ref x = []() -> bool { throw std::runtime_error("<-- should preferably be demangled"); };
-    return ASSERT(!x->wait(), "x succeeded despite throwing") && (strcpy(msg, mun_last_error()->text), true);
+    return ASSERT(!x->wait(cone::rethrow), "x succeeded despite throwing") && (strcpy(msg, mun_last_error()->text), true);
 }
 
 static bool test_exceptions_1(char *) {
@@ -159,7 +161,7 @@ static bool test_exceptions_1(char *) {
         if (!ASSERT(!strcmp(e.what(), "2"), "%s != 2", e.what()))
             return false;
     }
-    return ASSERT(!x->wait(), "x succeeded despite throwing");
+    return ASSERT(!x->wait(cone::rethrow), "x succeeded despite throwing");
 }
 
 static bool test_exceptions_2(char *) {
@@ -178,7 +180,7 @@ static bool test_exceptions_2(char *) {
     };
     cone::ref x = [&]() -> bool { return check_error("1"); };
     bool ok = check_error("2");
-    return x->wait() && ok;
+    return x->wait(cone::rethrow) && ok;
 }
 
 namespace {
@@ -227,7 +229,7 @@ static bool test_rdwr(char *) {
                 return false;
         return true;
     };
-    return r->wait() && w->wait();
+    return r->wait(cone::rethrow) && w->wait(cone::rethrow);
 }
 
 static bool test_concurrent_rw(char *) {
@@ -239,12 +241,12 @@ static bool test_concurrent_rw(char *) {
     cone::ref a = [&]() { return !cone_iowait(fds[0].i, 0) && (result |= 1, true); };
     cone::ref b = [&]() { return !cone_iowait(fds[0].i, 1) && (result |= 2, true); };
     cone::ref c = [&]() { return !cone_iowait(fds[0].i, 0) && (result |= 4, true); };
-    return b->wait()
+    return b->wait(cone::rethrow)
         && ASSERT(result == 2, "reader also finished, but data hasn't been written yet")
         && ASSERT(write(fds[1].i, "x", 1) == 1, "write() failed")
-        && a->wait()
+        && a->wait(cone::rethrow)
         && ASSERT(result == 7, "reader status: %s, %s", (result & 1 ? "awake" : "asleep"), (result & 4 ? "awake" : "asleep"))
-        && c->wait();
+        && c->wait(cone::rethrow);
 }
 
 static bool test_io_starvation(char *) {
@@ -265,13 +267,15 @@ static bool test_io_starvation(char *) {
     cc->cancel();
     ca->cancel();
     cb->cancel();
-    return cc->wait() && ca->wait() && cb->wait();
+    return cc->wait(cone::rethrow) && ca->wait(cone::rethrow) && cb->wait(cone::rethrow);
 }
 
 static bool test_thread(char *) {
     int v = 0;
-    return cone::thread([&]() { return cone::sleep_for(100ms) && cone::ref{[&]() { return ++v; }}->wait(); })->wait()
-        && ASSERT(v == 1, "%d != 1", v);
+    return cone::thread([&]() {
+        return cone::sleep_for(100ms)
+            && cone::ref{[&]() { return ++v; }}->wait(cone::rethrow); }
+    )->wait(cone::rethrow) && ASSERT(v == 1, "%d != 1", v);
 }
 
 static bool test_mt_mutex(char *) {

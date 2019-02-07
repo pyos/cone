@@ -52,6 +52,9 @@ struct cone *cone_spawn_at(struct cone *, size_t stack, struct cone_closure);
 // Drop the reference to a coroutine returned by `cone_spawn`. No-op if the pointer is NULL.
 void cone_drop(struct cone *);
 
+// More readable names for the second argument of the function below.
+enum { CONE_RETHROW = 0, CONE_NORETHROW = 1 };
+
 // Sleep until a coroutine finishes. If `norethrow` is 0 and the coroutine fails, this
 // function returns the error. If this is never done, the error is printed to stderr (see
 // `mun_error_show`) when the coroutine is deallocated, and is otherwise ignored.

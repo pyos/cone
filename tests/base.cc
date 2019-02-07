@@ -17,7 +17,7 @@ static inline bool spawn_and_wait(F&& f) {
     for (size_t i = 0; i < N; i++)
         cs.emplace_back(f);
     for (auto& c : cs)
-        if (!c->wait())
+        if (!c->wait(cone::rethrow))
             return false;
     return true;
 }

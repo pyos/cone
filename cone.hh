@@ -28,11 +28,13 @@ struct cone {
     using time = std::chrono::steady_clock::time_point;
     using timedelta = std::chrono::steady_clock::duration;
 
+    enum rethrow_mode { rethrow, norethrow };
+
     // Sleep until this coroutine finishes, optionally returning its error. See `cone_cowait`.
     // Requires that an owning reference (see `ref` below) to this coroutine exists for the
     // duration of the sleep, else the behavior on return will be extra undefined.
-    bool wait(bool rethrow = true) noexcept {
-        return !cone_cowait(this, !rethrow);
+    bool wait(enum rethrow_mode rethrow) noexcept {
+        return !cone_cowait(this, rethrow == norethrow);
     }
 
     // Make the next (or current, if any) call to `wait`, `iowait`, `sleep_until`, `sleep`,
@@ -159,7 +161,7 @@ struct cone {
         void operator()(cone *c) const noexcept {
             uninterruptible([&]() {
                 cone_cancel(c);
-                cone_join(c, 1);
+                cone_join(c, CONE_NORETHROW);
             });
         }
     };
@@ -186,7 +188,7 @@ struct cone {
             uninterruptible([this] {
                 cancel();
                 while (fake_->next_ != fake_.get())
-                    ref{std::move(fake_->next_->r_)}->wait(/*rethrow=*/false);
+                    ref{std::move(fake_->next_->r_)}->wait(norethrow);
             });
         }
 
