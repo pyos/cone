@@ -89,7 +89,9 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev, size_t 
 
 struct cone_event_fd {
     int fd;
-    int write;
+    int write : 1;
+    int remove : 1;
+    int removed : 1;
     struct cone *c;
     struct cone_event_fd *link;
 };
@@ -177,7 +179,7 @@ static int cone_event_io_mod(struct cone_event_io *set, struct cone_event_fd *st
     #if CONE_EV_KQUEUE
         uint16_t flags = (add ? EV_ADD|EV_ONESHOT : EV_DELETE)|EV_UDATA_SPECIFIC;
         struct kevent ev = {st->fd, st->write ? EVFILT_WRITE : EVFILT_READ, flags, 0, 0, st};
-        return kevent(set->poller, &ev, 1, NULL, 0, NULL) && (add || errno != ENOENT) MUN_RETHROW_OS;
+        return kevent(set->poller, &ev, 1, NULL, 0, NULL) MUN_RETHROW_OS;
     #else
         struct cone_event_fd **b = &set->fds[inthash(st->fd) & (set->fdcap - 1)];
         while (*b && (*b)->fd != st->fd)
@@ -198,8 +200,13 @@ static int cone_event_io_mod(struct cone_event_io *set, struct cone_event_fd *st
             struct epoll_event ev = {0, {.ptr = *b}};
             for (struct cone_event_fd *e = *b; e && e->fd == st->fd; e = e->link)
                 ev.events |= e->write ? EPOLLOUT : EPOLLIN|EPOLLRDHUP;
+            // EPOLL_CTL_MOD seems to work as EPOLL_CTL_ADD too, but let's go by the book.
             int op = is_add ? EPOLL_CTL_ADD : is_del ? EPOLL_CTL_DEL : EPOLL_CTL_MOD;
-            if (epoll_ctl(set->poller, op, st->fd, &ev) MUN_RETHROW_OS)
+            // To avoid `epoll_ctl`s, a file descriptor is only removed when the coroutine
+            // that waited on it goes to sleep/terminates for any reason other than waiting
+            // again. By that point, it might have closed the file descriptor (=> EBADF),
+            // or even opened a new one with the same number (=> ENOENT/EPERM).
+            if (epoll_ctl(set->poller, op, st->fd, &ev) && (!is_del || (errno != EBADF && errno != ENOENT && errno != EPERM)) MUN_RETHROW_OS)
                 return *c = (add ? st->link : st), -1;
         #endif
 
@@ -233,7 +240,10 @@ static int cone_event_io_add(struct cone_event_io *set, struct cone_event_fd *st
 }
 
 static void cone_event_io_del(struct cone_event_io *set, struct cone_event_fd *st) {
-    mun_cant_fail(cone_event_io_mod(set, st, 0) MUN_RETHROW);
+    if (st->remove && !st->removed) {
+        st->removed = 1;
+        mun_cant_fail(cone_event_io_mod(set, st, 0) MUN_RETHROW);
+    }
 }
 
 static void cone_event_io_ping(struct cone_event_io *set) {
@@ -288,17 +298,21 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec deadline) {
     #if CONE_EV_SELECT
         for (size_t i = 0; i < set->fdcap; i++)
             for (struct cone_event_fd *e = set->fds[i]; e; e = e->link)
-                if (FD_ISSET(e->fd, &fds[!!e->write]))
-                    cone_event_io_del(set, e), cone_schedule(e->c, CONE_FLAG_WOKEN);
+                // `remove` could already have been set if the run queue is so long, the cone
+                // waiting for this event did not run between two `cone_event_io_emit`s. Just
+                // ignore it, we're looping with zero timeout anyway.
+                if (FD_ISSET(e->fd, &fds[!!e->write]) && !e->remove)
+                    e->remove = 1, cone_schedule(e->c, CONE_FLAG_WOKEN);
     #elif CONE_EV_EPOLL
         for (int i = 0; i < got; i++)
             for (struct cone_event_fd *st = evs[i].data.ptr, *e = st; e && e->fd == st->fd; e = e->link)
-                if (evs[i].events & ((e->write ? EPOLLOUT : EPOLLIN|EPOLLRDHUP)|EPOLLERR|EPOLLHUP))
-                    cone_event_io_del(set, e), cone_schedule(e->c, CONE_FLAG_WOKEN);
+                if (evs[i].events & ((e->write ? EPOLLOUT : EPOLLIN|EPOLLRDHUP)|EPOLLERR|EPOLLHUP) && !e->remove)
+                    e->remove = 1, cone_schedule(e->c, CONE_FLAG_WOKEN);
     #elif CONE_EV_KQUEUE
+        struct cone_event_fd *e;
         for (int i = 0; i < got; i++)
-            if (evs[i].udata) // oneshot event, removed automatically
-                cone_schedule(((struct cone_event_fd *)evs[i].udata)->c, CONE_FLAG_WOKEN);
+            if ((e = (struct cone_event_fd *)evs[i].udata) && !e->remove) // oneshot event, removed automatically
+                e->removed = 1, cone_schedule(e->c, CONE_FLAG_WOKEN);
     #endif
     return 0;
 }
@@ -388,6 +402,7 @@ struct cone {
     struct cone_loop *loop;
     struct cone_closure body;
     struct cone_event done;
+    struct cone_event_fd ioev;
     #if CONE_ASAN
         const void * target_stack;
         size_t target_stack_size;
@@ -436,6 +451,7 @@ static void __attribute__((noreturn)) cone_body(struct cone *c) {
         *__cxa_get_globals() = (struct __cxa_eh_globals){ NULL, 0 };
     #endif
     c->flags |= (c->body.code(c->body.data) ? CONE_FLAG_FAILED : 0) | CONE_FLAG_FINISHED;
+    cone_event_io_del(&c->loop->io, &c->ioev);
     atomic_fetch_sub_explicit(&c->loop->active, 1, memory_order_acq_rel);
     cone_wake(&c->done, (size_t)-1, 0);
     #if CONE_ASAN
@@ -514,6 +530,7 @@ static struct cone_loop *cone_schedule(struct cone *c, int flags) {
 }
 
 static int cone_deschedule(struct cone *c) {
+    cone_event_io_del(&c->loop->io, &c->ioev);
     unsigned flags = c->flags;
     // Don't even yield if cancelled by another thread while registering the wakeup callback.
     while (!(flags & CONE_FLAG_WOKEN) && (flags & CONE_FLAG_NO_INTR || !(flags & (CONE_FLAG_CANCELLED | CONE_FLAG_TIMED_OUT))))
@@ -653,12 +670,20 @@ int cone_unlock(struct cone_mutex *m, int fair) {
 }
 
 int cone_iowait(int fd, int write) {
-    struct cone_event_fd ev = {fd, write, cone, NULL};
-    if (cone_event_io_add(&cone->loop->io, &ev) MUN_RETHROW)
-        return -1;
-    if (cone_deschedule(cone) MUN_RETHROW)
-        return cone_event_io_del(&cone->loop->io, &ev), -1;
-    return 0;
+    if (cone->ioev.fd == fd && cone->ioev.write == write && !cone->ioev.removed) {
+        // A common pattern is to loop around an I/O operation and do something
+        // with the data (e.g. buffer) without blocking. Avoid deleting/adding
+        // the same file descriptor in that case.
+        cone->ioev.remove = 0;
+    } else {
+        cone_event_io_del(&cone->loop->io, &cone->ioev);
+        cone->ioev = (struct cone_event_fd){fd, write, 0, 0, cone, NULL};
+        if (cone_event_io_add(&cone->loop->io, &cone->ioev) MUN_RETHROW)
+            return -1;
+    }
+    int ret = cone_deschedule(cone) MUN_RETHROW;
+    cone->ioev.remove = 1;
+    return ret;
 }
 
 int cone_sleep_until(mun_usec t) {
