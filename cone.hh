@@ -182,7 +182,7 @@ struct cone {
     struct mguard {
         mguard() = default;
         mguard(mguard&& other) : mguard() { std::swap(fake_, other.fake_); }
-        mguard& operator=(mguard&& other) { std::swap(fake_, other.fake_); return *this; }
+        mguard& operator=(mguard other) { std::swap(fake_, other.fake_); return *this; }
 
         ~mguard() {
             uninterruptible([this] {
