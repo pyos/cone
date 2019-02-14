@@ -120,7 +120,7 @@ struct cone_event_io {
 // Must be a power of 2.
 #define CONE_MIN_FDS_CAP 64
 
-static int inthash(int key) {
+static unsigned inthash(unsigned key) {
     key = (key ^ 61) ^ (key >> 16);
     key = key + (key << 3);
     key = key ^ (key >> 4);
