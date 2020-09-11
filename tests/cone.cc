@@ -1,5 +1,10 @@
+#include <fenv.h>
+#include <math.h>
+#include <float.h>
 #include <unistd.h>
 #include <sys/socket.h>
+
+#include <stdexcept>
 
 static bool test_yield(char *) {
     int v = 0;
@@ -307,6 +312,19 @@ static bool test_mguard(char *) {
     return ASSERT(g.active() == 3, "@3") && cone::yield() && ASSERT(g.active() == 3, "@4");
 }
 
+static bool test_sse2_csr(char *) {
+    double x = 2.0;
+    cone::ref _1 = [&x] {
+        fesetround(FE_DOWNWARD);
+        double y = sqrt(x);
+        cone::yield();
+        double z = sqrt(x);
+        return ASSERT(y == z, "%.*e != %.*e", DECIMAL_DIG, y, DECIMAL_DIG, z);
+    };
+    cone::ref _2 = [] { fesetround(FE_UPWARD); return true; };
+    return _1->wait(cone::rethrow);
+}
+
 export { "cone:yield", &test_yield }
      , { "cone:detach", &test_detach }
      , { "cone:wait", &test_wait }
@@ -336,3 +354,4 @@ export { "cone:yield", &test_yield }
      , { "cone:thread", &test_thread }
      , { "cone:threads and a mutex", &test_mt_mutex }
      , { "cone:mguard", &test_mguard }
+     , { "cone:sse2 csr", &test_sse2_csr }
