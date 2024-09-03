@@ -4,7 +4,7 @@ Stackful coroutines in the least moral language ever.
 
 ### On supported platforms
 
-Probably all UNIX-like OS on x86-64. Tested on Linux and macOS.
+Probably all UNIX-like OS on x86-64 or arm64. Tested on Linux and macOS.
 
 Supporting other architectures is a simple matter of adding relevant assembler code
 to `cone_switch` and `cone_body`, as well as stack setup code to `cone_spawn_on`.

@@ -34,9 +34,18 @@ struct __cxa_eh_globals *__cxa_get_globals();
 #error "selected more than one of CONE_EV_*"
 #endif
 
-#if !__x86_64__
+#if !CONE_ASM_X64 && !CONE_ASM_ARM64
+#define CONE_ASM_X64 (__x86_64__)
+#define CONE_ASM_ARM64 (__aarch64__)
+#endif
+
+#if (!!CONE_ASM_X64 + !!CONE_ASM_ARM64) != 1
+#error "selected more than one of CONE_ASM_*"
+#endif
+
+#if (!!CONE_ASM_X64 + !!CONE_ASM_ARM64) == 0
 // There used to be a `sigaltstack`-based implementation, but it was crap.
-_Static_assert(0, "stack switching is only supported on x86-64 UNIX");
+_Static_assert(0, "unsupported platform; has to be x86-64 or arm64");
 #endif
 
 #if CONE_EV_EPOLL
@@ -318,16 +327,17 @@ struct cone_runq {
 static void cone_runq_add(struct cone_runq *rq, struct cone_runq_it *it) {
     atomic_store_explicit(&it->next, NULL, memory_order_relaxed);
     // *Almost* wait-free - blocking between xchg and store blocks the consumer too.
-    atomic_store_explicit(&atomic_exchange(&rq->head, it)->next, it, memory_order_release);
+    // TODO: ARM64 says release/acquire for head and next do not work?...
+    atomic_store(&atomic_exchange(&rq->head, it)->next, it);
 }
 
 static int cone_runq_is_empty(struct cone_runq *rq) {
-    return rq->tail == &rq->stub && !atomic_load_explicit(&rq->stub.next, memory_order_acquire);
+    return rq->tail == &rq->stub && atomic_load(&rq->head) == &rq->stub;
 }
 
 static struct cone *cone_runq_next(struct cone_runq *rq) {
     struct cone_runq_it *tail = rq->tail;
-    struct cone_runq_it *next = atomic_load_explicit(&tail->next, memory_order_acquire);
+    struct cone_runq_it *next = atomic_load(&tail->next);
     if (tail == &rq->stub) {
         mun_usec now = mun_usec_monotonic();
         mun_usec old = atomic_load_explicit(&rq->delay, memory_order_relaxed);
@@ -341,7 +351,7 @@ static struct cone *cone_runq_next(struct cone_runq *rq) {
         rq->prev = now;
         cone_runq_add(rq, &rq->stub);
         tail = rq->tail = next;
-        next = atomic_load_explicit(&tail->next, memory_order_acquire);
+        next = atomic_load(&tail->next);
     }
     if (!next)
         return NULL; // blocked while pushing next element
@@ -357,7 +367,7 @@ struct cone_loop {
 };
 
 static int cone_loop_init(struct cone_loop *loop) {
-    atomic_store_explicit(&loop->now.head, loop->now.tail = &loop->now.stub, memory_order_relaxed);
+    atomic_store_explicit(&loop->now.head, loop->now.tail = &loop->now.stub, memory_order_release);
     return cone_event_io_init(&loop->io) MUN_RETHROW;
 }
 
@@ -381,6 +391,12 @@ static void cone_loop_run(struct cone_loop *loop) {
     mun_vec_fini(&loop->at);
 }
 
+#if CONE_ASM_X64
+#define CONE_STACK_ALIGN _Alignof(max_align_t)
+#elif CONE_ASM_ARM64
+#define CONE_STACK_ALIGN 16
+#endif
+
 struct cone {
     struct cone_runq_it runq;
     CONE_ATOMIC(unsigned) flags;
@@ -393,7 +409,7 @@ struct cone {
         size_t target_stack_size;
     #endif
     struct mun_error error;
-    _Alignas(max_align_t) char stack[];
+    _Alignas(CONE_STACK_ALIGN) char stack[];
 };
 
 _Thread_local struct cone * cone = NULL;
@@ -406,20 +422,50 @@ static void cone_switch(struct cone *c) {
         void * fake_stack = NULL;
         __sanitizer_start_switch_fiber(&fake_stack, c->target_stack, c->target_stack_size);
     #endif
-    unsigned mxcsr;
-    __asm__("stmxcsr %1      \n"
-            "jmp  %=0f       \n"
-    "%=1:"  "push %%rbp      \n"
-            "push %%rdi      \n"
-            "mov  %%rsp, %0  \n" // `xchg` is implicitly `lock`ed; 3 `mov`s are faster
-            "mov  %2, %%rsp  \n" // (the third is inserted by the compiler to load c->rsp)
-            "pop  %%rdi      \n" // FIXME prone to incur cache misses
-            "pop  %%rbp      \n"
-            "ret             \n" // jumps into `cone_body` if this is a new coroutine
-    "%=0:"  "call %=1b       \n"
-            "ldmxcsr %1      \n"
-      : "=m"(c->rsp), "=m"(mxcsr) : "c"(c->rsp) // FIXME prone to incur cache misses
-      : "rax", "rdx", "rbx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc", "memory");
+    #if CONE_ASM_X64
+        unsigned mxcsr;
+        __asm__("stmxcsr %1      \n"
+                "jmp  %=0f       \n"
+        "%=1:"  "push %%rbp      \n"
+                "push %%rdi      \n"
+                "mov  %%rsp, %0  \n" // `xchg` is implicitly `lock`ed; 3 `mov`s are faster
+                "mov  %2, %%rsp  \n" // (the third is inserted by the compiler to load c->rsp)
+                "pop  %%rdi      \n" // FIXME prone to incur cache misses
+                "pop  %%rbp      \n"
+                "ret             \n" // jumps into `cone_body` if this is a new coroutine
+        "%=0:"  "call %=1b       \n"
+                "ldmxcsr %1      \n"
+          : "=m"(c->rsp), "=m"(mxcsr) : "c"(c->rsp) // FIXME prone to incur cache misses
+          // Clobbered: rcx (overwritten by `c->rsp` above)
+          // Preserved: rdi (argument to cone_body), rbp (frame pointer), rsp (stack pointer)
+          // The remaining registers could be clobbered by the coroutine's body:
+          : "rax", "rdx", "rbx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc", "memory");
+    #elif CONE_ASM_ARM64
+        register void *sp __asm__("x0") = &c->rsp;
+        __asm__("ldr  x10,      [%0]     \n"
+                "mrs  x13, fpcr          \n"
+                "sub  x11,  sp, 48       \n"
+                "adr  x12, %=0f          \n"
+                "stp   x0, x29, [x11]    \n"
+                "stp  x12, x30, [x11,16] \n"
+                "stp  x13, x18, [x11,32] \n"
+                "str  x11,      [%0]     \n"
+                "ldp   x0, x29, [x10]    \n"
+                "ldp  x12, x30, [x10,16] \n"
+                "add   sp, x10, 32       \n"
+                "br   x12                \n"
+        "%=0:"  "ldp  x13, x18, [sp]     \n"
+                "add   sp,  sp, 16       \n"
+                "msr  fpcr, x13          \n"
+          :: "r"(sp)
+          // Preserved: x0 (&c->rsp), x18 (platform-defined), x29 (frame pointer), x30 (return address), x31 (stack pointer)
+          // The remaining registers could be clobbered by the coroutine's body:
+          :         "x1",  "x2",  "x3",  "x4",  "x5",  "x6",  "x7",  "x8",  "x9", "x10", "x11", "x12", "x13", "x14", "x15"
+          , "x16", "x17",        "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28"
+          ,  "v0",  "v1",  "v2",  "v3",  "v4",  "v5",  "v6",  "v7",  "v8",  "v9", "v10", "v11", "v12", "v13", "v14", "v15"
+          , "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23", "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31"
+          , "cc", "memory");
+    #endif
     #if CONE_ASAN
         __sanitizer_finish_switch_fiber(fake_stack, &c->target_stack, &c->target_stack_size);
     #endif
@@ -436,15 +482,22 @@ static void __attribute__((noreturn)) cone_body(struct cone *c) {
         *__cxa_get_globals() = (struct __cxa_eh_globals){ NULL, 0 };
     #endif
     c->flags |= (c->body.code(c->body.data) ? CONE_FLAG_FAILED : 0) | CONE_FLAG_FINISHED;
-    atomic_fetch_sub_explicit(&c->loop->active, 1, memory_order_acq_rel);
+    atomic_fetch_sub_explicit(&c->loop->active, 1, memory_order_release);
     cone_wake(&c->done, (size_t)-1, 0);
     #if CONE_ASAN
         __sanitizer_start_switch_fiber(NULL, c->target_stack, c->target_stack_size);
     #endif
-    __asm__("mov  %0, %%rsp  \n"
-            "pop  %%rdi      \n"
-            "pop  %%rbp      \n"
-            "ret             \n" :: "r"(c->rsp));
+    #if CONE_ASM_X64
+        __asm__("mov  %0, %%rsp  \n"
+                "pop  %%rdi      \n"
+                "pop  %%rbp      \n"
+                "ret             \n" :: "r"(c->rsp));
+    #elif CONE_ASM_ARM64
+        __asm__("ldp   x0, x29, [%0]    \n"
+                "ldp  x12, x30, [%0,16] \n"
+                "add  sp, %0, 32        \n"
+                "br   x12               \n" :: "r"(c->rsp) : "x12");
+    #endif
     __builtin_unreachable();
 }
 
@@ -460,7 +513,7 @@ static void cone_run(struct cone *c) {
 }
 
 static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct cone_closure body) {
-    size = (size + _Alignof(max_align_t) - 1) & ~(size_t)(_Alignof(max_align_t) - 1);
+    size = (size + CONE_STACK_ALIGN - 1) & ~(size_t)(CONE_STACK_ALIGN - 1);
     struct cone *c = (struct cone *)malloc(sizeof(struct cone) + size);
     if (c == NULL)
         return (void)mun_error(ENOMEM, "no space for a stack"), NULL;
@@ -473,11 +526,11 @@ static struct cone *cone_spawn_on(struct cone_loop *loop, size_t size, struct co
         c->target_stack_size = size;
     #endif
     c->rsp = (void **)&c->stack[size] - 4;
-    c->rsp[0] = c;                  // %rdi: first argument
-    c->rsp[1] = NULL;               // %rbp: nothing; there's no previous frame yet
-    c->rsp[2] = (void*)&cone_body;  // %rip: code to execute;
-    c->rsp[3] = NULL;               // return address: nothing; same as for %rbp
-    atomic_fetch_add_explicit(&loop->active, 1, memory_order_relaxed);
+    c->rsp[0] = c;                  // first argument
+    c->rsp[1] = NULL;               // frame pointer
+    c->rsp[2] = (void*)&cone_body;  // program counter
+    c->rsp[3] = NULL;               // return address (not actually used, but it terminates debugger stacks)
+    atomic_fetch_add_explicit(&loop->active, 1, memory_order_release);
     cone_runq_add(&loop->now, &c->runq);
     return c;
 }
@@ -543,6 +596,14 @@ static _Thread_local struct cone_mcs_lock {
 #define CONE_SPIN_INTERVAL 512
 #endif
 
+static inline void arch_pause() {
+    #if CONE_ASM_X64
+        __asm__ __volatile__("pause");
+    #elif CONE_ASM_ARM64
+        __asm__ __volatile__("isb");
+    #endif
+}
+
 static void cone_tx_lock(struct cone_event *ev) {
     struct cone_mcs_lock *p = atomic_exchange(&ev->lk, &lki);
     if (!p)
@@ -550,7 +611,7 @@ static void cone_tx_lock(struct cone_event *ev) {
     atomic_store_explicit(&lki.locked, 1, memory_order_relaxed);
     atomic_store_explicit(&p->next, &lki, memory_order_release);
     for (size_t __n = 0; atomic_load_explicit(&lki.locked, memory_order_acquire);)
-        if (++__n % CONE_SPIN_INTERVAL) __asm__ __volatile__("pause"); else sched_yield();
+        if (++__n % CONE_SPIN_INTERVAL) arch_pause(); else sched_yield();
 }
 
 static void cone_tx_unlock(struct cone_event *ev) {
@@ -558,19 +619,21 @@ static void cone_tx_unlock(struct cone_event *ev) {
         return;
     struct cone_mcs_lock *n;
     for (size_t __n = 0; !(n = atomic_load_explicit(&lki.next, memory_order_acquire));)
-        if (++__n % CONE_SPIN_INTERVAL) __asm__ __volatile__("pause"); else sched_yield();
+        if (++__n % CONE_SPIN_INTERVAL) arch_pause(); else sched_yield();
     atomic_store_explicit(&n->locked, 0, memory_order_release);
     atomic_store_explicit(&lki.next, NULL, memory_order_relaxed);
 }
 
 void cone_tx_begin(struct cone_event *ev) {
-    // The increment must be a seq-cst operation so that it is not reordered with
+    cone_tx_lock(ev);
+    // The increment must be an acquire operation so that it is not reordered with
     // the contents of the transaction.
-    cone_tx_lock(ev), ev->w++;
+    atomic_fetch_add_explicit(&ev->w, 1, memory_order_acq_rel);
 }
 
 void cone_tx_end(struct cone_event *ev) {
-    cone_tx_unlock(ev), ev->w--;
+    cone_tx_unlock(ev);
+    atomic_fetch_sub_explicit(&ev->w, 1, memory_order_release);
 }
 
 int cone_tx_wait(struct cone_event *ev) {
@@ -581,7 +644,7 @@ int cone_tx_wait(struct cone_event *ev) {
     if (cone_deschedule(cone) MUN_RETHROW) {
         cone_tx_lock(ev);
         if (it.v < 0) {
-            ev->w--;
+            atomic_fetch_sub_explicit(&ev->w, 1, memory_order_relaxed);
             it.prev ? (it.prev->next = it.next) : (ev->head = it.next);
             it.next ? (it.next->prev = it.prev) : (ev->tail = it.prev);
         }
@@ -597,7 +660,7 @@ size_t cone_wake(struct cone_event *ev, size_t n, int ret) {
         return 0; // serialized before any `cone_tx_begin`
     cone_tx_lock(ev);
     for (struct cone_event_it *it; n-- && (it = ev->head); r++) {
-        ev->w--;
+        atomic_fetch_sub_explicit(&ev->w, 1, memory_order_relaxed);
         ev->head = it->next;
         it->next ? (it->next->prev = it->prev) : (ev->tail = it->prev);
         it->v = ret < 0 ? 0 : ret;
@@ -624,13 +687,14 @@ size_t cone_wake(struct cone_event *ev, size_t n, int ret) {
 }
 
 int cone_try_lock(struct cone_mutex *m) {
-    return atomic_exchange(&m->lk, 1) ? mun_error(EAGAIN, "mutex already locked") : 0;
+    return atomic_exchange_explicit(&m->lk, 1, memory_order_acquire) ? mun_error(EAGAIN, "mutex already locked") : 0;
 }
 
 int cone_lock(struct cone_mutex *m) {
     int r = 0;
     // 0 = xchg succeeded, 1 = fair handoff, 2 = retry xchg
-    if (atomic_exchange(&m->lk, 1)) while ((r = cone_wait(&m->e, atomic_exchange(&m->lk, 1))) == 2) {}
+    if (atomic_exchange_explicit(&m->lk, 1, memory_order_acquire))
+        while ((r = cone_wait(&m->e, atomic_exchange_explicit(&m->lk, 1, memory_order_acquire))) == 2) {}
     if (r < 0 MUN_RETHROW) {
         if (r == ~1) // acquired the lock by direct handoff, but also cancelled
             cone_unlock(m, 1);
