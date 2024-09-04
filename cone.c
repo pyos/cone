@@ -45,7 +45,6 @@ struct /* __cxxabiv1:: */ __cxa_eh_globals {
 
 #if CONE_EV_EPOLL
 #include <sys/epoll.h>
-#include <sys/timerfd.h>
 #elif CONE_EV_KQUEUE
 #include <sys/event.h>
 #else
@@ -72,23 +71,27 @@ static struct cone_loop *cone_schedule(struct cone *, int);
 
 struct cone_event_schedule mun_vec(struct { mun_usec at; uintptr_t c; });
 
+static uintptr_t cone_ptr_pack(struct cone *c, int deadline) { return (uintptr_t)c | !!deadline; }
+
 static int cone_event_schedule_add(struct cone_event_schedule *ev, mun_usec at, struct cone *c, int deadline) {
-    return mun_vec_insert(ev, mun_vec_bisect(ev, at < _->at), &((mun_vec_type(ev)){at, (uintptr_t)c|deadline}));
+    return mun_vec_insert(ev, mun_vec_bisect(ev, at < _->at), &((mun_vec_type(ev)){at, cone_ptr_pack(c, deadline)}));
 }
 
 static void cone_event_schedule_del(struct cone_event_schedule *ev, mun_usec at, struct cone *c, int deadline) {
     for (size_t i = mun_vec_bisect(ev, at < _->at); i-- && ev->data[i].at == at; )
-        if (ev->data[i].c == ((uintptr_t)c|deadline))
+        if (ev->data[i].c == cone_ptr_pack(c, deadline))
             return mun_vec_erase(ev, i, 1);
 }
 
 static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev, size_t limit) {
-    mun_usec t = mun_usec_monotonic();
-    for (; limit-- && ev->size && ev->data->at <= t; mun_vec_erase(ev, 0, 1))
-        cone_schedule((struct cone *)(ev->data->c & ~1ul), ev->data->c & 1 ? CONE_FLAG_TIMED_OUT : CONE_FLAG_WOKEN);
-    // 0 is functionally equivalent to a timestamp in the past, but does not enable
-    // the self-pipe, improving cross-thread synchronization performance a bit.
-    return ev->size ? (ev->data->at <= t ? 0 : ev->data->at) : MUN_USEC_MAX;
+    if (limit > ev->size)
+        limit = ev->size;
+    size_t i = 0;
+    // Could've spent a while pushing into the queue, so if the check fails once, re-read the timer.
+    for (mun_usec t = 0; i < limit && (ev->data[i].at <= t || (ev->data[i].at <= (t = mun_usec_monotonic()))); i++)
+        cone_schedule((struct cone *)(ev->data[i].c & ~1ull), ev->data[i].c & 1 ? CONE_FLAG_TIMED_OUT : CONE_FLAG_WOKEN);
+    mun_vec_erase(ev, 0, i);
+    return i ? 0 : ev->size ? ev->data->at : MUN_USEC_MAX;
 }
 
 struct cone_event_fd {
@@ -244,6 +247,9 @@ static void cone_event_io_consume_ping(struct cone_event_io *set) {
 }
 
 static int cone_event_io_emit(struct cone_event_io *set, mun_usec deadline) {
+    #if !CONE_EV_KQUEUE
+        if (deadline == 0 && !set->fdcnt) return 0;
+    #endif
     mun_usec now = mun_usec_monotonic();
     mun_usec timeout = now > deadline ? 0 : deadline - now;
     if (timeout > 60000000ll)
@@ -271,6 +277,8 @@ static int cone_event_io_emit(struct cone_event_io *set, mun_usec deadline) {
     if (got < 0 && errno != EINTR MUN_RETHROW_OS)
         return -1;
     if (deadline != 0) // else pings were not allowed in the first place (see `cone_loop_run`).
+        // This *could* also be done after this function returns, but doing it immediately
+        // after the syscall reduces redundant pings.
         cone_event_io_consume_ping(set);
     #if CONE_EV_EPOLL
         for (int i = 0; i < got; i++)
@@ -358,7 +366,7 @@ static void cone_loop_run(struct cone_loop *loop) {
             break;
         if (next > 0) {
             cone_event_io_allow_ping(&loop->io);
-            if (!cone_runq_is_empty(&loop->now))
+            if (!cone_runq_is_empty(&loop->now)) // must be checked *after* enabling pings
                 cone_event_io_consume_ping(&loop->io), next = 0;
             // else the paired `cone_event_io_consume_ping` is in `cone_event_io_emit`.
         }
