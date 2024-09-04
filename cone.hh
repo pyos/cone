@@ -241,26 +241,35 @@ struct cone {
 
     // Something that can be waited for.
     struct event : cone_event {
+        struct result {
+            result(int raw) : value(raw) {}
+            int get() const { return value < 0 ? ~value : value; }
+            int operator*() const { return get(); }
+            operator bool() const { return value >= 0; }
+
+        private:
+            int value;
+        };
+
         event() noexcept : cone_event{} {}
         event(const event&) = delete;
         event& operator=(const event&) = delete;
 
-        // Sleep until the event happens.
-        bool wait() noexcept {
-            return !cone_wait(this, 1);
-        }
+        // Sleep until the event happens. Only use this if the event is not shared between threads.
+        result wait() noexcept { return wait_if([] { return true; }); }
 
         // If the provided function returns `true`, sleep until the event happens,
         // else successfully return immediately. This operation is atomic.
         template <typename F /* = bool() noexcept */>
-        bool wait_if(F&& f) noexcept {
-            return !cone_wait(this, f());
-        }
+        result wait_if(F&& f) noexcept { return result(cone_wait(this, f())); }
 
-        // Wake at most `n` coroutines currently waiting for this event.
-        size_t wake(size_t n = std::numeric_limits<size_t>::max()) noexcept {
-            // TODO valued `wake`.
-            return cone_wake(this, n, 0);
+        // Wake at most `n` coroutines currently waiting for this event with a value of 0.
+        size_t wake(size_t n = std::numeric_limits<size_t>::max()) noexcept { return wake_with(0, n); }
+
+        // Wake at most `n` coroutines currently waiting for this event with the provided value.
+        // The value should be non-negative, otherwise it will be inverted.
+        size_t wake_with(int value, size_t n = std::numeric_limits<size_t>::max()) noexcept {
+            return cone_wake(this, n, value < 0 ? ~value : value);
         }
     };
 
