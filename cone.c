@@ -51,6 +51,12 @@ struct /* __cxxabiv1:: */ __cxa_eh_globals {
 #include <sys/select.h>
 #endif
 
+#if CONE_ASM_X64
+#define CONE_STACK_ALIGN _Alignof(max_align_t)
+#elif CONE_ASM_ARM64
+#define CONE_STACK_ALIGN 16
+#endif
+
 enum {
     CONE_FLAG_LAST_REF  = 0x01,
     CONE_FLAG_SCHEDULED = 0x02,
@@ -69,17 +75,15 @@ static void cone_run(struct cone *);
 // If it is known that the loop is not blocked in a syscall, this can be ignored.
 static struct cone_loop *cone_schedule(struct cone *, int);
 
-struct cone_event_schedule mun_vec(struct { mun_usec at; uintptr_t c; });
-
-static uintptr_t cone_ptr_pack(struct cone *c, int deadline) { return (uintptr_t)c | !!deadline; }
+struct cone_event_schedule mun_vec(struct { mun_usec at; struct cone *c; });
 
 static int cone_event_schedule_add(struct cone_event_schedule *ev, mun_usec at, struct cone *c, int deadline) {
-    return mun_vec_insert(ev, mun_vec_bisect(ev, at < _->at), &((mun_vec_type(ev)){at, cone_ptr_pack(c, deadline)}));
+    return mun_vec_insert(ev, mun_vec_bisect(ev, at < _->at), &((mun_vec_type(ev)){at, mun_tag_add(c, !!deadline)}));
 }
 
 static void cone_event_schedule_del(struct cone_event_schedule *ev, mun_usec at, struct cone *c, int deadline) {
     for (size_t i = mun_vec_bisect(ev, at < _->at); i-- && ev->data[i].at == at; )
-        if (ev->data[i].c == cone_ptr_pack(c, deadline))
+        if (ev->data[i].c == mun_tag_add(c, !!deadline))
             return mun_vec_erase(ev, i, 1);
 }
 
@@ -89,7 +93,8 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev, size_t 
     size_t i = 0;
     // Could've spent a while pushing into the queue, so if the check fails once, re-read the timer.
     for (mun_usec t = 0; i < limit && (ev->data[i].at <= t || (ev->data[i].at <= (t = mun_usec_monotonic()))); i++)
-        cone_schedule((struct cone *)(ev->data[i].c & ~1ull), ev->data[i].c & 1 ? CONE_FLAG_TIMED_OUT : CONE_FLAG_WOKEN);
+        cone_schedule(mun_tag_ptr_aligned(ev->data[i].c, CONE_STACK_ALIGN),
+                      mun_tag_get_aligned(ev->data[i].c, CONE_STACK_ALIGN) ? CONE_FLAG_TIMED_OUT : CONE_FLAG_WOKEN);
     mun_vec_erase(ev, 0, i);
     return i ? 0 : ev->size ? ev->data->at : MUN_USEC_MAX;
 }
@@ -398,12 +403,6 @@ static void cone_loop_run(struct cone_loop *loop) {
     cone_event_io_fini(&loop->io);
     mun_vec_fini(&loop->at);
 }
-
-#if CONE_ASM_X64
-#define CONE_STACK_ALIGN _Alignof(max_align_t)
-#elif CONE_ASM_ARM64
-#define CONE_STACK_ALIGN 16
-#endif
 
 struct cone {
     struct cone_runq_it runq;

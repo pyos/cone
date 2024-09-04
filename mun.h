@@ -19,6 +19,17 @@ enum {
     EEXCEPTION = 20519,
 };
 
+// Tagged pointer support: `mun_tag_ptr(mun_tag_add(p, tag)) == p` and
+// `mun_tag_get(mun_tag_add(p, tag)) == tag`. Since alignment is only known for complete
+// types, incomplete types should be used with `_aligned` versions of these functions.
+// Using incorrect alignment or calling `mun_tag_add` with a tag larger than the pointer's
+// alignment is UB.
+#define mun_tag_add(p, tag) ((__typeof__(p))((uintptr_t)(p) | (tag)))
+#define mun_tag_get_aligned(p, align) ((uintptr_t)(p) & ((align) - 1))
+#define mun_tag_ptr_aligned(p, align) ((__typeof__(p))((uintptr_t)(p) & ~(uintptr_t)((align) - 1)))
+#define mun_tag_get(p) mun_tag_get_aligned(p, _Alignof(__typeof__(*p)))
+#define mun_tag_ptr(p) mun_tag_ptr_aligned(p, _Alignof(__typeof__(*p)))
+
 // A microsecond-resolution clock. That's good enough; `epoll_wait` can't handle
 // less than millisecond resolution anyway.
 typedef int64_t mun_usec;
