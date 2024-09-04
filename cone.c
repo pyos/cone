@@ -96,10 +96,12 @@ static mun_usec cone_event_schedule_emit(struct cone_event_schedule *ev, size_t 
 
 struct cone_event_fd {
     int fd;
-    int write;
+    int flags;
     struct cone *c;
     struct cone_event_fd *link;
 };
+
+enum { IO_R = 1, IO_W = 2, IO_RW = 3 };
 
 struct cone_event_io {
     int poller;
@@ -107,40 +109,23 @@ struct cone_event_io {
     // This flag is set while waiting for I/O to tell the other threads that a write
     // to the self-pipe is needed to make this loop react to additions to the run queue.
     CONE_ATOMIC(char) interruptible;
-    // Necessary structures:
-    // * epoll - O(1) iterate over per-fd chain, O(1) find the chain to modify it: hashmap.
-    // * select - O(n) iterate over all fds: list, but we're implementing a hashmap anyway...
-    // * kqueue - nothing! it allows registering many (fd, ptr) pairs with the same fd
-    #if !CONE_EV_KQUEUE
-        size_t fdcnt;
-        size_t fdcap;
-        struct cone_event_fd **fds;
-    #endif
+    // epoll and select deduplicate events by file descriptor, so we need a hash map from file
+    // descriptors to linked lists of listeners.
+    size_t keys;
+    size_t capacity;
+    struct cone_event_fd **buckets;
 };
 
-#if !CONE_EV_KQUEUE
 // Must be a power of 2.
 #define CONE_MIN_FDS_CAP 64
-
-static unsigned inthash(unsigned key) {
-    key = (key ^ 61) ^ (key >> 16);
-    key = key + (key << 3);
-    key = key ^ (key >> 4);
-    key = key * 0x27d4eb2d;
-    key = key ^ (key >> 15);
-    return key;
-}
-#endif
 
 static void cone_event_io_fini(struct cone_event_io *set) {
     if (set->poller >= 0)
         close(set->poller);
     if (set->selfpipe[0] >= 0)
         close(set->selfpipe[0]), close(set->selfpipe[1]);
-    #if !CONE_EV_KQUEUE
-        if (set->fds)
-            free(set->fds);
-    #endif
+    if (set->buckets)
+        free(set->buckets);
 }
 
 static int cone_event_io_init(struct cone_event_io *set) {
@@ -155,81 +140,118 @@ static int cone_event_io_init(struct cone_event_io *set) {
          || fcntl(set->poller, F_SETFD, FD_CLOEXEC)
          || kevent(set->poller, &ev, 1, NULL, 0, NULL) MUN_RETHROW_OS)
             return cone_event_io_fini(set), -1;
-    #else
-        #if CONE_EV_EPOLL
-            struct epoll_event ev = {EPOLLIN, {.ptr = NULL}};
-            if ((set->poller = epoll_create1(EPOLL_CLOEXEC)) < 0
-             || epoll_ctl(set->poller, EPOLL_CTL_ADD, set->selfpipe[0], &ev) MUN_RETHROW_OS)
-                return cone_event_io_fini(set), -1;
-        #endif
-        if ((set->fds = calloc(CONE_MIN_FDS_CAP, sizeof(struct cone_event_fd *))) == NULL)
-            return cone_event_io_fini(set), mun_error(ENOMEM, "could not allocate an fd hash map");
-        set->fdcap = CONE_MIN_FDS_CAP;
+    #elif CONE_EV_EPOLL
+        struct epoll_event ev = {EPOLLIN, {.fd = set->selfpipe[0]}};
+        if ((set->poller = epoll_create1(EPOLL_CLOEXEC)) < 0
+         || epoll_ctl(set->poller, EPOLL_CTL_ADD, set->selfpipe[0], &ev) MUN_RETHROW_OS)
+            return cone_event_io_fini(set), -1;
     #endif
+    if ((set->buckets = calloc(CONE_MIN_FDS_CAP, sizeof(struct cone_event_fd *))) == NULL)
+        return cone_event_io_fini(set), mun_error(ENOMEM, "could not allocate an fd hash map");
+    set->capacity = CONE_MIN_FDS_CAP;
     return 0;
 }
 
-static int cone_event_io_mod(struct cone_event_io *set, struct cone_event_fd *st, int add) {
-    #if CONE_EV_KQUEUE
-        uint16_t flags = (add ? EV_ADD|EV_ONESHOT : EV_DELETE)|EV_UDATA_SPECIFIC;
-        struct kevent ev = {st->fd, st->write ? EVFILT_WRITE : EVFILT_READ, flags, 0, 0, st};
-        return kevent(set->poller, &ev, 1, NULL, 0, NULL) && (add || errno != ENOENT) MUN_RETHROW_OS;
-    #else
-        struct cone_event_fd **b = &set->fds[inthash(st->fd) & (set->fdcap - 1)];
-        while (*b && (*b)->fd != st->fd)
-            b = &(*b)->link;
-        struct cone_event_fd **c = b;
-        if (add) {
-            st->link = *b;
-            *b = st;
-        } else {
-            for (; *c != st; c = &(*c)->link)
-                if (!*c || (*c)->fd != st->fd)
-                    return 0;
-            *c = st->link;
-        }
-        int is_add = add && !st->link;
-        int is_del = !add && c == b && (!st->link || st->link->fd != st->fd);
-        #if CONE_EV_EPOLL
-            struct epoll_event ev = {0, {.ptr = *b}};
-            for (struct cone_event_fd *e = *b; e && e->fd == st->fd; e = e->link)
-                ev.events |= e->write ? EPOLLOUT : EPOLLIN|EPOLLRDHUP;
-            int op = is_add ? EPOLL_CTL_ADD : is_del ? EPOLL_CTL_DEL : EPOLL_CTL_MOD;
-            if (epoll_ctl(set->poller, op, st->fd, &ev) MUN_RETHROW_OS)
-                return *c = (add ? st->link : st), -1;
-        #endif
+static unsigned inthash(unsigned key) {
+    key = (key ^ 61) ^ (key >> 16);
+    key = key + (key << 3);
+    key = key ^ (key >> 4);
+    key = key * 0x27d4eb2d;
+    key = key ^ (key >> 15);
+    return key;
+}
 
-        set->fdcnt += is_add - is_del;
-        size_t rehash = set->fdcnt * 5 > set->fdcap * 6 ? set->fdcap * 2
-                      : set->fdcnt * 2 < set->fdcap * 1 ? set->fdcap / 2 : 0;
-        if (rehash >= CONE_MIN_FDS_CAP) {
-            struct cone_event_fd **m = calloc(rehash, sizeof(struct cone_event_fd *));
-            if (!m)
-                return 0; // ignore memory error and accept decreased performance
-            for (size_t i = 0; i < set->fdcap; i++) {
-                for (struct cone_event_fd *p = set->fds[i]; p;) {
-                    struct cone_event_fd **h = &m[inthash(p->fd) & (rehash - 1)];
-                    struct cone_event_fd *q = p;
-                    struct cone_event_fd *r = p->link;
-                    while (r && r->fd == p->fd)
-                        q = r, r = r->link;
-                    q->link = *h, *h = p, p = r;
-                }
-            }
-            free(set->fds);
-            set->fds = m;
-            set->fdcap = rehash;
+static struct cone_event_fd **cone_hash_find(struct cone_event_io *set, int fd) {
+    struct cone_event_fd **r = &set->buckets[inthash(fd) & (set->capacity - 1)];
+    while (*r && (*r)->fd != fd)
+        r = &(*r)->link;
+    return r;
+}
+
+static void cone_hash_update_size(struct cone_event_io *set, int delta) {
+    size_t size = set->keys += delta;
+    size_t capacity = set->capacity;
+    while (size * 5 > capacity * 6) capacity *= 2;
+    while (size * 2 < capacity * 1 && capacity > CONE_MIN_FDS_CAP) capacity /= 2;
+    if (capacity == set->capacity) return;
+
+    struct cone_event_fd **m = calloc(capacity, sizeof(struct cone_event_fd *));
+    if (!m) return; // ignore memory error and accept decreased performance
+    for (size_t i = 0; i < set->capacity; i++) {
+        for (struct cone_event_fd *p = set->buckets[i]; p; ) {
+            struct cone_event_fd **bucket = &m[inthash(p->fd) & (capacity - 1)];
+            struct cone_event_fd *a = p, *b = p;
+            while (b->link && b->link->fd == b->fd) b = b->link;
+            p = b->link, b->link = *bucket, *bucket = a;
         }
-        return 0;
+    }
+    free(set->buckets);
+    set->buckets = m;
+    set->capacity = capacity;
+}
+
+static int cone_event_io_set_mode(struct cone_event_io *set, int fd, int from, int to) {
+    if (from == to) return 0;
+    #if CONE_EV_KQUEUE
+        int rflag = (to & IO_R) > (from & IO_R) ? EV_ADD : (to & IO_R) < (from & IO_R) ? EV_DELETE : 0;
+        int wflag = (to & IO_W) > (from & IO_W) ? EV_ADD : (to & IO_W) < (from & IO_W) ? EV_DELETE : 0;
+        struct kevent evs[] = {{fd, EVFILT_READ, rflag, 0, 0, NULL}, {fd, EVFILT_WRITE, wflag, 0, 0, NULL}};
+        return kevent(set->poller, &evs[!rflag], !!rflag + !!wflag, NULL, 0, NULL);
+    #elif CONE_EV_EPOLL
+        int op = !from ? EPOLL_CTL_ADD : !to ? EPOLL_CTL_DEL : EPOLL_CTL_MOD;
+        int flags = (to & IO_R ? EPOLLIN|EPOLLRDHUP : 0) | (to & IO_W ? EPOLLOUT : 0);
+        return epoll_ctl(set->poller, op, fd, &(struct epoll_event){flags, {.fd = fd}});
+    #else
+        return (void)set, (void)fd, 0;
     #endif
 }
 
-static int cone_event_io_add(struct cone_event_io *set, struct cone_event_fd *st) {
-    return cone_event_io_mod(set, st, 1) MUN_RETHROW;
+static int cone_event_io_schedule_all(struct cone_event_io *set, int fd, int flags) {
+    struct cone_event_fd **bucket = cone_hash_find(set, fd);
+    struct cone_event_fd **it = bucket;
+    if (!*bucket) return 0; // nothing was listening for this event
+    int from = 0, to = 0;
+    for (struct cone_event_fd *e = *bucket; e && e->fd == fd; e = e->link) {
+        from |= e->flags;
+        if (e->flags & flags) {
+            *it = e->link;
+            cone_schedule(e->c, CONE_FLAG_WOKEN);
+        } else {
+            it = &e->link;
+            to |= e->flags;
+        }
+    }
+    mun_cant_fail(cone_event_io_set_mode(set, fd, from, to) MUN_RETHROW_OS);
+    return it == bucket;
 }
 
-static void cone_event_io_del(struct cone_event_io *set, struct cone_event_fd *st) {
-    mun_cant_fail(cone_event_io_mod(set, st, 0) MUN_RETHROW);
+static int cone_event_io_add(struct cone_event_io *set, struct cone_event_fd *st) {
+    struct cone_event_fd **bucket = cone_hash_find(set, st->fd);
+    int from = 0;
+    for (struct cone_event_fd *e = *bucket; e && e->fd == st->fd; e = e->link)
+        from |= e->flags;
+    if (cone_event_io_set_mode(set, st->fd, from, from|st->flags) MUN_RETHROW_OS)
+        return -1;
+    st->link = *bucket, *bucket = st;
+    if (!st->link) cone_hash_update_size(set, 1);
+    return 0;
+}
+
+static int cone_event_io_del(struct cone_event_io *set, struct cone_event_fd *st) {
+    struct cone_event_fd **bucket = cone_hash_find(set, st->fd);
+    struct cone_event_fd **it = bucket;
+    for (; *it != st; it = &(*it)->link)
+        if (!*it || (*it)->fd != st->fd)
+            return 0;
+    int to = 0;
+    for (struct cone_event_fd *e = *bucket; e && e->fd == st->fd; e = e->link)
+        if (e != st) to |= e->flags;
+    if (cone_event_io_set_mode(set, st->fd, to|st->flags, to) MUN_RETHROW_OS)
+        return -1;
+    *it = st->link;
+    if (it == bucket && (!st->link || st->link->fd != st->fd))
+        cone_hash_update_size(set, -1);
+    return 0;
 }
 
 static void cone_event_io_ping(struct cone_event_io *set) {
@@ -247,54 +269,54 @@ static void cone_event_io_consume_ping(struct cone_event_io *set) {
 }
 
 static int cone_event_io_emit(struct cone_event_io *set, mun_usec deadline) {
-    #if !CONE_EV_KQUEUE
-        if (deadline == 0 && !set->fdcnt) return 0;
-    #endif
+    if (deadline == 0 && !set->keys) return 0;
     mun_usec now = mun_usec_monotonic();
     mun_usec timeout = now > deadline ? 0 : deadline - now;
     if (timeout > 60000000ll)
         timeout = 60000000ll;
     struct timespec ns = {timeout / 1000000ull, timeout % 1000000ull * 1000};
-    #if CONE_EV_EPOLL
-        struct epoll_event evs[64];
-        int got = epoll_pwait2(set->poller, evs, 64, &ns, NULL);
-    #elif CONE_EV_KQUEUE
+    #if CONE_EV_KQUEUE
         struct kevent evs[64];
-        int got = kevent(set->poller, NULL, 0, evs, 64, &ns);
+        int n = kevent(set->poller, NULL, 0, evs, 64, &ns);
+    #elif CONE_EV_EPOLL
+        struct epoll_event evs[64];
+        int n = epoll_pwait2(set->poller, evs, 64, &ns, NULL);
     #else
-        fd_set fds[2] = {};
-        FD_SET(set->selfpipe[0], &fds[0]);
-        int max_fd = set->selfpipe[0] + 1;
-        for (size_t i = 0; i < set->fdcap; i++) {
-            for (struct cone_event_fd *e = set->fds[i]; e; e = e->link) {
-                if (max_fd <= e->fd)
-                    max_fd = e->fd + 1;
-                FD_SET(e->fd, &fds[!!e->write]);
+        fd_set rset = {}, wset = {};
+        FD_SET(set->selfpipe[0], &rset);
+        int max_fd = set->selfpipe[0];
+        for (size_t i = 0; i < set->capacity; i++) {
+            for (struct cone_event_fd *e = set->buckets[i]; e; e = e->link) {
+                if (max_fd < e->fd) max_fd = e->fd;
+                if (e->flags & IO_R) FD_SET(e->fd, &rset);
+                if (e->flags & IO_W) FD_SET(e->fd, &wset);
             }
         }
-        int got = pselect(max_fd, &fds[0], &fds[1], NULL, &ns, NULL);
+        int n = pselect(max_fd + 1, &rset, &wset, NULL, &ns, NULL);
     #endif
-    if (got < 0 && errno != EINTR MUN_RETHROW_OS)
+    if (n < 0 && errno != EINTR MUN_RETHROW_OS)
         return -1;
     if (deadline != 0) // else pings were not allowed in the first place (see `cone_loop_run`).
         // This *could* also be done after this function returns, but doing it immediately
         // after the syscall reduces redundant pings.
         cone_event_io_consume_ping(set);
-    #if CONE_EV_EPOLL
-        for (int i = 0; i < got; i++)
-            for (struct cone_event_fd *st = evs[i].data.ptr, *e = st; e && e->fd == st->fd; e = e->link)
-                if (evs[i].events & ((e->write ? EPOLLOUT : EPOLLIN|EPOLLRDHUP)|EPOLLERR|EPOLLHUP))
-                    cone_event_io_del(set, e), cone_schedule(e->c, CONE_FLAG_WOKEN);
-    #elif CONE_EV_KQUEUE
-        for (int i = 0; i < got; i++)
-            if (evs[i].udata) // oneshot event, removed automatically
-                cone_schedule(((struct cone_event_fd *)evs[i].udata)->c, CONE_FLAG_WOKEN);
-    #else
-        for (size_t i = 0; i < set->fdcap; i++)
-            for (struct cone_event_fd *e = set->fds[i]; e; e = e->link)
-                if (FD_ISSET(e->fd, &fds[!!e->write]))
-                    cone_event_io_del(set, e), cone_schedule(e->c, CONE_FLAG_WOKEN);
-    #endif
+    int removed_from_map = 0;
+    for (int i = 0; i < n; i++) {
+        #if CONE_EV_KQUEUE
+            int fd = evs[i].ident;
+            int flags = evs[i].filter == EVFILT_WRITE ? IO_W : IO_R;
+        #elif CONE_EV_EPOLL
+            int fd = evs[i].data.fd;
+            int flags = (evs[i].events & (EPOLLIN|EPOLLRDHUP|EPOLLERR|EPOLLHUP) ? IO_R : 0)
+                      | (evs[i].events & (EPOLLOUT|EPOLLERR|EPOLLHUP) ? IO_W : 0);
+        #else
+            int fd = i;
+            int flags = (FD_ISSET(fd, &rset) ? IO_R : 0) | (FD_ISSET(fd, &wset) ? IO_W : 0);
+            n += 1 - !!flags - (flags == IO_RW); // `n` counts events; this maps it to file descriptors
+        #endif
+        if (flags) removed_from_map += cone_event_io_schedule_all(set, fd, flags);
+    }
+    cone_hash_update_size(set, -removed_from_map);
     return 0;
 }
 
@@ -703,11 +725,11 @@ int cone_unlock(struct cone_mutex *m, int fair) {
 }
 
 int cone_iowait(int fd, int write) {
-    struct cone_event_fd ev = {fd, write, cone, NULL};
+    struct cone_event_fd ev = {.fd = fd, .flags = write ? IO_W : IO_R, .c = cone};
     if (cone_event_io_add(&cone->loop->io, &ev) MUN_RETHROW)
         return -1;
     if (cone_deschedule(cone) MUN_RETHROW)
-        return cone_event_io_del(&cone->loop->io, &ev), -1;
+        return mun_cant_fail(cone_event_io_del(&cone->loop->io, &ev)), -1;
     return 0;
 }
 
