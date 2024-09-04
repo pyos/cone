@@ -254,6 +254,27 @@ static bool test_concurrent_rw(char *) {
         && c->wait(cone::rethrow);
 }
 
+template <size_t n>
+static bool test_many_fds(char *) {
+    fd fds[n * 2];
+    for (size_t i = 0; i < n; i++)
+        if (socketpair(AF_UNIX, SOCK_STREAM, 0, (int*)&fds[i*2]) MUN_RETHROW_OS)
+            return false;
+    size_t result = 0;
+    cone::ref cs[n];
+    for (size_t i = 0; i < n; i++)
+        cs[i] = [&, i]() { return !cone_iowait(fds[i*2].i, 0); };
+    if (!cone::yield() MUN_RETHROW) return false;
+    if (!ASSERT(result == 0, "some readers already finished")) return false;
+    for (size_t i = 0; i < n; i++)
+        if (!ASSERT(write(fds[i*2+1].i, "x", 1) == 1, "write() failed"))
+            return false;
+    if (!cone::yield() MUN_RETHROW) return false;
+    for (size_t i = 0; i < n; i++)
+        if (!cs[i]->wait(cone::rethrow) MUN_RETHROW) return false;
+    return true;
+}
+
 static bool test_io_starvation(char *) {
     bool stop = false;
     cone::event a;
@@ -350,6 +371,7 @@ export { "cone:yield", &test_yield }
      , { "cone:yield to reader", &test_yield_to_io }
      , { "cone:reader + writer", &test_rdwr }
      , { "cone:reader + writer on one fd", &test_concurrent_rw }
+     , { "cone:many fds", &test_many_fds<120> }
      , { "cone:io starvation", &test_io_starvation }
      , { "cone:thread", &test_thread }
      , { "cone:threads and a mutex", &test_mt_mutex }

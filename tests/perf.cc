@@ -111,6 +111,44 @@ static bool test_mt_mutex(char *msg) {
     });
 }
 
+template <size_t n>
+static bool test_io(char *msg) {
+    return measure(msg, [&](size_t m) {
+        std::vector<cone::guard> cs(n*2);
+        for (size_t i = 0; i < n; i++) {
+            int fds[2];
+            if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) MUN_RETHROW_OS)
+                return false;
+            if (cold_unblock(fds[0]) || cold_unblock(fds[1]) MUN_RETHROW_OS)
+                return close(fds[0]), close(fds[1]), false;
+            cs[i*2+0] = [&, fd = fds[0]]() {
+                char buf[1024];
+                while (true) {
+                    int ret = cold_read(fd, buf, sizeof(buf));
+                    if (ret < 0 MUN_RETHROW_OS) return close(fd), false;
+                    if (ret == 0) return close(fd), true;
+                }
+            };
+            cs[i*2+1] = [&, fd = fds[1]]() {
+                char data[] = "Hello, World!\n";
+                size_t size = sizeof(data) - 1;
+                for (size_t i = 0; i < m; i++) {
+                    for (size_t o = 0; o < size; ) {
+                        int ret = cold_write(fd, data + o, size - o);
+                        if (ret < 0 MUN_RETHROW_OS) return close(fd), false;
+                        o += ret;
+                    }
+                }
+                return close(fd), true;
+            };
+        }
+        for (cone::guard &c : cs)
+            if (!c->wait(cone::rethrow) MUN_RETHROW)
+                return false;
+        return true;
+    });
+}
+
 export { "perf:yield/N", &test_yield }
      , { "perf:(spawn(nop), wait, drop)/N", &test_spawn }
      , { "perf:spawn(nop)/N, wait/N, drop/N", &test_spawn_many }
@@ -120,3 +158,4 @@ export { "perf:yield/N", &test_yield }
      , { "perf:8 threads:spawn((lock, inc, unlock)/10N)/N (std::mutex)", &test_mt_mutex<8, 10, std::mutex> }
      , { "perf:8 threads:spawn((lock, inc, unlock)/100kN)/N (cone::mutex)", &test_mt_mutex<8, 100000, cone::mutex> }
      , { "perf:8 threads:spawn((lock, inc, unlock)/100kN)/N (std::mutex)", &test_mt_mutex<8, 100000, std::mutex> }
+     , { "perf:spawn(read/*)/100, spawn(write/N)/100, wait/200", &test_io<100> }
