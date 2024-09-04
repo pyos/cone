@@ -286,8 +286,8 @@ static bool test_thread(char *) {
 static bool test_mt_mutex(char *) {
     size_t r = 0;
     cone::mutex m;
-    return spawn_and_wait<4, cone::thread>([&]() {
-        return spawn_and_wait<100>([&]() {
+    return spawn_and_wait<cone::thread>(4, [&]() {
+        return spawn_and_wait(100, [&]() {
             for (size_t j = 0; j < 10000; j++) if (auto g = m.guard(cone::mutex::interruptible))
                 r++;
             else

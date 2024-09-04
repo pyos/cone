@@ -10,14 +10,14 @@ using namespace std::literals::chrono_literals;
 
 #define ASSERT(x, ...) ((x) || !mun_error(EINVAL, __VA_ARGS__))
 
-template <size_t N, typename T = cone::ref, typename F>
-static inline bool spawn_and_wait(F&& f) {
+template <typename T = cone::ref, typename F>
+static inline bool spawn_and_wait(size_t n, F&& f) {
     std::vector<T> cs;
-    cs.reserve(N);
-    for (size_t i = 0; i < N; i++)
+    cs.reserve(n);
+    for (size_t i = 0; i < n; i++)
         cs.emplace_back(f);
     for (auto& c : cs)
-        if (!c->wait(cone::rethrow))
+        if (!c->wait(cone::rethrow) MUN_RETHROW)
             return false;
     return true;
 }
