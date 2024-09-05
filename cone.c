@@ -594,11 +594,6 @@ struct cone_event_it {
     int v;
 };
 
-static _Thread_local struct cone_mcs_lock {
-    CONE_ATOMIC(struct cone_mcs_lock *) next;
-    CONE_ATOMIC(char) locked;
-} lki;
-
 #ifndef CONE_SPIN_INTERVAL
 #define CONE_SPIN_INTERVAL 512
 #endif
@@ -607,28 +602,31 @@ static inline void arch_pause() {
     #if CONE_ASM_X64
         __asm__ __volatile__("pause");
     #elif CONE_ASM_ARM64
-        __asm__ __volatile__("isb");
+        __asm__ __volatile__("yield");
     #endif
 }
 
+static _Thread_local CONE_ATOMIC(uintptr_t) lki;
+
 static void cone_tx_lock(struct cone_event *ev) {
-    struct cone_mcs_lock *p = atomic_exchange(&ev->lk, &lki);
-    if (!p)
-        return;
-    atomic_store_explicit(&lki.locked, 1, memory_order_relaxed);
-    atomic_store_explicit(&p->next, &lki, memory_order_release);
-    for (size_t __n = 0; atomic_load_explicit(&lki.locked, memory_order_acquire);)
-        if (++__n % CONE_SPIN_INTERVAL) arch_pause(); else sched_yield();
+    CONE_ATOMIC(uintptr_t) *p = atomic_exchange(&ev->lk, (void*)&lki);
+    if (!p) return;
+    atomic_fetch_or_explicit(&lki, 1, memory_order_relaxed);
+    atomic_fetch_or_explicit(p, (uintptr_t)&lki, memory_order_release);
+    for (size_t i = 0; atomic_load_explicit(&lki, memory_order_acquire) & 1;)
+        if (++i % CONE_SPIN_INTERVAL) arch_pause(); else sched_yield();
 }
 
 static void cone_tx_unlock(struct cone_event *ev) {
-    if (atomic_compare_exchange_strong(&ev->lk, &(void *){&lki}, NULL))
-        return;
-    struct cone_mcs_lock *n;
-    for (size_t __n = 0; !(n = atomic_load_explicit(&lki.next, memory_order_acquire));)
-        if (++__n % CONE_SPIN_INTERVAL) arch_pause(); else sched_yield();
-    atomic_store_explicit(&n->locked, 0, memory_order_release);
-    atomic_store_explicit(&lki.next, NULL, memory_order_relaxed);
+    CONE_ATOMIC(uintptr_t) *n = (CONE_ATOMIC(uintptr_t) *)atomic_load_explicit(&lki, memory_order_acquire);
+    if (!n) {
+        if (atomic_compare_exchange_strong(&ev->lk, &(void *){(void*)&lki}, NULL))
+            return;
+        for (size_t i = 0; !(n = (CONE_ATOMIC(uintptr_t) *)atomic_load_explicit(&lki, memory_order_acquire));)
+            if (++i % CONE_SPIN_INTERVAL) arch_pause(); else sched_yield();
+    }
+    atomic_fetch_and_explicit(n, ~(uintptr_t)1, memory_order_release);
+    atomic_store_explicit(&lki, 0, memory_order_relaxed);
 }
 
 void cone_tx_begin(struct cone_event *ev) {
