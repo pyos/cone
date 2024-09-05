@@ -754,8 +754,9 @@ int cone_cowait(struct cone *c, int norethrow) {
 }
 
 int cone_intr(int enable) {
-    int prev = enable ? atomic_fetch_and(&cone->flags, ~CONE_FLAG_NO_INTR)
-                      : atomic_fetch_or(&cone->flags, CONE_FLAG_NO_INTR);
+    // This can be relaxed because this flag is only used by the same thread.
+    int prev = enable ? atomic_fetch_and_explicit(&cone->flags, ~CONE_FLAG_NO_INTR, memory_order_relaxed)
+                      : atomic_fetch_or_explicit(&cone->flags, CONE_FLAG_NO_INTR, memory_order_relaxed);
     return !(prev & CONE_FLAG_NO_INTR);
 }
 
