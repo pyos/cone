@@ -588,12 +588,6 @@ static int cone_deschedule(struct cone *c) {
          : state & CONE_FLAG_TIMED_OUT ? mun_error(ETIMEDOUT, "blocking call timed out") : 0;
 }
 
-struct cone_event_it {
-    struct cone_event_it *next, *prev;
-    struct cone *c;
-    int v;
-};
-
 #ifndef CONE_SPIN_INTERVAL
 #define CONE_SPIN_INTERVAL 512
 #endif
@@ -641,12 +635,24 @@ void cone_tx_end(struct cone_event *ev) {
     atomic_fetch_sub_explicit(&ev->w, 1, memory_order_release);
 }
 
-int cone_tx_wait(struct cone_event *ev) {
+struct cone_event_it {
+    struct cone_event_it *next, *prev;
+    struct cone *c;
+    intptr_t v;
+};
+
+intptr_t cone_tx_wait(struct cone_event *ev) {
     struct cone_event_it it = { NULL, ev->tail, cone, -1 };
     ev->tail ? (it.prev->next = &it) : (ev->head = &it);
     ev->tail = &it;
     cone_tx_unlock(ev);
     if (cone_deschedule(cone) MUN_RETHROW) {
+        // This has to lock; even if we do an atomic read of it.v and observe a value,
+        // `cone_wake` could still be between the write to it.v and the `cone_schedule`
+        // call, so we can't release the memory yet. (This could be avoided if the write
+        // was moved to after the wakeup call, but then if `cone_deschedule` succeeded
+        // we'd need to spin until the value appears, so that'd improve error paths
+        // at the cost of success paths, and that's probably a bad tradeoff.)
         cone_tx_lock(ev);
         if (it.v < 0) {
             atomic_fetch_sub_explicit(&ev->w, 1, memory_order_relaxed);
@@ -659,7 +665,7 @@ int cone_tx_wait(struct cone_event *ev) {
     return it.v;
 }
 
-size_t cone_wake(struct cone_event *ev, size_t n, int ret) {
+size_t cone_wake(struct cone_event *ev, size_t n, intptr_t ret) {
     size_t r = 0;
     if (!n || !atomic_load_explicit(&ev->w, memory_order_acquire))
         return 0; // serialized before any `cone_tx_begin`
@@ -668,10 +674,8 @@ size_t cone_wake(struct cone_event *ev, size_t n, int ret) {
         atomic_fetch_sub_explicit(&ev->w, 1, memory_order_relaxed);
         ev->head = it->next;
         it->next ? (it->next->prev = it->prev) : (ev->tail = it->prev);
-        it->v = ret < 0 ? 0 : ret;
+        it->v = ret & INTPTR_MAX;
         struct cone_loop *loop = cone_schedule(it->c, CONE_FLAG_WOKEN);
-        // The coroutine may be concurrently cancelled, so everything above must happen
-        // before the `if (cone_deschedule)` branch's contents in `cone_tx_wait`.
         if (loop) {
             int should_continue = n && ev->head;
             // This unlock introduces an anomaly in `cone_cancel`: if A and B are waiting

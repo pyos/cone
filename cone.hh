@@ -267,9 +267,8 @@ struct cone {
         size_t wake(size_t n = std::numeric_limits<size_t>::max()) noexcept { return wake_with(0, n); }
 
         // Wake at most `n` coroutines currently waiting for this event with the provided value.
-        // The value should be non-negative, otherwise it will be inverted.
-        size_t wake_with(int value, size_t n = std::numeric_limits<size_t>::max()) noexcept {
-            return cone_wake(this, n, value < 0 ? ~value : value);
+        size_t wake_with(intptr_t value, size_t n = std::numeric_limits<size_t>::max()) noexcept {
+            return cone_wake(this, n, value);
         }
     };
 

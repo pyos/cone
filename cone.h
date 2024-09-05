@@ -111,7 +111,7 @@ void cone_tx_end(struct cone_event *);
 // an argument. If cancelled, `~value` is returned if cancellation arrived while this
 // coroutine was resuming, or `~0` (-1) if it happened before any `cone_wake`s have
 // occurred.
-int cone_tx_wait(struct cone_event *);
+intptr_t cone_tx_wait(struct cone_event *);
 
 // Atomically(*) execute an expression; if the result is 0, return 0, otherwise wait for
 // `cone_wake` and return the value passed to it as an argument. If cancelled, `~value` is
@@ -122,7 +122,9 @@ int cone_tx_wait(struct cone_event *);
 // variables in the expression should still use atomic instructions.
 #define cone_wait(ev, x) (cone_tx_begin(ev), !(x) ? cone_tx_end(ev), 0 : cone_tx_wait(ev))
 
-// Wake up at most N coroutines paused with `cone_tx_wait`, return the actual number.
+// Wake up at most N coroutines paused with `cone_tx_wait`, return the actual number. `ret`
+// is returned by `cone_tx_wait`/`cone_wait` in these coroutines. Negative values will
+// be inverted.
 //
 // This function is atomic w.r.t. code between `cone_tx_begin` and `cone_tx_wait`:
 // ```
@@ -136,7 +138,7 @@ int cone_tx_wait(struct cone_event *);
 // ```
 // If *read* observes the value from *write* or a later one, then *wake* happens-
 // before *begin*; otherwise, *wait* happens-before *wake*.
-size_t cone_wake(struct cone_event *, size_t, int /* non-negative */ ret);
+size_t cone_wake(struct cone_event *, size_t, intptr_t ret);
 
 // A coroutine-owned mutex. Must be zero-initialized.
 struct cone_mutex { struct cone_event e; CONE_ATOMIC(char) lk; };
