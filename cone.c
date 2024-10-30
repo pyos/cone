@@ -574,18 +574,14 @@ static struct cone_loop *cone_schedule(struct cone *c, int flags) {
 }
 
 static int cone_deschedule(struct cone *c) {
-    unsigned flags = c->flags;
-    // Don't even yield if cancelled by another thread while registering the wakeup callback.
-    while (!(flags & CONE_FLAG_WOKEN) && (flags & CONE_FLAG_NO_INTR || !(flags & (CONE_FLAG_CANCELLED | CONE_FLAG_TIMED_OUT))))
+    // CONE_FLAG_NO_INTR can only be set by the same thread, so the mask only needs to be computed once.
+    unsigned flags = atomic_load_explicit(&c->flags, memory_order_relaxed);
+    unsigned mask = CONE_FLAG_WOKEN | (flags & CONE_FLAG_NO_INTR ? 0 : CONE_FLAG_CANCELLED | CONE_FLAG_TIMED_OUT);
+    while (!((flags = atomic_fetch_and(&c->flags, ~mask)) & mask))
         if (atomic_compare_exchange_weak(&c->flags, &flags, flags & ~CONE_FLAG_SCHEDULED))
-            cone_switch(c), flags = c->flags;
-    if (flags & CONE_FLAG_NO_INTR) {
-        c->flags &= ~CONE_FLAG_WOKEN;
-        return 0;
-    }
-    int state = atomic_fetch_and(&c->flags, ~CONE_FLAG_WOKEN & ~CONE_FLAG_CANCELLED & ~CONE_FLAG_TIMED_OUT);
-    return state & CONE_FLAG_CANCELLED ? mun_error(ECANCELED, "blocking call aborted")
-         : state & CONE_FLAG_TIMED_OUT ? mun_error(ETIMEDOUT, "blocking call timed out") : 0;
+            cone_switch(c);
+    return flags & mask & CONE_FLAG_CANCELLED ? mun_error(ECANCELED, "blocking call aborted")
+         : flags & mask & CONE_FLAG_TIMED_OUT ? mun_error(ETIMEDOUT, "blocking call timed out") : 0;
 }
 
 #ifndef CONE_SPIN_INTERVAL
