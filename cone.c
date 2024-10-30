@@ -430,23 +430,24 @@ static void cone_switch(struct cone *c) {
         __sanitizer_start_switch_fiber(&fake_stack, c->target_stack, c->target_stack_size);
     #endif
     #if CONE_ASM_X64
-        unsigned mxcsr;
-        __asm__("stmxcsr %1      \n"
-                "jmp  %=0f       \n"
-        "%=1:"  "push %%rbp      \n"
-                "push %%rdi      \n"
-                "mov  %%rsp, %0  \n" // `xchg` is implicitly `lock`ed; 3 `mov`s are faster
-                "mov  %2, %%rsp  \n" // (the third is inserted by the compiler to load c->rsp)
-                "pop  %%rdi      \n" // FIXME prone to incur cache misses
-                "pop  %%rbp      \n"
-                "ret             \n" // jumps into `cone_body` if this is a new coroutine
-        "%=0:"  "call %=1b       \n"
-                "ldmxcsr %1      \n"
-          : "=m"(c->rsp), "=m"(mxcsr) : "c"(c->rsp) // FIXME prone to incur cache misses
-          // Clobbered: rcx (overwritten by `c->rsp` above)
-          // Preserved: rdi (argument to cone_body), rbp (frame pointer), rsp (stack pointer)
+        __asm__("mov  %0, %%rax    \n"
+                "add  $-128, %%rsp \n" // avoid the red zone
+                "stmxcsr -32(%%rsp)\n"
+                "jmp  %=0f         \n" // jmp-call + ret is smaller than lea-push + pop-jmp
+        "%=1:"  "push %%rbp        \n"
+                "push %%rdi        \n"
+                "mov  %%rsp, %0    \n" // `xchg` is implicitly `lock`ed; 3 `mov`s are faster
+                "mov  %%rax, %%rsp \n"
+                "pop  %%rdi        \n" // FIXME prone to incur cache misses
+                "pop  %%rbp        \n"
+                "ret               \n"
+        "%=0:"  "call %=1b         \n"
+                "ldmxcsr -32(%%rsp)\n"
+                "sub  $-128, %%rsp \n"
+          : "=m"(c->rsp) :
+          // Preserved: rdi (first argument), rbp (frame pointer), rsp (stack pointer)
           // The remaining registers could be clobbered by the coroutine's body:
-          : "rax", "rdx", "rbx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc", "memory");
+          : "rax", "rcx", "rdx", "rbx", "rsi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "cc", "memory");
     #elif CONE_ASM_ARM64
         register void *sp __asm__("x0") = &c->rsp;
         __asm__("ldr  x10,      [%0]     \n"
@@ -461,11 +462,10 @@ static void cone_switch(struct cone *c) {
                 "ldp  x12, x30, [x10,16] \n"
                 "add   sp, x10, 32       \n"
                 "br   x12                \n"
-        "%=0:"  "ldp  x13, x18, [sp]     \n"
-                "add   sp,  sp, 16       \n"
+        "%=0:"  "ldp  x13, x18, [sp], 16 \n"
                 "msr  fpcr, x13          \n"
           :: "r"(sp)
-          // Preserved: x0 (&c->rsp), x18 (platform-defined), x29 (frame pointer), x30 (return address), x31 (stack pointer)
+          // Preserved: x0 (first argument), x18 (platform-defined), x29 (frame pointer), x30 (return address), x31 (stack pointer)
           // The remaining registers could be clobbered by the coroutine's body:
           :         "x1",  "x2",  "x3",  "x4",  "x5",  "x6",  "x7",  "x8",  "x9", "x10", "x11", "x12", "x13", "x14", "x15"
           , "x16", "x17",        "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28"
@@ -503,7 +503,7 @@ static void __attribute__((noreturn)) cone_body(struct cone *c) {
         __asm__("ldp   x0, x29, [%0]    \n"
                 "ldp  x12, x30, [%0,16] \n"
                 "add  sp, %0, 32        \n"
-                "br   x12               \n" :: "r"(c->rsp) : "x12");
+                "br   x12               \n" :: "r"(c->rsp));
     #endif
     __builtin_unreachable();
 }
