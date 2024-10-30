@@ -4,6 +4,7 @@
 #include "../cone.hh"
 #include <stdio.h>
 #include <stdlib.h>
+#include <regex>
 #include <vector>
 
 using namespace std::literals::chrono_literals;
@@ -28,10 +29,14 @@ static inline bool spawn_and_wait(size_t n, F&& f) {
 #include __s2(SRC)
 };
 
-int main() {
+int main(int argc, const char **argv) {
+    std::vector<std::regex> match(argv + !!argc, argv + argc);
     int ret = 0;
+    int ran = 0;
     char buf[2048];
     for (unsigned i = 0; i < sizeof(__tests) / sizeof(*__tests); i++) {
+        if (!match.empty() && !std::any_of(match.begin(), match.end(), [&](auto& re) { return std::regex_match(__tests[i].name, re); }))
+            continue;
         buf[0] = 0;
         printf("\033[33;1m * \033[0m\033[1m%s\033[0m\n", __tests[i].name);
         bool fail = !__tests[i].impl(buf);
@@ -42,6 +47,12 @@ int main() {
         }
         unsigned left = *cone_count() - 1;
         mun_assert(!left, "test left %u coroutine(s) behind", left);
+        ran++;
+    }
+    if (ran == 0) {
+        mun_error(EINVAL, "no tests matched the provided regexes");
+        mun_error_show("input", NULL);
+        return 2;
     }
     return ret;
 }

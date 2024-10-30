@@ -6,7 +6,7 @@ flags = -I. -Wall -Wextra -Wpointer-arith -fPIC -D_POSIX_C_SOURCE=200809L $(CFLA
 tests: tests/cone tests/perf
 
 tests/%: obj/tests/%
-	$<
+	$< $(TESTS)
 
 obj/tests/%: obj/tests/%.o obj/libcxxcone.a
 	$(CXX) -std=c++17 $(flags) $< -o $@ -Lobj -lcxxcone -ldl -pthread
