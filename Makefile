@@ -13,7 +13,7 @@ obj/tests/%: obj/tests/%.o obj/libcxxcone.a
 
 obj/tests/%.o: tests/%.cc tests/base.cc cone.h cold.h mun.h cone.hh
 	@mkdir -p $(dir $@)
-	$(CXX) -std=c++17 $(flags) -DSRC=$< -c tests/base.cc -o $@
+	$(CXX) -std=c++17 $(flags) -c $< -o $@
 
 # This version is pure C:
 obj/libcone.a: obj/cone.o obj/cold.o obj/mun.o

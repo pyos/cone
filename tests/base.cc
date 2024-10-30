@@ -9,7 +9,13 @@
 
 using namespace std::literals::chrono_literals;
 
+struct __test { const char *name; bool (*impl)(); };
+extern std::vector<struct __test> __tests;
+static char __msg[2048];
+
+#define export std::vector<struct __test> __tests =
 #define ASSERT(x, ...) ((x) || !mun_error(EINVAL, __VA_ARGS__))
+#define INFO(...) (snprintf(__msg, sizeof(__msg), __VA_ARGS__), true)
 
 template <typename T = cone::ref, typename F>
 static inline bool spawn_and_wait(size_t n, F&& f) {
@@ -23,24 +29,17 @@ static inline bool spawn_and_wait(size_t n, F&& f) {
     return true;
 }
 
-#define export struct { const char *name; bool (*impl)(char *); } __tests[] = {
-#define __s1(x) #x
-#define __s2(x) __s1(x)
-#include __s2(SRC)
-};
-
 int main(int argc, const char **argv) {
     std::vector<std::regex> match(argv + !!argc, argv + argc);
     int ret = 0;
     int ran = 0;
-    char buf[2048];
-    for (unsigned i = 0; i < sizeof(__tests) / sizeof(*__tests); i++) {
-        if (!match.empty() && !std::any_of(match.begin(), match.end(), [&](auto& re) { return std::regex_match(__tests[i].name, re); }))
+    for (const auto& t : __tests) {
+        if (!match.empty() && !std::any_of(match.begin(), match.end(), [&](auto& re) { return std::regex_match(t.name, re); }))
             continue;
-        buf[0] = 0;
-        printf("\033[33;1m * \033[0m\033[1m%s\033[0m\n", __tests[i].name);
-        bool fail = !__tests[i].impl(buf);
-        printf("\033[A\033[3%d;1m * \033[0m\033[1m%s\033[0m\033[K%s%s\n", 1 + !fail, __tests[i].name, buf[0] ? ": " : "", buf);
+        __msg[0] = 0;
+        printf("\033[33;1m * \033[0m\033[1m%s\033[0m\n", t.name);
+        bool fail = !t.impl();
+        printf("\033[A\033[3%d;1m * \033[0m\033[1m%s\033[0m\033[K%s%s\n", 1 + !fail, t.name, __msg[0] ? ": " : "", __msg);
         if (fail) {
             mun_error_show("test failed with", NULL);
             ret = 1;
@@ -49,8 +48,7 @@ int main(int argc, const char **argv) {
         mun_assert(!left, "test left %u coroutine(s) behind", left);
         ran++;
     }
-    if (ran == 0) {
-        mun_error(EINVAL, "no tests matched the provided regexes");
+    if (ASSERT(ran == 0, "no tests matched the provided regexes")) {
         mun_error_show("input", NULL);
         return 2;
     }
