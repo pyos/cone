@@ -100,7 +100,7 @@ int mun_vec_reserve_s(size_t s, struct mun_vec *v, size_t n) {
     size_t cap = v->cap & ~MUN_VEC_STATIC_BIT;
     if (n <= cap)
         return 0;
-    void *start = mun_vec_data_s(s, v) - v->off;
+    void *start = (char*)v->data - v->off * s;
     if (v->off) {
         cap += v->off;
         if (v->cap & MUN_VEC_STATIC_BIT ? n <= cap : n + n/5 <= cap)

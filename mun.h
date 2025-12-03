@@ -132,7 +132,6 @@ struct mun_vec mun_vec(void);
 // Macros accept pointers to strongly typed vectors; functions with names ending with `_s`
 // accept this pair of arguments instead.
 #define mun_vec_strided(v) sizeof(mun_vec_type(v)), (struct mun_vec*)(v)
-#define mun_vec_data_s(stride, v) ((char (*)[(stride)])((const struct mun_vec*){(v)})->data)
 
 // Initializer for a vector that uses on-stack storage for `n` elements of type `T`.
 // The resulting vector is empty, but can be appended to up to `n` times. More than that,
@@ -176,7 +175,7 @@ static inline void mun_vec_fini_s(size_t s, struct mun_vec *v) {
     if (v->cap & MUN_VEC_STATIC_BIT)
         v->size = 0;
     else
-        free(mun_vec_data_s(s, v) - v->off), *v = (struct mun_vec){};
+        free((char*)v->data - v->off * s), *v = (struct mun_vec){};
 }
 
 // Move the tail of a vector and change the size accordingly.
@@ -184,7 +183,7 @@ static inline void mun_vec_fini_s(size_t s, struct mun_vec *v) {
 
 static inline void mun_vec_shift_s(size_t s, struct mun_vec *v, size_t start, int offset) {
     if (start < v->size)
-        memmove(&mun_vec_data_s(s, v)[start + offset], &mun_vec_data_s(s, v)[start], (v->size - start) * s);
+        memmove((char*)v->data + (start + offset) * s, (char*)v->data + start * s, (v->size - start) * s);
     v->size += offset;
 }
 
@@ -206,13 +205,13 @@ static inline int mun_vec_splice_s(size_t s, struct mun_vec *v, size_t i, const 
     if (!n)
         return 0;
     if (i == 0 && v->off >= n) {
-        *v = (struct mun_vec){mun_vec_data_s(s, v) - n, v->size + n, v->cap + n, v->off - n};
+        *v = (struct mun_vec){(char*)v->data - n * s, v->size + n, v->cap + n, v->off - n};
     } else {
         if (mun_vec_reserve_s(s, v, v->size + n))
             return -1;
         mun_vec_shift_s(s, v, i, n);
     }
-    memcpy(&mun_vec_data_s(s, v)[i], e, n * s);
+    memcpy((char*)v->data + i * s, e, n * s);
     return 0;
 }
 
@@ -225,7 +224,7 @@ static inline int mun_vec_extend_s(size_t s, struct mun_vec *v, const void *e, s
 
 static inline void mun_vec_erase_s(size_t s, struct mun_vec *v, size_t i, size_t n) {
     if (i == 0)
-        *v = (struct mun_vec){mun_vec_data_s(s, v) + n, v->size - n, v->cap - n, v->off + n};
+        *v = (struct mun_vec){(char*)v->data + n * s, v->size - n, v->cap - n, v->off + n};
     else
         mun_vec_shift_s(s, v, i + n, -(int)n);
 }
